@@ -2,8 +2,8 @@
 # The checks are tools/check.sh, the same command a contributor runs (docs/adr/process/0020): every enforced layer.
 # Here the layers run next to each other, in jobs of their own (measured on 2026-11-17: nine minutes in a row, of
 # which the tests of hal take 94 s, those of ui 147 s, and the decoder layer 265 s). The job `test` at the end is the
-# one required check: it passes when all of them passed. clippy runs as well, in the job `advice`, and does not fail
-# it until the rollout of ADR 0017. A pull request is also compared with its base (job compare).
+# one required check: it passes when all of them passed. The numbers of tools/ratchet.txt are shown in the job
+# `advice` and do not fail it yet (ADR 0037). A pull request is also compared with its base (job compare).
 #
 # A pull request that only changes documents (*.md, docs/, wiki/) runs the job `files` and skips the rest.
 #
@@ -104,6 +104,8 @@ jobs:
             layers: decoders:core
           - name: decoders, each
             layers: decoders:each
+          - name: clippy
+            layers: clippy
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -112,7 +114,7 @@ jobs:
         with:
           persist-credentials: false
       - run: |
-          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup target add aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -128,7 +130,7 @@ jobs:
         env:
           LAYERS: ${{ matrix.layers }}
         run: tools/check.sh $LAYERS
-  # clippy and the numbers that only go down: shown, not yet enforced
+  # the numbers that only go down: shown, not yet enforced
   advice:
     needs: files
     if: needs.files.outputs.code == 'true'
@@ -138,21 +140,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup target add aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: advice
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: |
-            hal -> target
-            dsp -> target
-            ui -> target
-            fpgad -> target
-      - name: Clippy (ADR 0017, not yet enforced)
-        continue-on-error: true
-        run: tools/check.sh clippy
       - name: Numbers that only go down (ADR 0037, not yet enforced)
         continue-on-error: true
         env:
