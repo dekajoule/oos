@@ -104,7 +104,8 @@ impl Ui {
     pub fn update_status() -> String {
         let mut cmd = std::process::Command::new(BIN);
         cmd.args(["status", "--quick"]);
-        output_within(cmd, STATUS_LIMIT).unwrap_or_else(|e| format!("{}: {}", BIN, e))
+        static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        output_within(cmd, STATUS_LIMIT, &RUNNING).unwrap_or_else(|e| format!("{}: {}", BIN, e))
     }
 
     /// The result of the last upload, as the web page /update shows it.
@@ -289,10 +290,26 @@ fn wrap_lines(t: &str, w: usize) -> Vec<String> {
 
 /// What `cmd` writes to stdout and then to stderr, when it ends within `limit`; else it is killed and the answer says
 /// so. Its output is read while it runs, so a long one cannot stall it.
-fn output_within(mut cmd: std::process::Command, limit: std::time::Duration) -> Result<String, String> {
+/// One at a time per `running`: while the last one has not ended (one killed but stuck in I/O of the card ends only
+/// when that I/O returns), no other is started, and the answer says so.
+fn output_within(
+    mut cmd: std::process::Command,
+    limit: std::time::Duration,
+    running: &'static std::sync::atomic::AtomicBool,
+) -> Result<String, String> {
     use std::io::Read;
     use std::process::Stdio;
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    use std::sync::atomic::Ordering::SeqCst;
+    if running.swap(true, SeqCst) {
+        return Err("the last run has not ended yet".into());
+    }
+    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            running.store(false, SeqCst);
+            return Err(e.to_string());
+        }
+    };
     let reader = |pipe: Option<Box<dyn Read + Send>>| {
         std::thread::spawn(move || {
             let mut got = Vec::new();
@@ -309,12 +326,22 @@ fn output_within(mut cmd: std::process::Command, limit: std::time::Duration) -> 
     // that I/O returns, and the caller must not wait for that; the readers end when its pipes close
     let give_up = |mut child: std::process::Child, why: String| {
         let _ = child.kill();
-        let _ = std::thread::Builder::new().name("reap".into()).spawn(move || drop(child.wait()));
+        // the next run may start once this one is reaped (or at once, when no thread could be started to reap it)
+        let reaped = std::thread::Builder::new().name("reap".into()).spawn(move || {
+            let _ = child.wait();
+            running.store(false, SeqCst);
+        });
+        if reaped.is_err() {
+            running.store(false, SeqCst);
+        }
         Err(why)
     };
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(_)) => {
+                running.store(false, SeqCst);
+                break;
+            }
             Ok(None) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(10)),
             Ok(None) => return give_up(child, format!("no answer within {} s, stopped", limit.as_secs_f32())),
             Err(e) => return give_up(child, e.to_string()),
@@ -339,12 +366,20 @@ mod tests {
             c
         };
         let limit = std::time::Duration::from_secs(60);
-        assert_eq!(output_within(sh("echo state; echo warn >&2"), limit).as_deref(), Ok("state\nwarn\n"));
-        let big = output_within(sh("head -c 300000 /dev/zero | tr '\\0' x"), limit).unwrap();
+        use std::sync::atomic::AtomicBool;
+        static RUN: AtomicBool = AtomicBool::new(false);
+        static STUCK: AtomicBool = AtomicBool::new(false);
+        assert_eq!(output_within(sh("echo state; echo warn >&2"), limit, &RUN).as_deref(), Ok("state\nwarn\n"));
+        let big = output_within(sh("head -c 300000 /dev/zero | tr '\\0' x"), limit, &RUN).unwrap();
         assert_eq!(big.len(), 300_000);
-        let e = output_within(sh("exec sleep 600"), std::time::Duration::from_millis(50)).unwrap_err();
+        let e = output_within(sh("exec sleep 600"), std::time::Duration::from_millis(50), &STUCK).unwrap_err();
         assert!(e.starts_with("no answer within 0.05 s"), "{e}");
-        assert!(output_within(std::process::Command::new("/no/such/program"), limit).is_err());
+        assert!(output_within(std::process::Command::new("/no/such/program"), limit, &RUN).is_err());
+        // while a run has not ended, no other starts
+        static BUSY: AtomicBool = AtomicBool::new(true);
+        assert_eq!(output_within(sh("echo x"), limit, &BUSY), Err("the last run has not ended yet".into()));
+        // a run that failed to start or ended leaves the way free
+        assert_eq!(output_within(sh("echo again"), limit, &RUN).as_deref(), Ok("again\n"));
     }
 
     #[test]
