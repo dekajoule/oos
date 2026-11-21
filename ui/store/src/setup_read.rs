@@ -744,16 +744,15 @@ fn parse_lines(text: &str, bad: &mut Vec<String>, r: &dyn Registries) -> Model {
     let mut m = Model::default();
     let mut proto_missing = false;
     for (ln, line) in text.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else {
-            bad.push(format!("line {}: no '='", ln + 1));
-            continue;
+        let (k, v) = match key_value(line) {
+            None => continue,
+            Some(Ok(kv)) => kv,
+            Some(Err(_)) => {
+                bad.push(format!("line {}: no '='", ln + 1));
+                continue;
+            }
         };
-        let k = k.trim();
-        if let Err(e) = set(&mut m, k, v.trim(), r) {
+        if let Err(e) = set(&mut m, k, v, r) {
             proto_missing |= k == "dec_proto";
             bad.push(format!("line {}: {}: {}", ln + 1, k, e));
         }
