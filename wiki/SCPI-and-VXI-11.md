@@ -127,7 +127,7 @@ print(scope.query('*IDN?'))
 |---|---|
 | `:CHANnel<n>:DISPlay[?]` | on/off |
 | `:CHANnel<n>:SCALe[?]` | V/div; the nearest scale the scope has; the probe factor applies |
-| `:CHANnel<n>:OFFSet[?]` | volts |
+| `:CHANnel<n>:OFFSet[?]` | volts, within the range of the scale |
 | `:CHANnel<n>:POSition[?]` | divisions |
 | `:CHANnel<n>:COUPling[?]` | `DC\|AC\|GND` (`DC50` only where the board has 50 Ω) |
 | `:CHANnel<n>:BWLimit[?]` | `OFF\|20M\|AUTO` or another filter of the menu |

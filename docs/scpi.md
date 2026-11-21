@@ -64,7 +64,7 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | Command | Parameters / reply |
 | --- | --- |
 | `:CHANnel<n>:SCALe[?]` | Volts/div; setter chooses the nearest supported scale. Probe factor applies. |
-| `:CHANnel<n>:OFFSet[?]` | Volts. |
+| `:CHANnel<n>:OFFSet[?]` | Volts; kept within what the vertical scale can reach (2, 12, 56 or 550 V at the BNC, by scale), also when `:SCALe` gets smaller. |
 | `:CHANnel<n>:COUPling[?]` | `DC|AC|GND`; `DC50` only on a board supporting it. |
 | `:CHANnel<n>:PROBe[?]` | Positive attenuation factor. |
 | `:TIMebase[:MAIN]:SCALe[?]` | Seconds/div; nearest supported timebase. |
