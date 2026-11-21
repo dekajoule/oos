@@ -74,7 +74,7 @@ impl Ui {
     pub(super) fn numpad_key(&mut self, k: usize) {
         let Some(&key) = KEYS.get(k) else { return };
         if let Some((factor, _)) = prefix(key) {
-            let typed = self.keypad.parse::<f64>().ok().filter(|v| v.is_finite());
+            let typed = crate::words::num64(&self.keypad);
             let target = self.numpad.target.take();
             self.close_picker();
             if let (Some(v), Some(it)) = (typed, target) {

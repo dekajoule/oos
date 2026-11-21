@@ -14,7 +14,7 @@ use super::decode::bus_index;
 use super::display::bmp;
 use super::math::math_index;
 use super::ser;
-use super::{arg_item, arg_rest, block, e, kw, num, parse_bool, parse_ch, parse_wave, suffix, t, Scpi};
+use super::{arg_item, arg_rest, block, e, kw, num, num64, parse_bool, parse_ch, parse_wave, suffix, t, Scpi};
 use crate::board::{board, Board};
 use crate::gfx::Canvas;
 use crate::model::*;
@@ -988,7 +988,7 @@ impl Scpi {
         }
         let has = |k: &str| nodes[1..].iter().any(|n| kw(suffix(n).0, k));
         let m = &ui.m;
-        let x = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+        let x = num64(arg);
         if has("OUTPut") {
             if query {
                 return Some(t(if m.afg_on { "1" } else { "0" }));
@@ -1077,7 +1077,7 @@ impl Scpi {
     fn source_mod_cmd(&mut self, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
         let has = |k: &str| nodes[1..].iter().any(|n| kw(suffix(n).0, k));
         let m = &ui.m;
-        let x = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+        let x = num64(arg);
         const SHAPES: [&str; 6] = ["SINusoid", "SQUare", "TRIangle", "RAMP", "NRAMp", "NOISe"];
         let a = arg.trim();
         if has("INTernal") && has("FUNCtion") {

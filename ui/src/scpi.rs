@@ -193,7 +193,7 @@ pub struct Scpi {
     opc_events: Vec<crate::ui::Operations>,
 }
 
-pub(crate) use crate::words::{e, kw, nearest_index, num, parse_bool};
+pub(crate) use crate::words::{e, kw, nearest_index, num, num64, parse_bool};
 
 /// The answer of a query that is the text `s`, as the subsystems return it.
 fn t(s: &str) -> Option<Vec<u8>> {

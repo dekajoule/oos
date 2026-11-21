@@ -7,7 +7,7 @@
 //! command goes into `measure_cmd` here (a new item into `MEAS_ITEMS` or `PAIR_ITEMS`), with its line in docs/scpi.md;
 //! either with its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, parse_bool, parse_wave, t, wave_tok, Scpi};
+use super::{e, kw, num64, parse_bool, parse_wave, t, wave_tok, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -198,7 +198,7 @@ impl Scpi {
             if query {
                 return t(&e(ui.m.meas_idle));
             }
-            match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+            match num64(arg).filter(|v| *v >= 0.0) {
                 Some(v) => {
                     ui.m.meas_idle = v;
                     ui.measure_last();
@@ -326,7 +326,7 @@ impl Scpi {
         if query {
             return t(&e(if setup { ui.m.meas_tsetup } else { ui.m.meas_thold }));
         }
-        match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+        match num64(arg).filter(|v| *v >= 0.0) {
             Some(v) => {
                 if setup {
                     ui.m.meas_tsetup = v;
