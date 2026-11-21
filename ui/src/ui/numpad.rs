@@ -7,7 +7,6 @@
 //! row. The value is taken as SCPI takes it (`:CHANnel<n>:SCALe`, `:TIMebase:SCALe`, ...): onto the nearest step of a
 //! ladder, the fine scale onto its calibrated row.
 
-use super::menu_actions::keep_expand_point;
 use super::*;
 
 /// The row the pad enters into, while it is open.
@@ -123,7 +122,7 @@ impl Ui {
                 }
                 let old = m.time_per_div();
                 (m.tscale, m.tfine) = (nearest_step(&tscales(), v), 1.0);
-                keep_expand_point(m, old);
+                m.keep_expand_point(old);
             }
             Item::HDelay => m.delay = v,
             Item::TrigLevel => m.trig_level = v,

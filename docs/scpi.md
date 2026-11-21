@@ -67,7 +67,7 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | `:CHANnel<n>:OFFSet[?]` | Volts. |
 | `:CHANnel<n>:COUPling[?]` | `DC|AC|GND`; `DC50` only on a board supporting it. |
 | `:CHANnel<n>:PROBe[?]` | Positive attenuation factor. |
-| `:TIMebase[:MAIN]:SCALe[?]` | Seconds/div; nearest supported timebase. |
+| `:TIMebase[:MAIN]:SCALe[?]` | Seconds/div; nearest supported timebase. As the knob, the delay moves so the expand point of `:TIMebase:HREFerence:MODE` keeps its place, and the zoom stays inside the new time base. |
 | `:TIMebase[:MAIN]:OFFSet[?]` | Horizontal delay in seconds; `POSition` is an alias. |
 | `:ACQuire:SRATe?` | ADC/model sample rate, not a loaded reference's native rate. |
 | `:ACQuire:MDEPth[?]` | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the numeric configured/effective acquisition depth. |

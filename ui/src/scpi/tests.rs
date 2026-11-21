@@ -51,6 +51,24 @@ fn timebase_measure_and_system_roots_answer_as_before() {
     assert!(err(&mut s, &mut ui).starts_with("0,"));
 }
 
+// Break it catches: :TIMebase:SCALe kept the delay as it was, so a script moved the point that :TIMebase:HREFerence:
+// MODE and the knob keep in place, and left the zoom wider than the new time base (OOS Plus, W4R)
+#[test]
+fn a_time_scale_from_a_script_keeps_the_expand_point() {
+    // from 1 ms/div at a delay of 2 ms to 2 ms/div: what each expand point gives the delay
+    for (mode, delay) in [("CENT", 2e-3), ("LB", 7e-3), ("RB", -3e-3), ("TRIG", 4e-3)] {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, &format!(":TIM:SCAL 1e-3;:TIM:OFFS 2e-3;:TIM:HREF:MODE {mode}"));
+        line(&mut s, &mut ui, &cv, ":TIM:SCAL 2e-3");
+        let got: f32 = line(&mut s, &mut ui, &cv, ":TIM:OFFS?").parse().unwrap();
+        assert!((got - delay).abs() < 1e-7, "{mode}: delay {got}, not {delay}");
+    }
+    // the zoom stays inside a smaller time base
+    let (mut s, mut ui, cv) = session();
+    line(&mut s, &mut ui, &cv, ":TIM:SCAL 1e-3;:TIM:DEL:ENAB 1;:TIM:DEL:SCAL 1e-3;:TIM:SCAL 1e-4");
+    assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:DEL:SCAL?"), "1.000000E-04");
+}
+
 #[test]
 fn compatibility_trigger_modes_roundtrip_actual_types() {
     let (mut s, mut ui, cv) = reference_session();
