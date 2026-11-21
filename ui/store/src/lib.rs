@@ -189,7 +189,7 @@ fn acquire_window_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("mdepth", m.mdepth.to_string());
     crate::settings::write(&crate::settings::display::VIEW, m, 0, kv);
     kv("windows", name(m.win_layout));
-    kv("density", name(m.density));
+    crate::settings::write(&crate::settings::display::DENSITY, m, 0, kv);
     kv("split_pane", m.split_pane.to_string());
     kv("ch_window", m.ch_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
@@ -274,7 +274,7 @@ fn math_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
 
 /// The panes, zoom, the drawing, HDMI and the views.
 fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
-    kv("pane", m.pane.to_string());
+    crate::settings::write(&crate::settings::display::PANE, m, 0, kv);
     crate::settings::write(&crate::settings::measure::VIEW, m, 0, kv);
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());

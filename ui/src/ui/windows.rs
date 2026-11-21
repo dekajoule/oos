@@ -128,7 +128,7 @@ impl Ui {
 
     pub(super) fn win_kind(it: Item) -> Option<Kind> {
         match it {
-            Item::WinLayout | Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => Some(Kind::Choice),
+            Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => Some(Kind::Choice),
             _ => None,
         }
     }
@@ -136,7 +136,6 @@ impl Ui {
     pub(super) fn win_label(it: Item) -> Option<&'static str> {
         Some(match it {
             Item::Open(MenuId::Windows) => "Windows",
-            Item::WinLayout => "Density",
             Item::WinCh(c) => CH_NAMES.get(c).copied().unwrap_or("CH"),
             Item::WinRef(i) => REF_NAMES.get(i).copied().unwrap_or("R"),
             Item::WinMath(k) => MATH_NAMES.get(k).copied().unwrap_or("M"),
@@ -147,7 +146,6 @@ impl Ui {
 
     pub(super) fn win_value(&self, it: Item) -> Option<String> {
         Some(match it {
-            Item::WinLayout => self.m.density.label().to_string(),
             Item::WinCh(c) => (self.m.ch_win[c].min(self.m.win_layout.count() - 1) + 1).to_string(),
             Item::WinRef(i) => (self.m.ref_win[i].min(self.m.win_layout.count() - 1) + 1).to_string(),
             Item::WinMath(k) => (self.m.math_win[k].min(self.m.win_layout.count() - 1) + 1).to_string(),
@@ -158,7 +156,6 @@ impl Ui {
 
     pub(super) fn win_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
-            Item::WinLayout => Density::ALL.iter().map(|d| d.label().to_string()).collect(),
             Item::WinCh(_) | Item::WinRef(_) | Item::WinMath(_) | Item::WinLa => {
                 (1..=self.m.win_layout.count()).map(|i| i.to_string()).collect()
             }
@@ -169,13 +166,6 @@ impl Ui {
     pub(super) fn win_adjust(&mut self, it: Item, d: i32) -> bool {
         let n = self.m.win_layout.count();
         match it {
-            Item::WinLayout => {
-                let all = Density::ALL;
-                let i = all.iter().position(|&l| l == self.m.density).unwrap_or(0);
-                self.m.density = all[cycle(i, all.len(), d)];
-                self.full.asked = false;
-                self.apply_density();
-            }
             Item::WinCh(c) => self.m.ch_win[c] = cycle(self.m.ch_win[c].min(n - 1), n, d),
             Item::WinRef(i) => self.m.ref_win[i] = cycle(self.m.ref_win[i].min(n - 1), n, d),
             Item::WinMath(k) => self.m.math_win[k] = cycle(self.m.math_win[k].min(n - 1), n, d),

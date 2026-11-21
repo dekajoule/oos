@@ -236,7 +236,6 @@ impl Ui {
             Item::SearchTable => "Event list",
             Item::SearchSave => "Save events",
             Item::StoreBin => "Save waveform (binary)",
-            Item::PaneSel => "Lower",
             Item::TrendSel(0) => "Trend chart 1",
             Item::TrendSel(_) => "Trend chart 2",
             Item::DecSrc => "Source",
@@ -549,13 +548,12 @@ impl Ui {
         })
     }
 
-    /// Values of the decoder, pane, trend, bus trigger, zoom and XY rows.
+    /// Values of the decoder, trend, bus trigger, zoom and XY rows.
     fn value_decode(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
             Item::DecOn => on_off(m.dec_on),
             Item::DecSel => format!("D{}", m.dec_sel + 1),
-            Item::PaneSel => tables::PANES[m.pane.min(tables::PANES.len() - 1)].into(),
             Item::TrendSel(k) => self.trend_options().get(m.trend_sel[k]).cloned().unwrap_or_else(|| "Auto".into()),
             Item::DecSrc => decode_source_name(m.dec_src),
             Item::DecBaud => format!("{}", crate::decode::BAUDS[m.dec_baud]),

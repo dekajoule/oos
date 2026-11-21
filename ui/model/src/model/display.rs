@@ -167,15 +167,6 @@ pub enum Density {
 
 impl Density {
     pub const ALL: [Density; 4] = [Density::Scope, Density::Full, Density::Split, Density::Four];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Density::Scope => "Scope",
-            Density::Full => "Full",
-            Density::Split => "Split",
-            Density::Four => "Four",
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
