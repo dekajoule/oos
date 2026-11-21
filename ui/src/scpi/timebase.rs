@@ -27,8 +27,11 @@ impl Scpi {
                     return t(&e(ui.m.time_per_div() as f64));
                 }
                 if let Some(v) = num(arg) {
+                    // as the knob: the expand point of :TIMebase:HREFerence:MODE keeps its place
+                    let old = ui.m.time_per_div();
                     ui.m.tscale = nearest(&tscales(), v);
                     ui.m.tfine = 1.0;
+                    ui.m.keep_expand_point(old);
                     ui.mark_changed();
                     return None;
                 }
