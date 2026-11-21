@@ -807,6 +807,10 @@ impl Scpi {
             } else {
                 return None;
             }
+            // the offset within what the scale can reach now, as the next frame would leave it: the result of a
+            // line of commands does not depend on whether a frame ran between them, and a query answers the offset
+            // in force
+            m.clamp_offsets();
             return Some(None);
         }
         self.trigger_acquire_cmd(m, src, nodes, query, arg)

@@ -29,6 +29,29 @@ fn reference_trigger_source_query_takes_precedence_over_a_stale_la_selection() {
     assert_eq!(line(&mut s, &mut ui, &cv, ":TRIG:EDGE:SOUR?;:TRIG:SOUR?"), "R1;R1");
 }
 
+// Break it catches: :CHANnel<n>:OFFSet took any value and only the next frame limited it to the range of the scale,
+// so a query in the same line answered an offset the scope never used, and an offset set before a larger scale was
+// cut or kept depending on whether a frame ran between the two commands (OOS Plus, W4R)
+#[test]
+fn a_channel_offset_from_a_script_stays_in_the_range_of_its_scale() {
+    let (mut s, mut ui, cv) = session();
+    // at 10 mV/div the input reaches 2 V
+    assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:SCAL 0.01;:CHAN1:OFFS 100;:CHAN1:OFFS?"), "2.000000E+00");
+    assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:OFFS -100;:CHAN1:OFFS?"), "-2.000000E+00");
+    // a smaller scale brings an offset into its range at once
+    line(&mut s, &mut ui, &cv, ":CHAN2:SCAL 1;:CHAN2:OFFS 20");
+    assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN2:SCAL 0.1;:CHAN2:OFFS?"), "1.200000E+01");
+    // the same commands give the same offset with or without a frame between them
+    let (mut s2, mut ui2, _) = session();
+    for cmd in [":CHAN1:SCAL 0.01", ":CHAN1:OFFS 3", ":CHAN1:SCAL 0.5"] {
+        line(&mut s2, &mut ui2, &cv, cmd);
+        ui2.step(0.04);
+    }
+    line(&mut s, &mut ui, &cv, ":CHAN1:SCAL 0.01;:CHAN1:OFFS 3;:CHAN1:SCAL 0.5");
+    assert_eq!(ui.m.ch[0].offset, ui2.m.ch[0].offset);
+    assert_eq!(line(&mut s, &mut ui, &cv, ":CHAN1:OFFS?"), "2.000000E+00");
+}
+
 #[test]
 fn channel_zero_bias_shifts_the_reading() {
     let (mut s, mut ui, cv) = session();
