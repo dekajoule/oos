@@ -1282,6 +1282,10 @@ impl Device {
             h.close();
         }
         self.disp.restore();
+        // the panel's DRM file and the inputs' descriptors are closed by the kernel when the process ends, after the
+        // other parts are dropped
+        self.disp.keep_open();
+        self.inp.keep_open();
     }
 }
 
