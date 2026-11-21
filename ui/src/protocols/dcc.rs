@@ -134,17 +134,7 @@ impl Protocol for Dcc {
         if !yard.advanced.is_empty() {
             sections.push(Section {
                 title: "Advanced".into(),
-                rows: yard
-                    .advanced
-                    .iter()
-                    .map(|a| {
-                        format!(
-                            "{}  {}",
-                            a.kind,
-                            a.data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ")
-                        )
-                    })
-                    .collect(),
+                rows: yard.advanced.iter().map(|a| format!("{}  {}", a.kind, hex(&a.data))).collect(),
             });
         }
         Some(View { status: Some((status, tone)), sections })

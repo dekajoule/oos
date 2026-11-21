@@ -6,7 +6,7 @@
 //! `INPut`, `EVENts?`, `BUSY?`, `CPHY:RATE`). A new decoder command goes into `bus_cmd` or `decode_cmd` here, with
 //! its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{block, e, kw, nearest_index, num, parse_bool, parse_wave, suffix, t, Scpi};
+use super::{block, e, kw, nearest_index, num, num64, parse_bool, parse_wave, suffix, t, Scpi};
 use crate::model::*;
 use crate::protocols::{Decoder, PROTOS};
 use crate::ui::Ui;
@@ -178,7 +178,7 @@ impl Scpi {
                 return t(&e(cfg.thr as f64));
             }
             let num = arg.split(',').next_back().unwrap_or("").trim();
-            let Some(v) = num.parse::<f64>().ok().filter(|v| v.is_finite()) else {
+            let Some(v) = num64(num) else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
@@ -299,7 +299,7 @@ impl Scpi {
             if query {
                 return t(&format!("{}", crate::decode::BAUDS[cfg.baud.min(crate::decode::BAUDS.len() - 1)] as u64));
             }
-            let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
+            let Some(v) = num64(arg).filter(|v| *v > 0.0) else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };

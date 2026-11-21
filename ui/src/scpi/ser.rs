@@ -5,7 +5,7 @@
 //! additions for what the stock commands leave out (relations, limits, masks):
 //! `:RELation EQ|NE|GT|LT|IN|OUT`, `:DMAX <n>`, `:MASK <n>`, `:ARELation`, `:AMAX` (docs/fork/serial-ui.md).
 
-use super::kw;
+use super::{kw, num, num64};
 use crate::model::*;
 
 /// A number, decimal or 0x hex.
@@ -13,7 +13,7 @@ fn int(s: &str) -> Option<u64> {
     let s = s.trim();
     match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         Some(h) => u64::from_str_radix(h, 16).ok(),
-        None => s.parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0).map(|x| x as u64),
+        None => num64(s).filter(|x| *x >= 0.0).map(|x| x as u64),
     }
 }
 
@@ -201,7 +201,7 @@ fn spi(m: &mut Model, key: &str, arg: &str, a: &str, query: bool) -> Option<Opti
         if query {
             return t(format!("{:e}", m.ser.spi_timeout));
         }
-        m.ser.spi_timeout = arg.trim().parse::<f32>().ok().filter(|x| x.is_finite() && *x >= 0.0 && *x <= 1.0)?;
+        m.ser.spi_timeout = num(arg).filter(|x| *x >= 0.0 && *x <= 1.0)?;
     } else if kw(key, "SLOPe") {
         if query {
             return t(if matches!(m.dec_mode, 0 | 3) { "POS" } else { "NEG" }.into());
