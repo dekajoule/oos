@@ -29,8 +29,13 @@ pub mod dho;
 
 /// The `N` bytes of `b` from offset `o` on, for `from_le_bytes`. Panics past the end of `b` like indexing does: for
 /// records whose length was checked when they were read in.
-pub(crate) fn bytes_at<const N: usize>(b: &[u8], o: usize) -> [u8; N] {
+pub fn bytes_at<const N: usize>(b: &[u8], o: usize) -> [u8; N] {
     std::array::from_fn(|k| b[o + k])
+}
+
+/// `bytes_at`, or `None` when they are not all in `b`: for bytes from outside (a packet, a request) not checked yet.
+pub fn try_bytes_at<const N: usize>(b: &[u8], o: usize) -> Option<[u8; N]> {
+    b.get(o..o.checked_add(N)?)?.try_into().ok()
 }
 
 /// CRC-32 tables for eight bytes per step ("slicing by 8"): `T[0]` is the usual byte table, `T[k][n]` the CRC of byte
