@@ -91,15 +91,15 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
 /// The one bus on the plot.
 fn bus_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     let b = &m.bus;
-    kv("bus_on", b.on.to_string());
+    crate::settings::write(&crate::settings::bus::ON, m, 0, kv);
     kv("bus_label", b.label.clone());
-    kv("bus_pos", b.pos.to_string());
+    crate::settings::write(&crate::settings::bus::POS, m, 0, kv);
     kv("bus_kind", name(b.kind));
     kv("bus_clk", b.clk.token());
     kv("bus_data", b.data.token());
     kv("bus_clk_thr", b.clk_thr.to_string());
     kv("bus_data_thr", b.data_thr.to_string());
-    kv("bus_rw", b.addr_rw.to_string());
+    crate::settings::write(&crate::settings::bus::RW, m, 0, kv);
 }
 
 /// The deskew of the channels and the ref slots that have one.
@@ -189,7 +189,7 @@ fn acquire_window_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("mdepth", m.mdepth.to_string());
     crate::settings::write(&crate::settings::display::VIEW, m, 0, kv);
     kv("windows", name(m.win_layout));
-    kv("density", name(m.density));
+    crate::settings::write(&crate::settings::display::DENSITY, m, 0, kv);
     kv("split_pane", m.split_pane.to_string());
     kv("ch_window", m.ch_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
     kv("math_window", m.math_win.iter().map(|w| (w + 1).to_string()).collect::<Vec<_>>().join(" "));
@@ -274,7 +274,7 @@ fn math_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
 
 /// The panes, zoom, the drawing, HDMI and the views.
 fn view_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
-    kv("pane", m.pane.to_string());
+    crate::settings::write(&crate::settings::display::PANE, m, 0, kv);
     crate::settings::write(&crate::settings::measure::VIEW, m, 0, kv);
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());

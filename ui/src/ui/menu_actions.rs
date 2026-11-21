@@ -607,22 +607,6 @@ impl Ui {
                 let k = (self.m.dec_sel as i32 + d).rem_euclid(DECODERS as i32) as usize;
                 self.m.dec_select(k);
             }
-            Item::PaneSel => {
-                self.m.pane = (self.m.pane as i32 + d).rem_euclid(tables::PANES.len() as i32) as usize;
-                if self.m.density == Density::Split {
-                    self.m.split_pane = self.m.pane;
-                    let prev = self.m.win_layout;
-                    self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
-                    if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
-                        self.spread_wins();
-                        if self.m.zoom {
-                            self.toast("Windows show while zoom is off");
-                        }
-                    }
-                } else if self.m.pane != 0 && self.pane_h() == 0 {
-                    self.toast("No room for a second pane here: fewer LA lanes or the scope view");
-                }
-            }
             Item::TrendSel(k) => {
                 let n = self.trend_options().len() as i32;
                 self.m.trend_sel[k] = (self.m.trend_sel[k].min(n as usize - 1) as i32 + d).rem_euclid(n) as usize;

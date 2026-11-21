@@ -6,13 +6,15 @@
 //! `store::setup_text` that write them, so the keys of a setup file keep their order.
 //!
 //! Still written out by hand: the monitor of the HDMI Layout (`hdmi_view`: over SCPI it needs two views), the Z input
-//! (an optional wave) and the views (two values in one line).
+//! (an optional wave), the views (two values in one line), and of the Windows page the windows (`windows`: no menu
+//! row of its own; the density sets them), the lower pane Split keeps (`split_pane`: no menu row) and the window of
+//! each trace (the menu offers the windows the layout has).
 
 use super::{Arg, Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
-use crate::model::{step_index, Grid, HDMI_MODES, PERSIST, TEXT_SIZES};
+use crate::model::{step_index, Density, Grid, HDMI_MODES, PANES, PANES_N, PERSIST, TEXT_SIZES};
 
 /// The slices, in the order of the docs table.
-pub const SLICES: [&[Setting]; 3] = [&VIEW, &DRAW, &TEXT];
+pub const SLICES: [&[Setting]; 5] = [&VIEW, &DENSITY, &PANE, &DRAW, &TEXT];
 
 /// Written after `mdepth`.
 pub const VIEW: [Setting; 5] = [
@@ -85,6 +87,52 @@ pub const VIEW: [Setting; 5] = [
         put: |m, _, v| m.grid_frame = v.index() != 0,
     },
 ];
+
+/// Written after `windows`.
+pub const DENSITY: [Setting; 1] = [Setting {
+    key: "density",
+    scpi: Scpi::None {
+        #[cfg(test)]
+        why: "a choice of the screen's layout, not of the measurement",
+    },
+    ty: Ty::Choice(
+        &[
+            Choice { store: "Scope", scpi: "", label: "Scope" },
+            Choice { store: "Full", scpi: "", label: "Full" },
+            Choice { store: "Split", scpi: "", label: "Split" },
+            Choice { store: "Four", scpi: "", label: "Four" },
+        ],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Density",
+    #[cfg(test)]
+    doc: "On the Windows page: what the screen shows around the plot, the bars and cards, the plot alone, the plot \
+          over a lower pane or two stacked traces, or four panes; a change sets the windows and the lower pane up \
+          again. A setup without it takes it from its windows and pane.",
+    accept: None,
+    step: None,
+    get: |m, _| Val::Index(Density::ALL.iter().position(|&d| d == m.density).unwrap_or(0)),
+    put: |m, _, v| m.density = Density::ALL[v.index()],
+}];
+
+/// Written first of the panes and the views, after the decoders and the bus.
+pub const PANE: [Setting; 1] = [Setting {
+    key: "pane",
+    scpi: Scpi::None {
+        #[cfg(test)]
+        why: "a choice of the screen's layout, not of the measurement",
+    },
+    ty: Ty::Custom(&PANE_IO),
+    label: "Lower",
+    #[cfg(test)]
+    doc: "On the Windows page with Split: what shows under the plot, two stacked traces or a pane of the spectrum, \
+          the results, the events, the trend or the bus view.",
+    accept: None,
+    step: None,
+    get: |m, _| Val::Index(m.pane),
+    put: |m, _, v| m.pane = v.index(),
+}];
 
 /// Written after `zdelay`.
 pub const DRAW: [Setting; 4] = [
@@ -211,6 +259,17 @@ const PERSIST_IO: CustomIo = CustomIo {
     #[cfg(test)]
     values: "`MIN`, `INFinite`, or seconds, set to the nearest time of the persistence ladder; the query answers \
              `MIN`, the seconds or `INF`",
+};
+
+/// An index into `PANES` in a setup; no command.
+const PANE_IO: CustomIo = CustomIo {
+    store: |v| v.index().to_string(),
+    load: |t| crate::words::p_idx(t, PANES_N).map(Val::Index),
+    query: |v| v.index().to_string(),
+    take: |_| None,
+    labels: &PANES,
+    #[cfg(test)]
+    values: "none",
 };
 
 /// A switch in a setup and in the menu; over SCPI the stock words of the drawing type.

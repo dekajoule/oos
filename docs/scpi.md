@@ -580,12 +580,28 @@ in `ui/model/src/settings/display.rs`; this table is written from there
 | `:DISPlay:GRID[?]` | `FULL`, `HALF`, `NONE` | `grid` | Grid | The graticule: every division line, a lighter one, or none. |
 | `:DISPlay:GBRightness[?]` | a whole number from 0 to 100, set within 10 to 100 % | `grid_bright` | Grid bright. | Brightness of the graticule; a value below 10 sets 10. |
 | `:DISPlay:RULers[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `grid_frame` | Grid frame | A frame around the graticule with ticks every fifth of a division; none with the grid off. |
+| none | a choice of the screen's layout, not of the measurement | `density` | Density | On the Windows page: what the screen shows around the plot, the bars and cards, the plot alone, the plot over a lower pane or two stacked traces, or four panes; a change sets the windows and the lower pane up again. A setup without it takes it from its windows and pane. |
+| none | a choice of the screen's layout, not of the measurement | `pane` | Lower | On the Windows page with Split: what shows under the plot, two stacked traces or a pane of the spectrum, the results, the events, the trend or the bus view. |
 | `:DISPlay:COLor[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `color_grade` | Colour grade | Colours the persistence by how often a point was hit. |
 | `:DISPlay:TYPE[?]` | `DOTS`, `VECTors`; the query answers `DOTS` or `VECT` | `dots` | Dots | Draws every sample as a dot instead of joining them with lines. |
 | none | a choice of the screen's layout, not of the measurement | `bar` | Bottom bar | The bottom bar as cards or as one compact line. |
 | none | a choice of the screen's layout, not of the measurement | `hdmi` | HDMI | What a monitor on the HDMI port shows: the panel, the waveform alone, or a layout of its own; the menu steps to the end of the list and stops. |
 | none | a choice of the screen's layout, not of the measurement | `text_size` | Text size | The size of the text on the screen; the menu steps to the end of the list and stops. |
 <!-- settings:display:end -->
+
+### The bus on the plot
+
+The bus drawn on the plot (the Bus menu) has no remote commands. Its settings and their keys in a setup file are
+declared once, in `ui/model/src/settings/bus.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ.
+
+<!-- settings:bus:begin -->
+| Command | Takes | Setup key | Bus menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | a trace of the screen, not of the decoders | `bus_on` | Bus | Draws the bus on the plot: the words of I2C from a clock and a data line, in hex. |
+| none | a trace of the screen, not of the decoders | `bus_pos` | Position | Where the bus is drawn, in divisions above the centre; the menu steps by a tenth of a division. |
+| none | a trace of the screen, not of the decoders | `bus_rw` | R/W bit | Whether the address byte shows the read/write bit or only the seven bits of the address. |
+<!-- settings:bus:end -->
 
 ### Measurement settings and statistics
 

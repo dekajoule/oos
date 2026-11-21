@@ -13,9 +13,10 @@
 //! settings (settings/channel.rs), the switches of the mask test
 //! (settings/mask.rs), the histogram (settings/histogram.rs), the Bode page (settings/bode.rs), the
 //! switch of the logic analyser (settings/la.rs), the spectrum page (settings/spectrum.rs), the eye page
-//! (settings/eye.rs), the power analysis (settings/power.rs), the time base (settings/timebase.rs) and how the
-//! measurements show (settings/measure.rs) have tables; the other settings are still written out by hand in each of those places. The numbers of the analyser pages are `Ty::Real`
-//! rows (f64 fields as they are stored) with a step of their own (docs/adr/code/0044). A numbered family is one row for all its instances: `<n>` in its key
+//! (settings/eye.rs), the power analysis (settings/power.rs), the time base (settings/timebase.rs), how the
+//! measurements show (settings/measure.rs) and the bus on the plot (settings/bus.rs) have tables; the other settings
+//! are still written out by hand in each of those places. The numbers of the analyser pages are `Ty::Real` rows (f64
+//! fields as they are stored) with a step of their own (docs/adr/code/0044). A numbered family is one row for all its instances: `<n>` in its key
 //! stands for the instance's number, and the getter and setter take the instance's index (0 for a row that is not
 //! numbered).
 //! A new setting of a group with a table is a row there, its `Item` with its place in a menu (ui/item.rs,
@@ -26,6 +27,7 @@ use crate::model::{cycle, si_short, step_index, Model};
 
 pub mod acquisition;
 pub mod bode;
+pub mod bus;
 pub mod channel;
 pub mod display;
 pub mod eye;
@@ -201,6 +203,7 @@ pub fn all() -> impl Iterator<Item = &'static Setting> {
         .chain(power::SLICES)
         .chain(timebase::SLICES)
         .chain(measure::SLICES)
+        .chain(bus::SLICES)
         .flat_map(|g| g.iter())
 }
 
