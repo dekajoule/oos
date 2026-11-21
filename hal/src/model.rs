@@ -509,7 +509,7 @@ fn bytes(w: &[u32]) -> Vec<u8> {
     w.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 fn u32_at(b: &[u8], o: usize) -> Option<u32> {
-    b.get(o..o + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    crate::try_bytes_at(b, o).map(u32::from_le_bytes)
 }
 
 /// The payload of vendor.bin under the outer key `k`; `None` if the checksum says it is the wrong key or no such file.

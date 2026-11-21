@@ -2,56 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! PNG screenshots with an own encoder: one fixed-Huffman deflate block with matches against the pixel to the left and
-//! above, CRC32, Adler32; and PPM pictures read back into a canvas.
+//! above, CRC32 (`oos_hal::crc32`), Adler32; and PPM pictures read back into a canvas.
 
 use super::*;
 
-/// CRC-32 tables for eight bytes per step ("slicing by 8"): `T[0]` is the usual byte table, `T[k][n]` the CRC of byte
-/// `n` followed by `k` zero bytes.
-pub(super) const CRC_T: [[u32; 256]; 8] = {
-    let mut t = [[0u32; 256]; 8];
-    let mut n = 0;
-    while n < 256 {
-        let mut c = n as u32;
-        let mut k = 0;
-        while k < 8 {
-            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
-            k += 1;
-        }
-        t[0][n] = c;
-        n += 1;
-    }
-    let mut k = 1;
-    while k < 8 {
-        let mut n = 0;
-        while n < 256 {
-            let c = t[k - 1][n];
-            t[k][n] = t[0][(c & 0xff) as usize] ^ (c >> 8);
-            n += 1;
-        }
-        k += 1;
-    }
-    t
-};
-
-/// CRC-32 (ISO 3309 / PNG / zip).
-pub fn crc32(data: &[u8]) -> u32 {
-    let t = &CRC_T;
-    let mut c = !0u32;
-    let (blocks, rest) = data.as_chunks::<8>();
-    for b in blocks {
-        let lo = c ^ u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-        c = t[7][(lo & 0xff) as usize]
-            ^ t[6][(lo >> 8 & 0xff) as usize]
-            ^ t[5][(lo >> 16 & 0xff) as usize]
-            ^ t[4][(lo >> 24) as usize]
-            ^ t[3][b[4] as usize]
-            ^ t[2][b[5] as usize]
-            ^ t[1][b[6] as usize]
-            ^ t[0][b[7] as usize];
-    }
-    !rest.iter().fold(c, |c, &b| t[0][((c ^ b as u32) & 0xff) as usize] ^ (c >> 8))
-}
+pub use oos_hal::crc32;
 
 /// Adler-32 (zlib). Sixteen lanes side by side (the compiler makes vector code of the lane loop): lane `k` sums the
 /// bytes at `16 j + k` (`sa`) and those sums again (`sb`), and per chunk of 5552 bytes `b` grows by `len * a`,

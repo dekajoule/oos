@@ -46,6 +46,16 @@ fn list<T: ToString>(v: &[T]) -> String {
     v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ")
 }
 
+/// One line of a setup or mask file: `None` for a blank line or a comment (a line that starts with `#`), else the key
+/// and the value around the first `=`, both trimmed, or `Err` with the trimmed line when it has no `=`.
+fn key_value(line: &str) -> Option<Result<(&str, &str), &str>> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    Some(line.split_once('=').map(|(k, v)| (k.trim(), v.trim())).ok_or(line))
+}
+
 /// The keys of one decoder.
 fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("dec_on", m.dec_on.to_string());
@@ -578,11 +588,10 @@ pub fn ref_setup_text(looks: &[Option<RefLook>]) -> String {
 pub fn parse_ref_looks(text: &str, n: usize) -> Vec<Option<RefLook>> {
     let mut out: Vec<Option<RefLook>> = vec![None; n];
     for line in text.lines() {
-        let Some((k, v)) = line.trim().split_once('=') else { continue };
-        let Some(rest) = k.trim().strip_prefix("ref") else { continue };
+        let Some(Ok((k, v))) = key_value(line) else { continue };
+        let Some(rest) = k.strip_prefix("ref") else { continue };
         let Some((idx, key)) = rest.split_once('.') else { continue };
         let Some(i) = idx.parse::<usize>().ok().and_then(|i| i.checked_sub(1)).filter(|&i| i < n) else { continue };
-        let v = v.trim();
         let l = out[i].get_or_insert_with(RefLook::default);
         match key {
             "on" => l.on = v.parse().ok(),

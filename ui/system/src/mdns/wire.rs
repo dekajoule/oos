@@ -211,11 +211,11 @@ impl Msg {
 }
 
 fn u16_at(b: &[u8], p: usize) -> Option<u16> {
-    Some(u16::from_be_bytes([*b.get(p)?, *b.get(p + 1)?]))
+    oos_hal::try_bytes_at(b, p).map(u16::from_be_bytes)
 }
 
 fn u32_at(b: &[u8], p: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(b.get(p..p + 4)?.try_into().ok()?))
+    oos_hal::try_bytes_at(b, p).map(u32::from_be_bytes)
 }
 
 /// The name at `start` and where the bytes after it begin (`read_labels`).
