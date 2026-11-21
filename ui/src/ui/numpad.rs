@@ -19,16 +19,15 @@ pub(super) struct NumPad {
 const KEYS: [&str; 20] =
     ["7", "8", "9", "n", "4", "5", "6", "u", "1", "2", "3", "m", "0", ".", "-", "1x", "Del", "Clear", "Cancel", "k"];
 
-/// The factor and the shown prefix of a prefix key.
+/// The factor and the shown prefix of a prefix key, from `SI_PREFIXES`.
 fn prefix(key: &str) -> Option<(f64, &'static str)> {
-    Some(match key {
-        "n" => (1e-9, "n"),
-        "u" => (1e-6, "\u{b5}"),
-        "m" => (1e-3, "m"),
-        "1x" => (1.0, ""),
-        "k" => (1e3, "k"),
+    let shown = match key {
+        "n" | "m" | "k" => key,
+        "u" => "\u{b5}",
+        "1x" => "",
         _ => return None,
-    })
+    };
+    SI_PREFIXES.iter().copied().find(|&(_, p)| p == shown)
 }
 
 /// Longest entry, in characters.
