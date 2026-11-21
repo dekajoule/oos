@@ -4,7 +4,8 @@
 //! `oos-fpgad bringup`: the first bring-up step of the MHO900's acquisition board, run by hand (docs/mho.md,
 //! "Bring-up, step 1"). The stock order of docs/protocols/mho-acquisition.md, section 1: supplies of the ADCs and front
 //! ends, the sample clock (the unit's own table over the 3-wire bus, after its ID was read back), the FPGA supply, the
-//! FPGA image (the unit's own file, slave serial over spi5), PCIe, then a read of the first registers. Each step says
+//! FPGA image (the unit's own file, slave serial over spi5), PCIe, a read of the first registers, then the ADCs through
+//! the FPGA's SPI bridge, read only. Each step says
 //! what it saw; the first that fails ends the run. Nothing is written to a file, a flash or a partition. Not yet
 //! verified on hardware.
 
@@ -17,7 +18,7 @@ fn opt<'a>(args: &'a [String], k: &str) -> Option<&'a str> {
 }
 
 /// The steps in order; `--until` ends after the named one.
-const STEPS: [&str; 4] = ["power", "clock", "fpga", "pcie"];
+const STEPS: [&str; 5] = ["power", "clock", "fpga", "pcie", "adc"];
 
 pub(super) fn run(args: &[String]) -> i32 {
     let Some(code) = opt(args, "--hw-code").and_then(|c| c.parse::<u32>().ok()) else {
@@ -27,7 +28,7 @@ pub(super) fn run(args: &[String]) -> i32 {
         );
         return 2;
     };
-    let until = opt(args, "--until").unwrap_or("pcie");
+    let until = opt(args, "--until").unwrap_or("adc");
     let Some(last) = STEPS.iter().position(|s| *s == until) else {
         eprintln!("oos-fpgad bringup: --until takes one of {:?}", STEPS);
         return 2;
@@ -45,11 +46,12 @@ pub(super) fn run(args: &[String]) -> i32 {
         );
         return 0;
     }
-    let steps: [(&str, &dyn Fn() -> Result<(), String>); 4] = [
+    let steps: [(&str, &dyn Fn() -> Result<(), String>); 5] = [
         ("power", &|| power(&[b::line::ADC_POWER, b::line::AFE_POWER])),
         ("clock", &|| clock(table)),
         ("fpga", &|| power(&[b::line::FPGA_POWER]).and_then(|_| fpga(image))),
         ("pcie", &pcie),
+        ("adc", &adc),
     ];
     for (name, step) in steps.iter().take(last + 1) {
         println!("---- {}", name);
@@ -276,5 +278,42 @@ fn pcie() -> Result<(), String> {
     for (off, name) in b::FIRST_READS {
         println!("bringup: {:#06x} {} = {:#010x}", off, name, bar.rd(off));
     }
+    Ok(())
+}
+
+/// The ADCs through the FPGA's SPI bridge, read only (nothing is written to an ADC register): the ADC clock count, then
+/// registers `ADC_READ_REGS` of ADC 0 and ADC 1 as raw words, each with whether the bridge marked it valid.
+fn adc() -> Result<(), String> {
+    use oos_hal::dho::bus::Bus;
+    let mut bar = crate::pcie::pcie_up().map_err(|e| e.to_string())?;
+    println!(
+        "bringup: {:#06x} ADC clock count = {} (62500 at the DHO's 1.25 GHz)",
+        b::ADC_CLOCK_COUNT,
+        bar.rd(b::ADC_CLOCK_COUNT)
+    );
+    let mut valid = 0;
+    for a in 0..2 {
+        let mut seen = Vec::new();
+        for r in b::ADC_READ_REGS {
+            let words =
+                acq::adc_read(a, r).ok_or_else(|| format!("no read transfer for ADC {} register {:#04x}", a, r))?;
+            for (off, v) in words {
+                bar.wr(off, v);
+                std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
+            }
+            let x = bar.rd(acq::ADC_SPI_READ);
+            if x & acq::ADC_SPI_VALID != 0 {
+                valid += 1;
+                seen.push(format!("{:02x}={:04x}", r, x & 0xffff));
+            } else {
+                seen.push(format!("{:02x}=-({:#x})", r, x));
+            }
+        }
+        println!("bringup: ADC {} raw: {}", a, seen.join(" "));
+    }
+    if valid == 0 {
+        return Err("no read came back marked valid (bit 16 of 0x3004): the bridge or the ADCs did not answer".into());
+    }
+    println!("bringup: {} of {} reads valid", valid, 2 * b::ADC_READ_REGS.len());
     Ok(())
 }

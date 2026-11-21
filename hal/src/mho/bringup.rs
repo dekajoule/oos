@@ -166,6 +166,11 @@ pub const FIRST_READS: [(u32, &str); 9] = [
     (0x4034, "SCU status"),
 ];
 
+/// The FPGA's count of the ADC clock in a fixed time, as on the DHO800/DHO900 (docs/models.md: 62500 at 1.25 GHz).
+pub const ADC_CLOCK_COUNT: u32 = 0x1210;
+/// The ADC registers the `adc` step reads from each ADC, as raw words (the stock system XORs a mask on top).
+pub const ADC_READ_REGS: std::ops::Range<u32> = 0x00..0x10;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +241,8 @@ mod tests {
     #[test]
     fn the_first_reads_stay_in_the_mapped_window() {
         assert!(FIRST_READS.iter().all(|(o, _)| *o < 0x8000 && o % 4 == 0));
+        // every register the adc step reads makes a read transfer for both ADCs
+        assert!(ADC_READ_REGS.clone().all(|r| (0..2).all(|a| crate::mho::acq::adc_read(a, r).is_some())));
+        assert_eq!(ADC_CLOCK_COUNT % 4, 0);
     }
 }

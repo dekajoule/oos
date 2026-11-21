@@ -4,7 +4,7 @@
 //! The commands of oos-fpgad for the MHO900 (docs/mho.md, ADR 0028). OOS does not run an acquisition on this board;
 //! nothing starts its hardware by itself.
 //!
-//!   oos-fpgad bringup --hw-code N [--until power|clock|fpga|pcie] [--yes]
+//!   oos-fpgad bringup --hw-code N [--until power|clock|fpga|pcie|adc] [--yes]
 //!       the first bring-up step, started by hand by an owner who tests it (docs/mho.md, "Bring-up, step 1"): the
 //!       supplies, the sample clock from the unit's own table, the FPGA from the unit's own image (volatile: lost at
 //!       power-off), PCIe, and a read of the first registers. Not yet verified on hardware.
@@ -21,7 +21,7 @@ pub(crate) fn run(cmd: &str, args: &[String]) {
     match cmd {
         "help" | "--help" | "-h" => {
             println!(
-                "oos-fpgad for the {}: `model` prints the unit; `bringup --hw-code N [--until power|clock|fpga|pcie] \
+                "oos-fpgad for the {}: `model` prints the unit; `bringup --hw-code N [--until power|clock|fpga|pcie|adc] \
                  [--yes]` is the first bring-up step, by hand only (docs/mho.md). Nothing else drives {} hardware.",
                 family, family
             );

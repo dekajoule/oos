@@ -120,7 +120,11 @@ install still changes the card. What keeps it small:
 
 `oos-fpgad bringup --hw-code N --yes` over SSH starts the acquisition board the way the stock system does
 (protocols/mho-acquisition.md, section 1) and stops at the first step that fails, saying what it saw. Nothing starts it
-by itself, and nothing of it outlasts a power-off. **Not yet verified on hardware.**
+by itself, and nothing of it outlasts a power-off. **Verified on the unit** (hp197's MHO98, hardware code 3, mho-dev-5,
+GitHub issue #4) up to `pcie`: the clock chip reads TI's vendor ID before and after its 136 words, the FPGA takes the
+unit's image in 3.0 s and raises DONE, the PCIe link trains at 5.0 GT/s on four lanes (the DHO800/DHO900: two), xdma
+binds the endpoint 10ee:7024 with a 64 KiB and a 16 MiB BAR, and the FPGA version reads 0x20260110, the value
+mho-check.py reads under the stock system. The `adc` step is **not yet verified on hardware**.
 
 | step | what it does | what it reads back |
 |---|---|---|
@@ -128,8 +132,9 @@ by itself, and nothing of it outlasts a power-off. **Not yet verified on hardwar
 | `clock` | `sysref_reset` = 0 as stock leaves it; reads the clock chip's ID registers over the 3-wire bus (GPIO1_C1..C3); only when the vendor ID is TI's (0x51 0x04) it writes the unit's own table `/rigol/resource/conf/init_all_clock_V00_0N.txt` (N from the hardware code) | the ID before and after |
 | `fpga` | `fpga_power` = 1 (GPIO1_A0); PROGRAM_B (GPIO1_B5) low, then high; the unit's own image from `/rigol/FPGA` (`acq::fpga_image`) over `/dev/spidev5.0` at 25 MHz (slave serial; the name comes from the device tree's `spi5` alias, without which the port is `/dev/spidev2.0`); 5 s | INIT_B (GPIO2_C7) and DONE (GPIO2_C4) |
 | `pcie` | the PCIe host module and `xdma.ko`, with the DHO's retries | the endpoint's device ID, then the registers of `bringup::FIRST_READS` (the same tools/mho-check.py reads under the stock system) |
+| `adc` | nothing is written to an ADC: read transfers through the FPGA's SPI bridge (0x3000, protocols/mho-acquisition.md section 4) for registers 0x00 to 0x0f of ADC 0 and ADC 1 | the ADC clock count 0x1210 (62500 on the DHO800/DHO900), then each register's raw word, or `-` with what 0x3004 held when bit 16 (valid) was not set |
 
-`--until power|clock|fpga|pcie` ends after that step; without `--yes` it only says what it would do and reads the
+`--until power|clock|fpga|pcie|adc` ends after that step (`adc`, the last, without it); without `--yes` it only says what it would do and reads the
 hardware-code straps. The hardware code is given by hand (`--hw-code 3`: what mho-check.py reported on every unit so
 far), because how the straps map to it is not known yet. The clock chip's frame is that of its data sheet (24 bits,
 MSB first, a read bit, 13 address bits, 8 data bits); it has not been recorded on a unit. The pure parts are in

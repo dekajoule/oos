@@ -63,6 +63,8 @@ pub mod scu {
 pub const ADC_SPI: u32 = 0x3000;
 /// Where a read transfer's 16 data bits come back.
 pub const ADC_SPI_READ: u32 = 0x3004;
+/// Set in `ADC_SPI_READ` when its 16 data bits are a valid answer of the ADC (assumed; not yet verified on hardware).
+pub const ADC_SPI_VALID: u32 = 1 << 16;
 /// The wait after each of the two writes of a transfer, in microseconds.
 pub const ADC_SPI_WAIT_US: u64 = 100;
 const ADC_STROBE: u32 = 1 << 26;

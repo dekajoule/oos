@@ -142,6 +142,9 @@ wait 100 us
 (read: bit 23 set in addr and data 0; after a further 100 us the 16 data bits are in 0x3004)
 ```
 
+Assumed: a read's 16 bits are valid only when bit 16 of 0x3004 is set; the bring-up's `adc` step reads registers 0x00
+to 0x0f of both ADCs this way and reports the bit (docs/mho.md). Not yet verified on hardware.
+
 The stock system XORs the data with a fixed mask per register before it writes it, as it does for the DHO's ADC
 (adc-spu-init.md); the masks are not known yet.
 
