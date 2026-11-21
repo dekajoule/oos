@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 84] = [
+const ITEMS: [(Item, &str); 87] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -93,6 +93,9 @@ const ITEMS: [(Item, &str); 84] = [
     (Item::AutoRoll, "auto_roll"),
     (Item::MeasLabels, "meas_labels"),
     (Item::StripDock, "strip_dock"),
+    (Item::BusOn, "bus_on"),
+    (Item::BusPos, "bus_pos"),
+    (Item::BusRw, "bus_rw"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -252,6 +255,8 @@ impl Ui {
             | Item::BodeSyncEdge
             | Item::BodeSyncLvl
             | Item::BodeRef => return true,
+            // the bus on the plot is drawn from the record as it is (no `settings_changed`), as before the table
+            Item::BusOn | Item::BusPos | Item::BusRw => return true,
             Item::AcqSegHw => {
                 // the other limit applies from now on
                 self.m.segments = self.seg_count();
@@ -269,11 +274,11 @@ mod tests {
     use super::*;
 
     /// The item is in the Display menu, in its Windows page (with the Split density, so the lower pane shows), in the
-    /// Horizontal menu, in the Measure settings, in the DVM menu, in the Mask menu, in the LA menu, in a menu of an
-    /// analyser page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only
-    /// with a hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a
-    /// generator, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both
-    /// limits show, and the video trigger on line n, so its line shows).
+    /// Horizontal menu, in the Measure settings, in the DVM menu, in the Mask menu, in the LA menu, in the Bus menu, in
+    /// a menu of an analyser page, in the Acquire menu (in Average mode with segments, so their rows show; HW average
+    /// shows only with a hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu
+    /// of a generator, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so
+    /// both limits show, and the video trigger on line n, so its line shows).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
         (u.m.acq, u.m.segments, u.m.density) = (AcqMode::Average, 10, Density::Split);
@@ -288,6 +293,7 @@ mod tests {
                 MenuId::Acquire,
                 MenuId::Mask,
                 MenuId::La,
+                MenuId::Bus,
                 MenuId::Spectrum,
                 MenuId::Eye,
             ]

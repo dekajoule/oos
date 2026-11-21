@@ -91,15 +91,15 @@ fn dec_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
 /// The one bus on the plot.
 fn bus_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     let b = &m.bus;
-    kv("bus_on", b.on.to_string());
+    crate::settings::write(&crate::settings::bus::ON, m, 0, kv);
     kv("bus_label", b.label.clone());
-    kv("bus_pos", b.pos.to_string());
+    crate::settings::write(&crate::settings::bus::POS, m, 0, kv);
     kv("bus_kind", name(b.kind));
     kv("bus_clk", b.clk.token());
     kv("bus_data", b.data.token());
     kv("bus_clk_thr", b.clk_thr.to_string());
     kv("bus_data_thr", b.data_thr.to_string());
-    kv("bus_rw", b.addr_rw.to_string());
+    crate::settings::write(&crate::settings::bus::RW, m, 0, kv);
 }
 
 /// The deskew of the channels and the ref slots that have one.

@@ -709,15 +709,12 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
             m.eye_b = opt(b)?;
             m.eye_hp = p_bool(hp)?;
         }
-        "bus_on" => m.bus.on = p_bool(v)?,
         "bus_label" => m.bus.label = crate::model::bus_label(v),
-        "bus_pos" => m.bus.pos = p_f32(v)?.clamp(BUS_POS_MIN, BUS_POS_MAX),
         "bus_kind" => m.bus.kind = p_enum(v, &[BusKind::I2c])?,
         "bus_clk" => m.bus.clk = WaveId::parse(v)?,
         "bus_data" => m.bus.data = WaveId::parse(v)?,
         "bus_clk_thr" => m.bus.clk_thr = p_f32(v)?.clamp(-40.0, 40.0),
         "bus_data_thr" => m.bus.data_thr = p_f32(v)?.clamp(-40.0, 40.0),
-        "bus_rw" => m.bus.addr_rw = p_bool(v)?,
         "power_more" => {
             let w: Vec<&str> = v.split_whitespace().collect();
             let [fline, fsw, vin, reference, clk] = w[..] else { return Err("power_more".into()) };

@@ -589,6 +589,20 @@ in `ui/model/src/settings/display.rs`; this table is written from there
 | none | a choice of the screen's layout, not of the measurement | `text_size` | Text size | The size of the text on the screen; the menu steps to the end of the list and stops. |
 <!-- settings:display:end -->
 
+### The bus on the plot
+
+The bus drawn on the plot (the Bus menu) has no remote commands. Its settings and their keys in a setup file are
+declared once, in `ui/model/src/settings/bus.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ.
+
+<!-- settings:bus:begin -->
+| Command | Takes | Setup key | Bus menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | a trace of the screen, not of the decoders | `bus_on` | Bus | Draws the bus on the plot: the words of I2C from a clock and a data line, in hex. |
+| none | a trace of the screen, not of the decoders | `bus_pos` | Position | Where the bus is drawn, in divisions above the centre; the menu steps by a tenth of a division. |
+| none | a trace of the screen, not of the decoders | `bus_rw` | R/W bit | Whether the address byte shows the read/write bit or only the seven bits of the address. |
+<!-- settings:bus:end -->
+
 ### Measurement settings and statistics
 
 | Command | Parameters / behavior |
