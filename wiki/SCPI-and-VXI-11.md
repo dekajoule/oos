@@ -143,7 +143,7 @@ print(scope.query('*IDN?'))
 
 | Command | Values |
 |---|---|
-| `:TIMebase[:MAIN]:SCALe[?]` | s/div, nearest step |
+| `:TIMebase[:MAIN]:SCALe[?]` | s/div, nearest step; the expansion reference keeps its place, as with the knob |
 | `:TIMebase[:MAIN]:OFFSet[?]` | delay in seconds (`POSition` is the same) |
 | `:TIMebase:DELay:ENABle[?]`, `:DELay:SCALe[?]`, `:DELay:OFFSet[?]` | zoom window on/off, s/div, centre time |
 | `:TIMebase:VERNier[?]` | fine steps on/off |
