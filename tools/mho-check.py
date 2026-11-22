@@ -336,7 +336,8 @@ def panel_main(a, adb):
         args = " ".join(f"-p {t}" for t in tids if t.isdigit())
         proc = subprocess.Popen(["adb", "-s", adb.target, "shell",
                                  f"rm -f {log}; strace -f -ttt -xx -s 256 -e trace=read,write -o {log} {args}"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                # adb shell reads its stdin: left at the terminal it took every second label
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(3)
     offset = float(adb.sh("date +%s").strip() or 0) - time.time()
     print("Press one key or turn one knob a few steps, then type here what it was (e.g. 'Run/Stop', 'V-Scale CH1 "
