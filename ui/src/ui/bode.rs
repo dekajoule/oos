@@ -855,20 +855,15 @@ impl Ui {
             }
         };
         let z = self.bode_mode() == oos_dsp::bode::Mode::Z;
-        let step = axis_step(gmax - gmin, 5);
-        let digits = if z { (-step.log10().floor()).max(0.0) as usize } else { 0 };
-        let mut g = (gmin / step).ceil() * step;
-        while g <= gmax + step * 1e-6 {
+        for (g, text) in gain_values(gmin, gmax, z) {
             let y = gb - ((g - gmin) / (gmax - gmin) * (gb - gt) as f64).round() as i32;
             cv.hline(a.x, a.x + a.w, y, LINE);
-            let text = if z { format!("{:.*}", digits, g + 0.0) } else { format!("{:.0} dB", g + 0.0) };
             label(cv, y, &text, DIM);
-            g += step;
         }
-        for p in [-180.0, -90.0, 0.0, 90.0, 180.0] {
+        for (p, text) in PHASE_VALUES {
             let y = pb - ((p + 180.0) / 360.0 * (pb - pt) as f64).round() as i32;
             cv.hline(a.x, a.x + a.w, y, LINE);
-            label(cv, y, &format!("{:.0}\u{b0}", p), DIM);
+            label(cv, y, text, DIM);
         }
     }
 
@@ -976,6 +971,25 @@ impl super::analysers::Analyser for BodePage {
     fn draw(&self, ui: &Ui, cv: &mut Canvas) {
         ui.draw_bode(cv);
     }
+}
+
+/// The values of the phase axis and their labels, every 90 degrees.
+const PHASE_VALUES: [(f64, &str); 5] =
+    [(-180.0, "-180\u{b0}"), (-90.0, "-90\u{b0}"), (0.0, "0\u{b0}"), (90.0, "90\u{b0}"), (180.0, "180\u{b0}")];
+
+/// The values of the gain axis from `gmin` to `gmax` at a round step, with their labels: dB, or the linear ratio
+/// of an impedance sweep (`z`) in V/V with as many decimals as the step needs. A value of -0 reads 0.
+fn gain_values(gmin: f64, gmax: f64, z: bool) -> Vec<(f64, String)> {
+    let step = axis_step(gmax - gmin, 5);
+    let digits = if z { (-step.log10().floor()).max(0.0) as usize } else { 0 };
+    let first = (gmin / step).ceil() as i64;
+    let last = (gmax / step + 1e-6).floor() as i64;
+    (first..=last)
+        .map(|k| {
+            let g = k as f64 * step + 0.0;
+            (g, if z { format!("{:.*} V/V", digits, g) } else { format!("{:.0} dB", g) })
+        })
+        .collect()
 }
 
 /// A round step (1, 2 or 5 times a power of ten) that divides `span` into at most `lines` parts.
@@ -1160,6 +1174,13 @@ mod tests {
             [axis_step(50.0, 5), axis_step(60.0, 5), axis_step(0.3, 5), axis_step(2.2, 5)],
             [10.0, 20.0, 0.1, 0.5]
         );
+        let texts = |v: Vec<(f64, String)>| v.into_iter().map(|(_, t)| t).collect::<Vec<_>>();
+        assert_eq!(texts(gain_values(-60.0, -0.0, false)), ["-60 dB", "-40 dB", "-20 dB", "0 dB"]);
+        assert_eq!(texts(gain_values(-20.0, 10.0, false)), ["-20 dB", "-10 dB", "0 dB", "10 dB"]);
+        // impedance: the linear ratio, with its unit and the decimals of its step
+        assert_eq!(texts(gain_values(0.18, 1.12, true)), ["0.2 V/V", "0.4 V/V", "0.6 V/V", "0.8 V/V", "1.0 V/V"]);
+        assert_eq!(texts(gain_values(0.0, 2.0, true)), ["0.0 V/V", "0.5 V/V", "1.0 V/V", "1.5 V/V", "2.0 V/V"]);
+        assert_eq!(PHASE_VALUES.map(|p| p.1), ["-180\u{b0}", "-90\u{b0}", "0\u{b0}", "90\u{b0}", "180\u{b0}"]);
         let mut ui = crate::ui::testkit::demo_ui();
         ui.m.view = AView::Bode;
         // a first-order low pass at 10 kHz, 1 kHz .. 1 MHz
