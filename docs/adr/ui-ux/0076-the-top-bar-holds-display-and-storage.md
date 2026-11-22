@@ -10,7 +10,9 @@ record mode) and ADR 0063 (the status boxes) stay as they are.
 ## Context
 
 ADR 0007 kept four entries in the top bar: Measure, Cursor, Display and Storage. Measure and Cursor have their own
-keys on the front panel and their own entries in the start menu, so the bar showed them a third time, on the scarcest
+keys on the front panel (the keys are there on the DHO800/DHO900; their codes 0x0f and 0x10 are taken from
+[frontpanel.md](../../protocols/frontpanel.md) and not yet verified on hardware) and their own entries in the start
+menu, so the bar showed them a third time, on the scarcest
 strip of a 1024 x 600 panel. The Display and Storage menus have no key, which is why they are in the bar at all.
 
 The Measure button also had a press-and-hold: a short menu (`MenuId::MeasHold`) whose one row, Add meas, added the
@@ -39,6 +41,8 @@ removed.
 - The long press of a key is one mechanism for the channel keys and Measure (`panel_key`, `ch_hold_poll`); another
   key with a long press is one line there.
 - Scripts and the web remote press keys without a hold: the long press of Measure is a front-panel action only.
+- Until the Measure key's code is verified on a unit, the start menu is the sure way to the measurement page; the
+  long press is not yet verified on hardware either.
 
 ## References
 
