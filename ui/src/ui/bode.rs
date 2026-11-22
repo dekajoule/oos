@@ -350,6 +350,15 @@ impl Ui {
         true
     }
 
+    /// Multi 2 with the menu closed: moves the cursor of a Bode plot that has points; false where there is none.
+    pub(super) fn bode_cursor_step(&mut self, d: i32) -> bool {
+        if self.m.view != AView::Bode || self.bode.points.is_empty() {
+            return false;
+        }
+        self.adjust(Item::BodeCur, d);
+        true
+    }
+
     pub(super) fn bode_activate(&mut self, it: Item) -> bool {
         if it == Item::BodeSave {
             let p = self.new_file(&self.save_dir(), "bode", "csv");
@@ -1270,6 +1279,27 @@ mod tests {
         }
         assert!(ui.bode.points.is_empty(), "the free sweep measures in dB: the impedance points go");
         assert!(!ui.bode_items().contains(&Item::BodeSave));
+    }
+
+    /// With the menu closed, multi 2 moves the cursor of a Bode plot that has points (#50); without points, or with
+    /// multi 1, the knob opens the menu as before.
+    #[test]
+    fn multi_2_moves_the_cursor_with_the_menu_closed() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.m.view = AView::Bode;
+        ui.close_menu();
+        ui.knob_turn(key::MULTI2_CW, 1);
+        assert!(ui.menu_open, "no points: the menu opens");
+        ui.close_menu();
+        ui.bode.points = (0..10).map(|i| (1e3 * (i + 1) as f64, -(i as f64), -10.0 * i as f64)).collect();
+        ui.knob_turn(key::MULTI2_CW, 3);
+        assert!(!ui.menu_open && ui.bode.cursor == 3, "cursor {}", ui.bode.cursor);
+        ui.knob_turn(key::MULTI2_CW, -1);
+        assert_eq!(ui.bode.cursor, 2);
+        ui.knob_turn(key::MULTI2_CW, 50);
+        assert_eq!(ui.bode.cursor, 9, "the last point");
+        ui.knob_turn(key::MULTI1_CW, 1);
+        assert!(ui.menu_open, "multi 1 opens the menu as before");
     }
 
     #[test]

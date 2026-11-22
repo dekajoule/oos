@@ -500,6 +500,10 @@ impl Ui {
             0xb0 | 0xa0 => {
                 let items = self.items(self.menu);
                 if !self.menu_open {
+                    // multi 2 turned over a Bode plot moves its cursor, so the menu need not cover it (#50)
+                    if base == 0xa0 && !push && self.bode_cursor_step(dir * acc) {
+                        return;
+                    }
                     self.open_menu(MenuId::Main);
                     return;
                 }
