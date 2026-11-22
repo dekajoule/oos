@@ -283,6 +283,16 @@ after the line `---- oos capture ----`, with `format 1`, the steps in the order 
 recipe form of section 10 (`adc`, `adcread`, `afe`, `select`, `wr`, and `wait` for pauses over 2 ms), then `end`.
 The ADC words are the ones the stock program wrote, its masks applied.
 
+`tools/mho-settings.py <scope-ip>` (with `mho-check.py` next to it) records what the stock system sets per setting,
+for OOS to set the same: it steps over SCPI through the time bases from 2 ns/div to 100 ms/div with CH1 alone and with
+all four channels, through every combination of channels at 1 us/div, and through every scale of each channel alone
+at 200 us/div, and sets everything back. For each setting it records the scope's own report of it (channels, scales,
+time base, sample rate, depth), the FPGA's configuration registers of the snapshot's list, the front-end words sent
+while it changed and the select lines, and where the sampling changes (the time bases and the channel combinations)
+the 128 registers of each ADC. The report `mho-settings-<model>-<date>.txt` ends, after `---- oos settings ----`,
+with `format 1`, `model`, `hwcode`, then per setting `setting NAME`, its `scpi` lines, a `state` line, `fpga`, `adc`,
+`afe` and `select` lines and `endsetting`, then `end`.
+
 `tools/mho-check.py <scope-ip> --afe-init` records the front ends' set-up at the start of the stock scope program:
 it switches on the trace event of `--afe` (a 16 MiB buffer in memory), restarts the program (`am force-stop`;
 Android's launcher starts it again, else `monkey` does), records for about half a minute, and sets the trace back.
