@@ -26,24 +26,18 @@ impl Scpi {
                 if query {
                     return t(&e(ui.m.time_per_div() as f64));
                 }
-                if let Some(v) = num(arg) {
+                return self.set_arg(ui, arg, num(arg), |ui, v| {
                     // as the knob: the expand point of :TIMebase:HREFerence:MODE keeps its place
                     let old = ui.m.time_per_div();
                     ui.m.tscale = nearest(&tscales(), v);
                     ui.m.tfine = 1.0;
                     ui.m.keep_expand_point(old);
-                    ui.mark_changed();
-                    return None;
-                }
+                });
             } else if kw(last, "OFFSet") || kw(last, "POSition") {
                 if query {
                     return t(&e(ui.m.delay as f64));
                 }
-                if let Some(v) = num(arg) {
-                    ui.m.delay = v;
-                    ui.mark_changed();
-                    return None;
-                }
+                return self.set_arg(ui, arg, num(arg), |ui, v| ui.m.delay = v);
             }
         }
         if n.len() == 1 && kw(n0, "VERNier") {

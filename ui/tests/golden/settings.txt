@@ -16,72 +16,72 @@ scpi :ACQuire:AVERages "3" -> query: 2; errors: none
 scpi :ACQuire:AVERages "65536" -> query: 1024; errors: none
 scpi :ACQuire:AVERages "x" -> query: 16; errors: -224,"Illegal parameter value" x
 scpi :ACQuire:AVERages default -> query: 16; errors: none
-scpi :ACQuire:AVERages:HARDware "" -> query: 0; errors: -113,"Undefined header" :ACQuire:AVERages:HARDware
-scpi :ACQuire:AVERages:HARDware "-1" -> query: 0; errors: -113,"Undefined header" :ACQuire:AVERages:HARDware -1
+scpi :ACQuire:AVERages:HARDware "" -> query: 0; errors: -224,"Illegal parameter value"
+scpi :ACQuire:AVERages:HARDware "-1" -> query: 0; errors: -224,"Illegal parameter value" -1
 scpi :ACQuire:AVERages:HARDware "0" -> query: 0; errors: none
 scpi :ACQuire:AVERages:HARDware "1" -> query: 1; errors: none
-scpi :ACQuire:AVERages:HARDware "1e9" -> query: 0; errors: -113,"Undefined header" :ACQuire:AVERages:HARDware 1e9
+scpi :ACQuire:AVERages:HARDware "1e9" -> query: 0; errors: -224,"Illegal parameter value" 1e9
 scpi :ACQuire:AVERages:HARDware "OFF" -> query: 0; errors: none
 scpi :ACQuire:AVERages:HARDware "ON" -> query: 1; errors: none
 scpi :ACQuire:AVERages:HARDware "on" -> query: 1; errors: none
-scpi :ACQuire:AVERages:HARDware "x" -> query: 0; errors: -113,"Undefined header" :ACQuire:AVERages:HARDware x
+scpi :ACQuire:AVERages:HARDware "x" -> query: 0; errors: -224,"Illegal parameter value" x
 scpi :ACQuire:AVERages:HARDware default -> query: 0; errors: none
-scpi :ACQuire:CORes "" -> query: MATC; errors: -113,"Undefined header" :ACQuire:CORes
-scpi :ACQuire:CORes "-1" -> query: MATC; errors: -113,"Undefined header" :ACQuire:CORes -1
+scpi :ACQuire:CORes "" -> query: MATC; errors: -224,"Illegal parameter value"
+scpi :ACQuire:CORes "-1" -> query: MATC; errors: -224,"Illegal parameter value" -1
 scpi :ACQuire:CORes "0" -> query: RAW; errors: none
 scpi :ACQuire:CORes "1" -> query: MATC; errors: none
-scpi :ACQuire:CORes "1e9" -> query: MATC; errors: -113,"Undefined header" :ACQuire:CORes 1e9
+scpi :ACQuire:CORes "1e9" -> query: MATC; errors: -224,"Illegal parameter value" 1e9
 scpi :ACQuire:CORes "MATC" -> query: MATC; errors: none
 scpi :ACQuire:CORes "MATChed" -> query: MATC; errors: none
 scpi :ACQuire:CORes "OFF" -> query: RAW; errors: none
 scpi :ACQuire:CORes "ON" -> query: MATC; errors: none
 scpi :ACQuire:CORes "RAW" -> query: RAW; errors: none
-scpi :ACQuire:CORes "x" -> query: MATC; errors: -113,"Undefined header" :ACQuire:CORes x
+scpi :ACQuire:CORes "x" -> query: MATC; errors: -224,"Illegal parameter value" x
 scpi :ACQuire:CORes default -> query: MATC; errors: none
-scpi :ACQuire:MDEPth "" -> query: 5.000000E+05; errors: -113,"Undefined header" :ACQuire:MDEPth
+scpi :ACQuire:MDEPth "" -> query: 5.000000E+05; errors: -224,"Illegal parameter value"
 scpi :ACQuire:MDEPth "-1" -> query: 5.000000E+05; errors: none
 scpi :ACQuire:MDEPth "1000" -> query: 1.000000E+03; errors: none
 scpi :ACQuire:MDEPth "1000000" -> query: 1.000000E+06; errors: none
 scpi :ACQuire:MDEPth "10k" -> query: 1.000000E+04; errors: none
 scpi :ACQuire:MDEPth "125M" -> query: 1.250000E+08; errors: none
 scpi :ACQuire:MDEPth "1M" -> query: 1.000000E+06; errors: none
-scpi :ACQuire:MDEPth "1e9" -> query: 5.000000E+05; errors: -113,"Undefined header" :ACQuire:MDEPth 1e9
+scpi :ACQuire:MDEPth "1e9" -> query: 5.000000E+05; errors: -224,"Illegal parameter value" 1e9
 scpi :ACQuire:MDEPth "1k" -> query: 1.000000E+03; errors: none
-scpi :ACQuire:MDEPth "200M" -> query: 5.000000E+05; errors: -113,"Undefined header" :ACQuire:MDEPth 200M
-scpi :ACQuire:MDEPth "7" -> query: 5.000000E+05; errors: -113,"Undefined header" :ACQuire:MDEPth 7
+scpi :ACQuire:MDEPth "200M" -> query: 5.000000E+05; errors: -224,"Illegal parameter value" 200M
+scpi :ACQuire:MDEPth "7" -> query: 5.000000E+05; errors: -224,"Illegal parameter value" 7
 scpi :ACQuire:MDEPth "AUTO" -> query: 5.000000E+05; errors: none
-scpi :ACQuire:MDEPth "x" -> query: 5.000000E+05; errors: -113,"Undefined header" :ACQuire:MDEPth x
+scpi :ACQuire:MDEPth "x" -> query: 5.000000E+05; errors: -224,"Illegal parameter value" x
 scpi :ACQuire:MDEPth default -> query: 5.000000E+05; errors: none
-scpi :ACQuire:SEGMents "" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents
-scpi :ACQuire:SEGMents "-1" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents -1
+scpi :ACQuire:SEGMents "" -> query: 0; errors: -224,"Illegal parameter value"
+scpi :ACQuire:SEGMents "-1" -> query: 0; errors: -224,"Illegal parameter value" -1
 scpi :ACQuire:SEGMents "0" -> query: 0; errors: none
 scpi :ACQuire:SEGMents "1" -> query: 1; errors: none
 scpi :ACQuire:SEGMents "10" -> query: 10; errors: none
 scpi :ACQuire:SEGMents "100000" -> query: 100000; errors: none
 scpi :ACQuire:SEGMents "100001" -> query: 100000; errors: none
-scpi :ACQuire:SEGMents "1e9" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents 1e9
+scpi :ACQuire:SEGMents "1e9" -> query: 0; errors: -224,"Illegal parameter value" 1e9
 scpi :ACQuire:SEGMents "OFF" -> query: 0; errors: none
-scpi :ACQuire:SEGMents "ON" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents ON
-scpi :ACQuire:SEGMents "x" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents x
+scpi :ACQuire:SEGMents "ON" -> query: 0; errors: -224,"Illegal parameter value" ON
+scpi :ACQuire:SEGMents "x" -> query: 0; errors: -224,"Illegal parameter value" x
 scpi :ACQuire:SEGMents default -> query: 0; errors: none
-scpi :ACQuire:SEGMents:HARDware "" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents:HARDware
-scpi :ACQuire:SEGMents:HARDware "-1" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents:HARDware -1
+scpi :ACQuire:SEGMents:HARDware "" -> query: 0; errors: -224,"Illegal parameter value"
+scpi :ACQuire:SEGMents:HARDware "-1" -> query: 0; errors: -224,"Illegal parameter value" -1
 scpi :ACQuire:SEGMents:HARDware "0" -> query: 0; errors: none
 scpi :ACQuire:SEGMents:HARDware "1" -> query: 1; errors: none
-scpi :ACQuire:SEGMents:HARDware "1e9" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents:HARDware 1e9
+scpi :ACQuire:SEGMents:HARDware "1e9" -> query: 0; errors: -224,"Illegal parameter value" 1e9
 scpi :ACQuire:SEGMents:HARDware "OFF" -> query: 0; errors: none
 scpi :ACQuire:SEGMents:HARDware "ON" -> query: 1; errors: none
 scpi :ACQuire:SEGMents:HARDware "on" -> query: 1; errors: none
-scpi :ACQuire:SEGMents:HARDware "x" -> query: 0; errors: -113,"Undefined header" :ACQuire:SEGMents:HARDware x
+scpi :ACQuire:SEGMents:HARDware "x" -> query: 0; errors: -224,"Illegal parameter value" x
 scpi :ACQuire:SEGMents:HARDware default -> query: 0; errors: none
-scpi :ACQuire:SEGMents:INTerval "" -> query: 0.000000E+00; errors: -113,"Undefined header" :ACQuire:SEGMents:INTerval
+scpi :ACQuire:SEGMents:INTerval "" -> query: 0.000000E+00; errors: -224,"Illegal parameter value"
 scpi :ACQuire:SEGMents:INTerval "-1" -> query: 0.000000E+00; errors: none
 scpi :ACQuire:SEGMents:INTerval "0" -> query: 0.000000E+00; errors: none
 scpi :ACQuire:SEGMents:INTerval "10" -> query: 1.000000E+01; errors: none
 scpi :ACQuire:SEGMents:INTerval "11" -> query: 1.000000E+01; errors: none
 scpi :ACQuire:SEGMents:INTerval "1e-3" -> query: 1.000000E-03; errors: none
 scpi :ACQuire:SEGMents:INTerval "1e9" -> query: 1.000000E+01; errors: none
-scpi :ACQuire:SEGMents:INTerval "x" -> query: 0.000000E+00; errors: -113,"Undefined header" :ACQuire:SEGMents:INTerval x
+scpi :ACQuire:SEGMents:INTerval "x" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" x
 scpi :ACQuire:SEGMents:INTerval default -> query: 0.000000E+00; errors: none
 scpi :ACQuire:TYPE "" -> query: NORM; errors: -224,"Illegal parameter value"
 scpi :ACQuire:TYPE "-1" -> query: NORM; errors: -224,"Illegal parameter value" -1
@@ -288,34 +288,34 @@ scpi :CHANnel1:BIAS "100" -> query: 1.000000E+02; errors: none
 scpi :CHANnel1:BIAS "1e9" -> query: 1.000000E+09; errors: none
 scpi :CHANnel1:BIAS "x" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:BIAS default -> query: 0.000000E+00; errors: none
-scpi :CHANnel1:BWLimit "" -> query: AUTO; errors: -113,"Undefined header" :CHANnel1:BWLimit
-scpi :CHANnel1:BWLimit "-1" -> query: AUTO; errors: -113,"Undefined header" :CHANnel1:BWLimit -1
+scpi :CHANnel1:BWLimit "" -> query: AUTO; errors: -224,"Illegal parameter value"
+scpi :CHANnel1:BWLimit "-1" -> query: AUTO; errors: -224,"Illegal parameter value" -1
 scpi :CHANnel1:BWLimit "100M" -> query: 100MHZ; errors: none
-scpi :CHANnel1:BWLimit "1e9" -> query: AUTO; errors: -113,"Undefined header" :CHANnel1:BWLimit 1e9
+scpi :CHANnel1:BWLimit "1e9" -> query: AUTO; errors: -224,"Illegal parameter value" 1e9
 scpi :CHANnel1:BWLimit "20M" -> query: 20M; errors: none
 scpi :CHANnel1:BWLimit "AUTO" -> query: AUTO; errors: none
 scpi :CHANnel1:BWLimit "OFF" -> query: OFF; errors: none
-scpi :CHANnel1:BWLimit "\"20 MHz\"" -> query: AUTO; errors: -113,"Undefined header" :CHANnel1:BWLimit "20 MHz"
-scpi :CHANnel1:BWLimit "x" -> query: AUTO; errors: -113,"Undefined header" :CHANnel1:BWLimit x
+scpi :CHANnel1:BWLimit "\"20 MHz\"" -> query: AUTO; errors: -224,"Illegal parameter value" "20 MHz"
+scpi :CHANnel1:BWLimit "x" -> query: AUTO; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:BWLimit default -> query: AUTO; errors: none
-scpi :CHANnel1:COUPling "" -> query: DC; errors: -113,"Undefined header" :CHANnel1:COUPling
-scpi :CHANnel1:COUPling "-1" -> query: DC; errors: -113,"Undefined header" :CHANnel1:COUPling -1
-scpi :CHANnel1:COUPling "1e9" -> query: DC; errors: -113,"Undefined header" :CHANnel1:COUPling 1e9
+scpi :CHANnel1:COUPling "" -> query: DC; errors: -224,"Illegal parameter value"
+scpi :CHANnel1:COUPling "-1" -> query: DC; errors: -224,"Illegal parameter value" -1
+scpi :CHANnel1:COUPling "1e9" -> query: DC; errors: -224,"Illegal parameter value" 1e9
 scpi :CHANnel1:COUPling "AC" -> query: AC; errors: none
 scpi :CHANnel1:COUPling "DC" -> query: DC; errors: none
-scpi :CHANnel1:COUPling "DC50" -> query: DC; errors: -113,"Undefined header" :CHANnel1:COUPling DC50
+scpi :CHANnel1:COUPling "DC50" -> query: DC; errors: -224,"Illegal parameter value" DC50
 scpi :CHANnel1:COUPling "GND" -> query: GND; errors: none
-scpi :CHANnel1:COUPling "x" -> query: DC; errors: -113,"Undefined header" :CHANnel1:COUPling x
+scpi :CHANnel1:COUPling "x" -> query: DC; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:COUPling default -> query: DC; errors: none
-scpi :CHANnel1:DISPlay "" -> query: 1; errors: -113,"Undefined header" :CHANnel1:DISPlay
-scpi :CHANnel1:DISPlay "-1" -> query: 1; errors: -113,"Undefined header" :CHANnel1:DISPlay -1
+scpi :CHANnel1:DISPlay "" -> query: 1; errors: -224,"Illegal parameter value"
+scpi :CHANnel1:DISPlay "-1" -> query: 1; errors: -224,"Illegal parameter value" -1
 scpi :CHANnel1:DISPlay "0" -> query: 0; errors: none
 scpi :CHANnel1:DISPlay "1" -> query: 1; errors: none
-scpi :CHANnel1:DISPlay "1e9" -> query: 1; errors: -113,"Undefined header" :CHANnel1:DISPlay 1e9
+scpi :CHANnel1:DISPlay "1e9" -> query: 1; errors: -224,"Illegal parameter value" 1e9
 scpi :CHANnel1:DISPlay "OFF" -> query: 0; errors: none
 scpi :CHANnel1:DISPlay "ON" -> query: 1; errors: none
 scpi :CHANnel1:DISPlay "on" -> query: 1; errors: none
-scpi :CHANnel1:DISPlay "x" -> query: 1; errors: -113,"Undefined header" :CHANnel1:DISPlay x
+scpi :CHANnel1:DISPlay "x" -> query: 1; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:DISPlay default -> query: 1; errors: none
 scpi :CHANnel1:EXPand "" -> query: CENT; errors: -224,"Illegal parameter value"
 scpi :CHANnel1:EXPand "-1" -> query: CENT; errors: -224,"Illegal parameter value" -1
@@ -324,15 +324,15 @@ scpi :CHANnel1:EXPand "CENTer" -> query: CENT; errors: none
 scpi :CHANnel1:EXPand "GND" -> query: GND; errors: none
 scpi :CHANnel1:EXPand "x" -> query: CENT; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:EXPand default -> query: CENT; errors: none
-scpi :CHANnel1:INVert "" -> query: 0; errors: -113,"Undefined header" :CHANnel1:INVert
-scpi :CHANnel1:INVert "-1" -> query: 0; errors: -113,"Undefined header" :CHANnel1:INVert -1
+scpi :CHANnel1:INVert "" -> query: 0; errors: -224,"Illegal parameter value"
+scpi :CHANnel1:INVert "-1" -> query: 0; errors: -224,"Illegal parameter value" -1
 scpi :CHANnel1:INVert "0" -> query: 0; errors: none
 scpi :CHANnel1:INVert "1" -> query: 1; errors: none
-scpi :CHANnel1:INVert "1e9" -> query: 0; errors: -113,"Undefined header" :CHANnel1:INVert 1e9
+scpi :CHANnel1:INVert "1e9" -> query: 0; errors: -224,"Illegal parameter value" 1e9
 scpi :CHANnel1:INVert "OFF" -> query: 0; errors: none
 scpi :CHANnel1:INVert "ON" -> query: 1; errors: none
 scpi :CHANnel1:INVert "on" -> query: 1; errors: none
-scpi :CHANnel1:INVert "x" -> query: 0; errors: -113,"Undefined header" :CHANnel1:INVert x
+scpi :CHANnel1:INVert "x" -> query: 0; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:INVert default -> query: 0; errors: none
 scpi :CHANnel1:LABel:CONTent "" -> query: ""; errors: none
 scpi :CHANnel1:LABel:CONTent "-1" -> query: -1; errors: none
@@ -352,36 +352,36 @@ scpi :CHANnel1:LABel:SHOW "ON" -> query: 1; errors: none
 scpi :CHANnel1:LABel:SHOW "on" -> query: 1; errors: none
 scpi :CHANnel1:LABel:SHOW "x" -> query: 0; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:LABel:SHOW default -> query: 0; errors: none
-scpi :CHANnel1:OFFSet "" -> query: -1.500000E+00; errors: -113,"Undefined header" :CHANnel1:OFFSet
+scpi :CHANnel1:OFFSet "" -> query: -1.500000E+00; errors: -224,"Illegal parameter value"
 scpi :CHANnel1:OFFSet "-1" -> query: -1.000000E+00; errors: none
 scpi :CHANnel1:OFFSet "-100" -> query: -5.600000E+01; errors: none
 scpi :CHANnel1:OFFSet "0.25" -> query: 2.500000E-01; errors: none
 scpi :CHANnel1:OFFSet "100" -> query: 5.600000E+01; errors: none
-scpi :CHANnel1:OFFSet "1e39" -> query: -1.500000E+00; errors: -113,"Undefined header" :CHANnel1:OFFSet 1e39
+scpi :CHANnel1:OFFSet "1e39" -> query: -1.500000E+00; errors: -224,"Illegal parameter value" 1e39
 scpi :CHANnel1:OFFSet "1e9" -> query: 5.600000E+01; errors: none
-scpi :CHANnel1:OFFSet "x" -> query: -1.500000E+00; errors: -113,"Undefined header" :CHANnel1:OFFSet x
+scpi :CHANnel1:OFFSet "x" -> query: -1.500000E+00; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:OFFSet default -> query: -1.500000E+00; errors: none
-scpi :CHANnel1:POSition "" -> query: -1.500000E+00; errors: -113,"Undefined header" :CHANnel1:POSition
+scpi :CHANnel1:POSition "" -> query: -1.500000E+00; errors: -224,"Illegal parameter value"
 scpi :CHANnel1:POSition "-1" -> query: -1.000000E+00; errors: none
 scpi :CHANnel1:POSition "-5" -> query: -5.000000E+00; errors: none
 scpi :CHANnel1:POSition "1" -> query: 1.000000E+00; errors: none
 scpi :CHANnel1:POSition "1e9" -> query: 5.600000E+01; errors: none
 scpi :CHANnel1:POSition "5" -> query: 5.000000E+00; errors: none
 scpi :CHANnel1:POSition "50" -> query: 5.000000E+01; errors: none
-scpi :CHANnel1:POSition "x" -> query: -1.500000E+00; errors: -113,"Undefined header" :CHANnel1:POSition x
+scpi :CHANnel1:POSition "x" -> query: -1.500000E+00; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:POSition default -> query: -1.500000E+00; errors: none
-scpi :CHANnel1:PROBe "" -> query: 1.000000E+00; errors: -113,"Undefined header" :CHANnel1:PROBe
-scpi :CHANnel1:PROBe "-1" -> query: 1.000000E+00; errors: -113,"Undefined header" :CHANnel1:PROBe -1
-scpi :CHANnel1:PROBe "0" -> query: 1.000000E+00; errors: -113,"Undefined header" :CHANnel1:PROBe 0
+scpi :CHANnel1:PROBe "" -> query: 1.000000E+00; errors: -224,"Illegal parameter value"
+scpi :CHANnel1:PROBe "-1" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" -1
+scpi :CHANnel1:PROBe "0" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" 0
 scpi :CHANnel1:PROBe "0.001" -> query: 1.000000E-03; errors: none
 scpi :CHANnel1:PROBe "0.5" -> query: 5.000000E-01; errors: none
 scpi :CHANnel1:PROBe "10" -> query: 1.000000E+01; errors: none
 scpi :CHANnel1:PROBe "1000" -> query: 1.000000E+03; errors: none
 scpi :CHANnel1:PROBe "1e9" -> query: 1.000000E+09; errors: none
-scpi :CHANnel1:PROBe "x" -> query: 1.000000E+00; errors: -113,"Undefined header" :CHANnel1:PROBe x
+scpi :CHANnel1:PROBe "x" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:PROBe default -> query: 1.000000E+00; errors: none
-scpi :CHANnel1:SCALe "" -> query: 1.000000E+00; errors: -113,"Undefined header" :CHANnel1:SCALe
-scpi :CHANnel1:SCALe "-1" -> query: 1.000000E+00; errors: -113,"Undefined header" :CHANnel1:SCALe -1
+scpi :CHANnel1:SCALe "" -> query: 1.000000E+00; errors: -224,"Illegal parameter value"
+scpi :CHANnel1:SCALe "-1" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" -1
 scpi :CHANnel1:SCALe "0.00005" -> query: 1.000000E-04; errors: none
 scpi :CHANnel1:SCALe "0.0001" -> query: 1.000000E-04; errors: none
 scpi :CHANnel1:SCALe "0.3" -> query: 2.000000E-01; errors: none
@@ -389,7 +389,7 @@ scpi :CHANnel1:SCALe "0.5" -> query: 5.000000E-01; errors: none
 scpi :CHANnel1:SCALe "10" -> query: 1.000000E+01; errors: none
 scpi :CHANnel1:SCALe "1e9" -> query: 1.000000E+01; errors: none
 scpi :CHANnel1:SCALe "20" -> query: 1.000000E+01; errors: none
-scpi :CHANnel1:SCALe "x" -> query: 1.000000E+00; errors: -113,"Undefined header" :CHANnel1:SCALe x
+scpi :CHANnel1:SCALe "x" -> query: 1.000000E+00; errors: -224,"Illegal parameter value" x
 scpi :CHANnel1:SCALe default -> query: 1.000000E+00; errors: none
 scpi :CHANnel1:TCALibrate "" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" timebase
 scpi :CHANnel1:TCALibrate "-1" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" timebase
@@ -1539,14 +1539,14 @@ scpi :TIMebase:HREFerence:MODE "RIGHt" -> query: RB; errors: none
 scpi :TIMebase:HREFerence:MODE "TRIGger" -> query: TRIG; errors: none
 scpi :TIMebase:HREFerence:MODE "x" -> query: CENT; errors: -224,"Illegal parameter value" x
 scpi :TIMebase:HREFerence:MODE default -> query: CENT; errors: none
-scpi :TIMebase:MAIN:OFFSet "" -> query: 0.000000E+00; errors: -113,"Undefined header" :TIMebase:MAIN:OFFSet
+scpi :TIMebase:MAIN:OFFSet "" -> query: 0.000000E+00; errors: -224,"Illegal parameter value"
 scpi :TIMebase:MAIN:OFFSet "-1" -> query: -1.000000E+00; errors: none
 scpi :TIMebase:MAIN:OFFSet "0.001" -> query: 1.000000E-03; errors: none
 scpi :TIMebase:MAIN:OFFSet "1000" -> query: 1.000000E+03; errors: none
 scpi :TIMebase:MAIN:OFFSet "1e9" -> query: 1.000000E+09; errors: none
-scpi :TIMebase:MAIN:OFFSet "x" -> query: 0.000000E+00; errors: -113,"Undefined header" :TIMebase:MAIN:OFFSet
+scpi :TIMebase:MAIN:OFFSet "x" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" x
 scpi :TIMebase:MAIN:OFFSet default -> query: 0.000000E+00; errors: none
-scpi :TIMebase:MAIN:SCALe "" -> query: 2.000000E-04; errors: -113,"Undefined header" :TIMebase:MAIN:SCALe
+scpi :TIMebase:MAIN:SCALe "" -> query: 2.000000E-04; errors: -224,"Illegal parameter value"
 scpi :TIMebase:MAIN:SCALe "-1" -> query: 5.000000E-11; errors: none
 scpi :TIMebase:MAIN:SCALe "0.001" -> query: 1.000000E-03; errors: none
 scpi :TIMebase:MAIN:SCALe "1000" -> query: 1.000000E+03; errors: none
@@ -1554,7 +1554,7 @@ scpi :TIMebase:MAIN:SCALe "1e4" -> query: 1.000000E+03; errors: none
 scpi :TIMebase:MAIN:SCALe "1e9" -> query: 1.000000E+03; errors: none
 scpi :TIMebase:MAIN:SCALe "3e-4" -> query: 2.000000E-04; errors: none
 scpi :TIMebase:MAIN:SCALe "5e-11" -> query: 5.000000E-11; errors: none
-scpi :TIMebase:MAIN:SCALe "x" -> query: 2.000000E-04; errors: -113,"Undefined header" :TIMebase:MAIN:SCALe
+scpi :TIMebase:MAIN:SCALe "x" -> query: 2.000000E-04; errors: -224,"Illegal parameter value" x
 scpi :TIMebase:MAIN:SCALe default -> query: 2.000000E-04; errors: none
 scpi :TIMebase:MODE "" -> query: MAIN; errors: -224,"Illegal parameter value"
 scpi :TIMebase:MODE "-1" -> query: MAIN; errors: -224,"Illegal parameter value" -1
@@ -1618,35 +1618,35 @@ scpi :TIMebase:XY:Z "NONE" -> query: NONE; errors: none
 scpi :TIMebase:XY:Z "OFF" -> query: NONE; errors: none
 scpi :TIMebase:XY:Z "x" -> query: NONE; errors: -224,"Illegal parameter value" x
 scpi :TIMebase:XY:Z default -> query: NONE; errors: none
-scpi :TRIGger:COUPling "" -> query: DC; errors: -113,"Undefined header" :TRIGger:COUPling
-scpi :TRIGger:COUPling "-1" -> query: DC; errors: -113,"Undefined header" :TRIGger:COUPling -1
-scpi :TRIGger:COUPling "1e9" -> query: DC; errors: -113,"Undefined header" :TRIGger:COUPling 1e9
+scpi :TRIGger:COUPling "" -> query: DC; errors: -224,"Illegal parameter value"
+scpi :TRIGger:COUPling "-1" -> query: DC; errors: -224,"Illegal parameter value" -1
+scpi :TRIGger:COUPling "1e9" -> query: DC; errors: -224,"Illegal parameter value" 1e9
 scpi :TRIGger:COUPling "AC" -> query: AC; errors: none
 scpi :TRIGger:COUPling "DC" -> query: DC; errors: none
 scpi :TRIGger:COUPling "HFR" -> query: HFR; errors: none
 scpi :TRIGger:COUPling "HFReject" -> query: HFR; errors: none
 scpi :TRIGger:COUPling "LFR" -> query: LFR; errors: none
 scpi :TRIGger:COUPling "LFReject" -> query: LFR; errors: none
-scpi :TRIGger:COUPling "x" -> query: DC; errors: -113,"Undefined header" :TRIGger:COUPling x
+scpi :TRIGger:COUPling "x" -> query: DC; errors: -224,"Illegal parameter value" x
 scpi :TRIGger:COUPling default -> query: DC; errors: none
-scpi :TRIGger:EDGE:LEVel "" -> query: 1.500000E+00; errors: -113,"Undefined header" :TRIGger:EDGE:LEVel
+scpi :TRIGger:EDGE:LEVel "" -> query: 1.500000E+00; errors: -224,"Illegal parameter value"
 scpi :TRIGger:EDGE:LEVel "-1" -> query: -1.000000E+00; errors: none
 scpi :TRIGger:EDGE:LEVel "-100" -> query: -1.000000E+02; errors: none
 scpi :TRIGger:EDGE:LEVel "0.5" -> query: 5.000000E-01; errors: none
 scpi :TRIGger:EDGE:LEVel "100" -> query: 1.000000E+02; errors: none
 scpi :TRIGger:EDGE:LEVel "1e9" -> query: 1.000000E+09; errors: none
-scpi :TRIGger:EDGE:LEVel "x" -> query: 1.500000E+00; errors: -113,"Undefined header" :TRIGger:EDGE:LEVel x
+scpi :TRIGger:EDGE:LEVel "x" -> query: 1.500000E+00; errors: -224,"Illegal parameter value" x
 scpi :TRIGger:EDGE:LEVel default -> query: 1.500000E+00; errors: none
-scpi :TRIGger:EDGE:SLOPe "" -> query: POS; errors: -113,"Undefined header" :TRIGger:EDGE:SLOPe
-scpi :TRIGger:EDGE:SLOPe "-1" -> query: POS; errors: -113,"Undefined header" :TRIGger:EDGE:SLOPe -1
-scpi :TRIGger:EDGE:SLOPe "1e9" -> query: POS; errors: -113,"Undefined header" :TRIGger:EDGE:SLOPe 1e9
+scpi :TRIGger:EDGE:SLOPe "" -> query: POS; errors: -224,"Illegal parameter value"
+scpi :TRIGger:EDGE:SLOPe "-1" -> query: POS; errors: -224,"Illegal parameter value" -1
+scpi :TRIGger:EDGE:SLOPe "1e9" -> query: POS; errors: -224,"Illegal parameter value" 1e9
 scpi :TRIGger:EDGE:SLOPe "NEG" -> query: NEG; errors: none
 scpi :TRIGger:EDGE:SLOPe "NEGative" -> query: NEG; errors: none
 scpi :TRIGger:EDGE:SLOPe "POS" -> query: POS; errors: none
 scpi :TRIGger:EDGE:SLOPe "POSitive" -> query: POS; errors: none
 scpi :TRIGger:EDGE:SLOPe "RFAL" -> query: RFAL; errors: none
 scpi :TRIGger:EDGE:SLOPe "RFALl" -> query: RFAL; errors: none
-scpi :TRIGger:EDGE:SLOPe "x" -> query: POS; errors: -113,"Undefined header" :TRIGger:EDGE:SLOPe x
+scpi :TRIGger:EDGE:SLOPe "x" -> query: POS; errors: -224,"Illegal parameter value" x
 scpi :TRIGger:EDGE:SLOPe default -> query: POS; errors: none
 scpi :TRIGger:EDGE:SOURce "" -> query: CHAN1; errors: -224,"Invalid trigger source"
 scpi :TRIGger:EDGE:SOURce "-1" -> query: CHAN1; errors: -224,"Invalid trigger source"
@@ -1655,22 +1655,22 @@ scpi :TRIGger:EDGE:SOURce "CHAN1" -> query: CHAN1; errors: none
 scpi :TRIGger:EDGE:SOURce "CHAN2" -> query: CHAN2; errors: none
 scpi :TRIGger:EDGE:SOURce "CHAN4" -> query: CHAN4; errors: none
 scpi :TRIGger:EDGE:SOURce "CHAN5" -> query: CHAN1; errors: -224,"Invalid trigger source"
-scpi :TRIGger:EDGE:SOURce "D0" -> query: CHAN1; errors: -113,"Undefined header" :TRIGger:EDGE:SOURce D0
-scpi :TRIGger:EDGE:SOURce "D15" -> query: CHAN1; errors: -113,"Undefined header" :TRIGger:EDGE:SOURce D15
-scpi :TRIGger:EDGE:SOURce "D16" -> query: CHAN1; errors: -113,"Undefined header" :TRIGger:EDGE:SOURce D16
+scpi :TRIGger:EDGE:SOURce "D0" -> query: CHAN1; errors: -224,"Illegal parameter value" D0
+scpi :TRIGger:EDGE:SOURce "D15" -> query: CHAN1; errors: -224,"Illegal parameter value" D15
+scpi :TRIGger:EDGE:SOURce "D16" -> query: CHAN1; errors: -224,"Illegal parameter value" D16
 scpi :TRIGger:EDGE:SOURce "R1" -> query: CHAN1; errors: -224,"Trigger source is unavailable"
 scpi :TRIGger:EDGE:SOURce "R10" -> query: CHAN1; errors: -224,"Trigger source is unavailable"
 scpi :TRIGger:EDGE:SOURce "R11" -> query: CHAN1; errors: -224,"Invalid trigger source"
 scpi :TRIGger:EDGE:SOURce "x" -> query: CHAN1; errors: -224,"Invalid trigger source"
 scpi :TRIGger:EDGE:SOURce default -> query: CHAN1; errors: none
-scpi :TRIGger:HOLDoff "" -> query: 0.000000E+00; errors: -113,"Undefined header" :TRIGger:HOLDoff
-scpi :TRIGger:HOLDoff "-1" -> query: 0.000000E+00; errors: -113,"Undefined header" :TRIGger:HOLDoff -1
+scpi :TRIGger:HOLDoff "" -> query: 0.000000E+00; errors: -224,"Illegal parameter value"
+scpi :TRIGger:HOLDoff "-1" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" -1
 scpi :TRIGger:HOLDoff "0" -> query: 0.000000E+00; errors: none
 scpi :TRIGger:HOLDoff "10" -> query: 1.000000E+01; errors: none
-scpi :TRIGger:HOLDoff "11" -> query: 0.000000E+00; errors: -113,"Undefined header" :TRIGger:HOLDoff 11
+scpi :TRIGger:HOLDoff "11" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" 11
 scpi :TRIGger:HOLDoff "1e-6" -> query: 1.000000E-06; errors: none
-scpi :TRIGger:HOLDoff "1e9" -> query: 0.000000E+00; errors: -113,"Undefined header" :TRIGger:HOLDoff 1e9
-scpi :TRIGger:HOLDoff "x" -> query: 0.000000E+00; errors: -113,"Undefined header" :TRIGger:HOLDoff x
+scpi :TRIGger:HOLDoff "1e9" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" 1e9
+scpi :TRIGger:HOLDoff "x" -> query: 0.000000E+00; errors: -224,"Illegal parameter value" x
 scpi :TRIGger:HOLDoff default -> query: 0.000000E+00; errors: none
 scpi :TRIGger:MODE "" -> query: EDGE; errors: -224,"Invalid trigger type"
 scpi :TRIGger:MODE "-1" -> query: EDGE; errors: -224,"Invalid trigger type"
@@ -1691,15 +1691,15 @@ scpi :TRIGger:MODE "WINDOW" -> query: WIND; errors: none
 scpi :TRIGger:MODE "edge" -> query: EDGE; errors: none
 scpi :TRIGger:MODE "x" -> query: EDGE; errors: -224,"Invalid trigger type"
 scpi :TRIGger:MODE default -> query: EDGE; errors: none
-scpi :TRIGger:NREJect "" -> query: 0; errors: -113,"Undefined header" :TRIGger:NREJect
-scpi :TRIGger:NREJect "-1" -> query: 0; errors: -113,"Undefined header" :TRIGger:NREJect -1
+scpi :TRIGger:NREJect "" -> query: 0; errors: -224,"Illegal parameter value"
+scpi :TRIGger:NREJect "-1" -> query: 0; errors: -224,"Illegal parameter value" -1
 scpi :TRIGger:NREJect "0" -> query: 0; errors: none
 scpi :TRIGger:NREJect "1" -> query: 1; errors: none
-scpi :TRIGger:NREJect "1e9" -> query: 0; errors: -113,"Undefined header" :TRIGger:NREJect 1e9
+scpi :TRIGger:NREJect "1e9" -> query: 0; errors: -224,"Illegal parameter value" 1e9
 scpi :TRIGger:NREJect "OFF" -> query: 0; errors: none
 scpi :TRIGger:NREJect "ON" -> query: 1; errors: none
 scpi :TRIGger:NREJect "on" -> query: 1; errors: none
-scpi :TRIGger:NREJect "x" -> query: 0; errors: -113,"Undefined header" :TRIGger:NREJect x
+scpi :TRIGger:NREJect "x" -> query: 0; errors: -224,"Illegal parameter value" x
 scpi :TRIGger:NREJect default -> query: 0; errors: none
 scpi :TRIGger:RUNT:LOWer "" -> query: 5.000000E-01; errors: -224,"Invalid runt threshold"
 scpi :TRIGger:RUNT:LOWer "-1" -> query: -1.000000E+00; errors: none
@@ -1728,13 +1728,13 @@ scpi :TRIGger:SOURce2 "R10" -> query: CHAN4; errors: -224,"Trigger source is una
 scpi :TRIGger:SOURce2 "R11" -> query: CHAN4; errors: -224,"Invalid trigger source"
 scpi :TRIGger:SOURce2 "x" -> query: CHAN4; errors: -224,"Invalid trigger source"
 scpi :TRIGger:SOURce2 default -> query: CHAN4; errors: none
-scpi :TRIGger:SWEep "" -> query: AUTO; errors: -113,"Undefined header" :TRIGger:SWEep
-scpi :TRIGger:SWEep "-1" -> query: AUTO; errors: -113,"Undefined header" :TRIGger:SWEep -1
-scpi :TRIGger:SWEep "1e9" -> query: AUTO; errors: -113,"Undefined header" :TRIGger:SWEep 1e9
+scpi :TRIGger:SWEep "" -> query: AUTO; errors: -224,"Illegal parameter value"
+scpi :TRIGger:SWEep "-1" -> query: AUTO; errors: -224,"Illegal parameter value" -1
+scpi :TRIGger:SWEep "1e9" -> query: AUTO; errors: -224,"Illegal parameter value" 1e9
 scpi :TRIGger:SWEep "AUTO" -> query: AUTO; errors: none
 scpi :TRIGger:SWEep "NORMal" -> query: NORM; errors: none
 scpi :TRIGger:SWEep "SINGle" -> query: SING; errors: none
-scpi :TRIGger:SWEep "x" -> query: AUTO; errors: -113,"Undefined header" :TRIGger:SWEep x
+scpi :TRIGger:SWEep "x" -> query: AUTO; errors: -224,"Illegal parameter value" x
 scpi :TRIGger:SWEep default -> query: AUTO; errors: none
 scpi :TRIGger:TYPe "" -> query: Edge; errors: -224,"Invalid trigger type"
 scpi :TRIGger:TYPe "-1" -> query: Edge; errors: -224,"Invalid trigger type"

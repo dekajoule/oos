@@ -6,11 +6,10 @@
 //! (ui/setting_items.rs). The slices are the places of `store::setup_text` that write them, so the keys of a setup
 //! file keep their order.
 //!
-//! An SCPI value a row does not take falls through to the later branches of `exec_cmd`, which answer
-//! `-113,"Undefined header"`, as before the table. `video_line` and `nth_n` take any whole number from a setup; their
-//! menu limits are row steps (docs/adr/code/0044). Still written out by hand: `trig_when` (its menu offers Off only for
-//! Runt, and a row offers the same choices whatever the model holds), and the sources, levels and patterns, which are
-//! not one value each.
+//! An SCPI value a row does not take is refused with `-224,"Illegal parameter value"`. `video_line` and `nth_n` take
+//! any whole number from a setup; their menu limits are row steps (docs/adr/code/0044). Still written out by hand:
+//! `trig_when` (its menu offers Off only for Runt, and a row offers the same choices whatever the model holds), and
+//! the sources, levels and patterns, which are not one value each.
 
 use super::{Arg, Choice, Scpi, Setting, Ty, Unknown, Val};
 use crate::model::{step_index, time_ladder, Pol, Slope, TrigMode, VSync, VideoStd, WinMode, TRIG_COUPS};

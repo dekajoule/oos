@@ -23,10 +23,6 @@ use crate::model::{AmpUnit, BWS, BW_20M, BW_FULL};
 /// The slices, in the order of the docs table.
 pub const SLICES: [&[Setting]; 6] = [&ON, &BW, &INVERT, &FINE, &UNIT, &EXPAND];
 
-/// The rows whose command refuses a value it does not take with `-224,"Illegal parameter value"`; a value the other
-/// rows do not take falls through to `-113`, as before the table.
-pub const REFUSES: [&str; 3] = ["ch<n>.unit", "fine_v", "v_expand_gnd"];
-
 /// Written first of a channel.
 pub const ON: [Setting; 1] = [Setting {
     key: "ch<n>.on",
