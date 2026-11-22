@@ -669,6 +669,11 @@ const BH7: (&[f64], f64) = (
     ],
     9.0,
 );
+/// How far (power ratio, 20 dB) the fundamental's strongest bin must stand above the median bin for `distortion` to
+/// call it a line. The largest of N bins of white noise is about ln N / ln 2 times the median (12 dB at 65 536 bins),
+/// so noise alone does not pass. Without this test a channel with only noise on it had a "fundamental" with THD, SNR
+/// and ENOB (seen on a unit: 97.6 MHz, SNR -8.7 dB, ENOB -1.5 bit).
+const LINE_OVER_MEDIAN: f64 = 100.0;
 const BH4: (&[f64], f64) = (&[0.358_75, 0.488_29, 0.141_28, 0.011_68], 5.0);
 const HANN: (&[f64], f64) = (&[0.5, 0.5], 3.0);
 
@@ -687,7 +692,7 @@ fn cos_sum(a: &[f64], i: usize, m: usize) -> f64 {
 /// Harmonics are searched at their aliased frequency. The window follows the number of periods in the record (`BH7`):
 /// with the widest one on a record of five periods the lobe of the fundamental held the third harmonic, and a 10 kHz
 /// square read 16.2 kHz (verified on the unit, a DHO924S). Returns `None` for records shorter than 64 samples or without a
-/// fundamental. A record needs four periods or more: below that the fundamental lies in the bins left to DC.
+/// fundamental (noise alone, `LINE_OVER_MEDIAN`). A record needs four periods or more: below that the fundamental lies in the bins left to DC.
 pub fn distortion(v: &[f32], dt: f64, fundamental: Option<f64>, harmonics: usize) -> Option<Distortion> {
     let x: Vec<f64> = v.iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
     if x.len() < 64 || !(dt > 0.0) {
@@ -748,6 +753,13 @@ fn distortion_with(
         }
         _ => (hw + 1..nb).max_by(|&a, &b| p[a].total_cmp(&p[b]))?,
     };
+    // noise alone has no fundamental (`LINE_OVER_MEDIAN`)
+    let mut bins = p[hw + 1..].to_vec();
+    let mid = bins.len() / 2;
+    let median = *bins.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1;
+    if !(p[k1] >= LINE_OVER_MEDIAN * median) {
+        return None;
+    }
     let lobe = |c: usize| c.saturating_sub(hw)..=(c + hw).min(nb - 1);
     let (sp, swp) = lobe(k1).fold((0.0, 0.0), |(a, b), k| (a + p[k], b + p[k] * k as f64));
     if !(sp > 0.0) {
