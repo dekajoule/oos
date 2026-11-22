@@ -1,11 +1,13 @@
-# MHO900: the platform without acquisition
+# MHO900: the platform, and a first acquisition by hand
 
 An OOS build for the Rigol MHO900 (MHO934, MHO954, MHO984, MHO98): the screen, touch, network, the web remote, SCPI,
-storage and updates of OOS on the MHO900's main board, with the **demo signal** in place of an acquisition. OOS has no
-code for the MHO900's acquisition board, and this build touches none of it: no FPGA, no front end, no clock, no
-generator. Of the front panel it reads the keys and sets the LEDs. The decision is
-[ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md); how a port is built in general is in
-[porting.md](porting.md).
+storage and updates of OOS on the MHO900's main board, with the **demo signal** in place of an acquisition. Nothing in
+this build starts the MHO900's acquisition board by itself: no FPGA, no front end, no clock, no generator. An owner
+who tests it can bring the board up and take a first acquisition by hand ("Bring-up, step 1" and "First acquisition"
+below). Of the front panel it reads the keys and sets the LEDs. The decisions are
+[ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md) and
+[ADR 0075](adr/hardware/0075-mho900-first-acquisition-from-the-units-own-snapshot.md); how a port is built in general
+is in [porting.md](porting.md).
 
 **Verified on two units (owners' reports, 2026-11-21, build `mho-dev-1`):** an MHO98 (GitHub issue #4) and an MHO934
 (issue #248) started OOS from the ADB install: the screen with the demo signal, touch, System info, Ethernet with DHCP
@@ -53,7 +55,8 @@ From the probe (reported by one unit, not checked on hardware by us):
   tree and changes what is the DHO's: PCIe with the MHO's PERST# (GPIO1_A3), spi5 with a spidev for the FPGA's image,
   the bring-up's lines named as stock names them, no spi1, no beeper on GPIO4_A3, no backlight enable on GPIO1_C2, no
   fan line on GPIO4_A5. The fan runs on PWM1 at full speed from the start (`pwm-fan`, `CONFIG_SENSORS_PWM_FAN`). The
-  MHO's acquisition pins are not named and not driven.
+  MHO's acquisition pins are named for the bring-up and the first acquisition (the front ends' bus and their select
+  lines) and driven only by them.
 - **Image**: `rootfs/board/mho`: the PCIe host and xdma modules (loaded only by the bring-up below), the touch driver, `/rigol` mounted read only (vendor.bin
   for the model and the MAC). `oos-board has-hardware` says no, so rcS starts no bring-up and oos-ui starts without
   `--hw`.
@@ -75,7 +78,8 @@ From the probe (reported by one unit, not checked on hardware by us):
   libraries the stock package keeps compressed, and when it still finds nothing the warning in System info says what it
   searched. Until then an owner sets the model by hand: `echo "model = MHO98" > /oos/limits.conf` over SSH, then
   restart. `Platform::drives_hardware` is false in this build, so `oos-fpgad` refuses every
-  hardware command and oos-ui drops `--hw`, whatever the vendor file says.
+  hardware command but the two run by hand (`bringup`, `mho-start`) and oos-ui drops `--hw`, whatever the vendor
+  file says; it keeps `--fpga-live` only for the first acquisition (`oos-mho-live`).
 - **Updates**: packages of this build are for `mho900-recovery`; a DHO package is refused on an MHO and the other way
   round. The first install takes no MHO900 model by itself (no variant has run OOS): it needs `--any-model`
   (`oos-any-model.txt` on the stick).
@@ -169,3 +173,20 @@ hardware; over SCPI it changes settings and sets them back) and attach the repor
 Still to be measured on a unit at the bench: the clock and ADC settings, the JESD204 link, the front ends and their
 select lines, the calibration files, the generator board and the front panel. Nothing of it is turned on before it
 has run on a unit (ADR 0010); `Target::acquisition` stays false until then.
+
+## First acquisition (by hand, for owners who test it)
+
+**Not yet verified on hardware** (ADR 0075). The board is started from the unit's own snapshot of the stock system and
+measures at that one setting: the probe compensation signal on the snapshot's channel.
+
+1. Under the stock system, right after a power-on with at least one channel off: `tools/mho-check.py <scope-ip>
+   --snapshot`, with the probe compensation output on the channel it names (protocols/mho-acquisition.md, section 7).
+2. Start OOS (a build from `mho-acq-1` on), copy the file to the scope: `scp mho-snapshot-*.txt
+   root@<scope>:/oos/mho-snapshot.txt`. The signal stays connected to the same channel.
+3. Over SSH: `oos-mho-live`. It runs `oos-fpgad mho-start --snapshot /oos/mho-snapshot.txt --yes` (the report goes
+   to `/oos/mho-start.txt`, its last line says `RESULT: IT MEASURES` when the square wave came back), then restarts
+   oos-ui on the board's frames. `oos-mho-live off` goes back to the demo signal; a power-off undoes all of it.
+
+What `mho-start` does, step by step, is in protocols/mho-acquisition.md section 10; `--dry` lists every step without
+touching the board. Only that setting is measured: the scale, time base and trigger keys still act on the demo's
+terms.

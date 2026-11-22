@@ -7,6 +7,14 @@
 //! and nothing here touches it. `acq` describes the board (registers, read-out format) for the bring-up to come.
 
 pub mod acq;
+/// The register window and the read-out stream: the same XDMA devices and access as on the DHO800/DHO900
+/// (`acq::BAR_DEVICE`, `acq::C2H_DEVICE`), mapped to `acq::WINDOW_USED`.
+pub mod bus {
+    #[cfg(target_os = "linux")]
+    pub use crate::dho::bus::Bar1;
+    pub use crate::dho::bus::{read_dma, Bus, DmaBuf};
+}
 pub mod board;
 pub mod bringup;
+pub mod snapshot;
 pub mod target;

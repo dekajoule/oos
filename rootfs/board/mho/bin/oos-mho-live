@@ -1,0 +1,39 @@
+#!/bin/sh
+# Copyright (C) 2026 dekajoule
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The MHO900's first acquisition, by hand, for an owner who tests it (docs/mho.md, "First acquisition"). It needs the
+# unit's own snapshot of the stock system (tools/mho-check.py --snapshot), copied to the scope. Everything it sets on
+# the acquisition board is gone at power-off. Not yet verified on hardware.
+#
+#   oos-mho-live [FILE]   runs `oos-fpgad mho-start --snapshot FILE --yes` (FILE: /oos/mho-snapshot.txt if not given;
+#                         its report goes to /oos/mho-start.txt), then restarts oos-ui on the frames of the board
+#                         (--fpga-live) instead of the demo signal, when a frame could be read
+#   oos-mho-live off      oos-ui with the demo signal again (the board stays set until power-off)
+REPORT=/oos/mho-start.txt
+
+# oos-ui runs in the loop of rcS, which starts it again 2 s after it ended, with the arguments in /tmp/oos-ui.args
+ui_with() {
+	printf '%s\n' "$1" > /tmp/oos-ui.args
+	killall oos-ui 2>/dev/null
+	echo "oos-mho-live: oos-ui restarts in a few seconds${1:+ with: $1}"
+}
+
+if [ "${1:-}" = off ]; then
+	ui_with "$(/bin/oos-board ui-args)"
+	exit 0
+fi
+SNAP=${1:-/oos/mho-snapshot.txt}
+[ -r "$SNAP" ] || { echo "oos-mho-live: no snapshot $SNAP (tools/mho-check.py --snapshot, then scp it here)" >&2; exit 2; }
+/bin/oos-fpgad mho-start --snapshot "$SNAP" --yes 2>&1 | tee "$REPORT"
+echo "oos-mho-live: the report is in $REPORT"
+grep -q '^RESULT: IT MEASURES\|^RESULT: a frame was read' "$REPORT" || {
+	echo "oos-mho-live: no frame was read, oos-ui stays on the demo signal"
+	exit 1
+}
+# the screen's preamble: 4000 points, the sample interval of the record (10 divisions over its depth), V/div / 7500
+scale=$(sed -n 's/^scale //p' "$SNAP")
+tdiv=$(sed -n 's/^timebase //p' "$SNAP")
+depth=$(($(sed -n 's/^fpga 0x10e4 //p' "$SNAP")))
+pre=$(awk -v s="$scale" -v t="$tdiv" -v d="$depth" \
+	'BEGIN { printf "0,2,4000,1,%g,0,0,%g,0,32768", (d > 0 ? 10 * t / d : 1e-9), s / 7500 }')
+ui_with "--fpga-live --snapshot $SNAP --pre $pre"

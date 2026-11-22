@@ -15,6 +15,9 @@
 pub const BAR_DEVICE: &str = "/dev/xdma0_bypass";
 /// Bytes the stock system maps of `BAR_DEVICE`.
 pub const BAR_LEN: usize = 16 << 20;
+/// Bytes of the window that OOS maps (`dho::bus::Bar1::open_len`): every block of `BLOCKS`, up to the multi-channel
+/// sync at 0x30000.
+pub const WINDOW_USED: usize = 0x40000;
 /// The read-out stream (card to host), read with a plain blocking `read()` as on the DHO800/DHO900.
 pub const C2H_DEVICE: &str = "/dev/xdma0_c2h_0";
 
@@ -135,6 +138,19 @@ pub mod afe {
     pub const SELECT_B: [u32; 4] = [152, 130, 126, 123];
     /// The select line `c` of each channel, CH1 first: high at 0.1 and 0.2 V/div at 1 MOhm, low at 50 ohm.
     pub const SELECT_C: [u32; 4] = [153, 131, 127, 124];
+    /// The bus lines by their names in OOS's device tree (kernel/dts/rk3399-rigol-mho900.dts), the chip selects CH1
+    /// first.
+    pub const SCLK_NAME: &str = "spi_afe_sclk";
+    pub const MOSI_NAME: &str = "spi_afe_mosi";
+    pub const CS_NAMES: [&str; 4] = ["spi_afe_cs_3", "spi_afe_cs_2", "spi_afe_cs_1", "spi_afe_cs_0"];
+
+    /// The device-tree name of select line `gpio` (`afe_sel_a_ch1` ...), None for another line.
+    pub fn select_name(gpio: u32) -> Option<String> {
+        [("a", SELECT_A), ("b", SELECT_B), ("c", SELECT_C)].iter().find_map(|(k, lines)| {
+            lines.iter().position(|&g| g == gpio).map(|ch| format!("afe_sel_{}_ch{}", k, ch + 1))
+        })
+    }
+
     /// Bits of a write frame, sent MSB first: the driver sets the data line, then the clock low and high, so a bit is
     /// valid at the rising edge.
     pub const FRAME_BITS: u32 = 24;
@@ -210,7 +226,7 @@ mod tests {
     fn the_blocks_are_ordered_and_apart() {
         assert!(BLOCKS.iter().all(|b| b.0 <= b.1 && b.1 % 4 == 0 && b.0 % 4 == 0));
         assert!(BLOCKS.windows(2).all(|w| w[0].1 < w[1].0));
-        assert!(BLOCKS.iter().all(|b| (b.1 as usize) < BAR_LEN));
+        assert!(BLOCKS.iter().all(|b| (b.1 as usize) < WINDOW_USED && WINDOW_USED <= BAR_LEN));
     }
 
     #[test]
@@ -234,6 +250,24 @@ mod tests {
         assert!((8..=11).all(|c| fpga_image(c) == Some("sparrow3_K160T_LR.bit")));
         assert_eq!(fpga_image(0), None);
         assert_eq!(fpga_image(12), None);
+    }
+
+    // Break it catches: a select line named for the wrong channel or letter (the device tree names them by number)
+    #[test]
+    fn select_lines_are_named_by_letter_and_channel() {
+        assert_eq!(afe::select_name(149).as_deref(), Some("afe_sel_a_ch1"));
+        assert_eq!(afe::select_name(131).as_deref(), Some("afe_sel_c_ch2"));
+        assert_eq!(afe::select_name(126).as_deref(), Some("afe_sel_b_ch3"));
+        assert_eq!(afe::select_name(122).as_deref(), Some("afe_sel_a_ch4"));
+        assert_eq!(afe::select_name(75), None);
+        let dts = include_str!("../../../kernel/dts/rk3399-rigol-mho900.dts");
+        for g in afe::SELECT_A.iter().chain(&afe::SELECT_B).chain(&afe::SELECT_C) {
+            let name = afe::select_name(*g).unwrap();
+            assert!(dts.contains(&format!("\"{}\"", name)), "{} is not named in the device tree", name);
+        }
+        for n in afe::CS_NAMES.iter().chain(&[afe::SCLK_NAME, afe::MOSI_NAME]) {
+            assert!(dts.contains(&format!("\"{}\"", n)), "{} is not named in the device tree", n);
+        }
     }
 
     #[test]

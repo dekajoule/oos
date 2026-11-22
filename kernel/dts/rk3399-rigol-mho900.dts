@@ -82,12 +82,22 @@
 		"", "", "", "", "", "", "", "";
 };
 
+/* the front ends' select lines a, b, c per channel (stock driver names; verified on MHO900 units with mho-check.py
+ * --map): CH4 and CH3 on GPIO3_D2..D7, CH2 on GPIO4_A1..A3, CH1 on GPIO4_C5, D0, D1 */
 &gpio3 {
-	/delete-property/ gpio-line-names;
+	gpio-line-names =
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "afe_sel_a_ch4", "afe_sel_b_ch4", "afe_sel_c_ch4", "afe_sel_a_ch3", "afe_sel_b_ch3", "afe_sel_c_ch3";
 };
 
 &gpio4 {
-	/delete-property/ gpio-line-names;
+	gpio-line-names =
+		"", "afe_sel_a_ch2", "afe_sel_b_ch2", "afe_sel_c_ch2", "", "", "", "",
+		"", "", "", "", "", "", "", "",
+		"", "", "", "", "", "afe_sel_a_ch1", "", "",
+		"afe_sel_b_ch1", "afe_sel_c_ch1", "", "", "", "", "", "";
 	/delete-node/ fan-power-hog;
 };
 

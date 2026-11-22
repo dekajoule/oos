@@ -17,6 +17,9 @@ fn opt<'a>(args: &'a [String], k: &str) -> Option<&'a str> {
     args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).map(|s| s.as_str())
 }
 
+/// A named step of the bring-up, for a list run in order.
+pub(super) type Stage<'a> = (&'a str, &'a dyn Fn() -> Result<(), String>);
+
 /// The steps in order; `--until` ends after the named one.
 const STEPS: [&str; 5] = ["power", "clock", "fpga", "pcie", "adc"];
 
@@ -46,7 +49,7 @@ pub(super) fn run(args: &[String]) -> i32 {
         );
         return 0;
     }
-    let steps: [(&str, &dyn Fn() -> Result<(), String>); 5] = [
+    let steps: [Stage; 5] = [
         ("power", &|| power(&[b::line::ADC_POWER, b::line::AFE_POWER])),
         ("clock", &|| clock(table)),
         ("fpga", &|| power(&[b::line::FPGA_POWER]).and_then(|_| fpga(image))),
@@ -77,7 +80,7 @@ fn straps() {
 }
 
 /// Switches the named supplies on, in order, 100 ms apart (the stock script writes them one after the other).
-fn power(lines: &[&str]) -> Result<(), String> {
+pub(super) fn power(lines: &[&str]) -> Result<(), String> {
     for n in lines {
         let l = Line::output(n, true).map_err(|e| e.to_string())?;
         drop(l); // the line keeps its level
@@ -144,7 +147,7 @@ impl Pll {
 
 /// The sample clock: the chip's ID first (a wrong bus or line stops here, before anything is written), then the
 /// unit's table, then the ID again.
-fn clock(table: &str) -> Result<(), String> {
+pub(super) fn clock(table: &str) -> Result<(), String> {
     let path = format!("{}/{}", b::CLOCK_DIR, table);
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path, e))?;
     let words = b::parse_clock_table(&text).map_err(|e| format!("{}: {}", path, e))?;
@@ -196,7 +199,7 @@ fn wait(l: &Line, level: bool, ms: u64) -> bool {
 
 /// The FPGA in slave serial mode (Xilinx UG470): PROGRAM_B low, INIT_B high again, the bitstream over spi5, then
 /// DONE. Then the 5 s the stock script waits.
-fn fpga(image: &str) -> Result<(), String> {
+pub(super) fn fpga(image: &str) -> Result<(), String> {
     use std::io::Write;
     let path = format!("{}/{}", b::FPGA_DIR, image);
     let file = std::fs::read(&path).map_err(|e| format!("{}: {}", path, e))?;
@@ -270,7 +273,7 @@ fn spidevs() -> String {
 }
 
 /// PCIe host and xdma (the helper of the DHO800/DHO900, with its retries), then the first registers.
-fn pcie() -> Result<(), String> {
+pub(super) fn pcie() -> Result<(), String> {
     use oos_hal::dho::bus::Bus;
     let mut bar = crate::pcie::pcie_up().map_err(|e| e.to_string())?;
     let id = std::fs::read_to_string("/sys/bus/pci/devices/0000:01:00.0/device").unwrap_or_default();

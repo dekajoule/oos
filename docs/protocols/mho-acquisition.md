@@ -378,3 +378,31 @@ nothing of it driven by OOS:
   50 ohm trim of 0x2c and 0x2d does and what the read of register 0 reports; which bandwidth 0x2e's full-bandwidth value stands for;
 - whether the run and read-out sequences of acquisition-start.md work unchanged with the new words of section 3 left
   at their power-on values.
+
+## 10. The first acquisition from a snapshot
+
+**Not yet verified on hardware** (ADR 0075). `oos-fpgad mho-start` starts the board from the unit's own snapshot of
+the stock system (section 7) and arms one acquisition. The order is assumed from the stock cold start (sections 1
+and 4); a step that does not read back as written does not stop the run, it is reported.
+
+1. The bring-up of docs/mho.md: supplies, clock table, FPGA image, PCIe.
+2. The ADCs: every register of the snapshot that read valid and the same twice, ADC 0 then ADC 1, in address order,
+   written through the bridge (section 4) with the data as read. The stock system's masks are already in that data:
+   it is what the ADC holds.
+3. The link: 0x2003c = 1, 5 ms, 0; the JESD204 receiver's words of the snapshot (0x20004 to 0x20818); 0x10120 with
+   bit 0 set for 50 ms (assumed: the sync enable of the stock cold start), then with it cleared.
+4. The FPGA's configuration: the snapshot's words in address order, the SCU's mode word 0x4008 last. Left out: the
+   status and read-back words (0x11e8, 0x1208, 0x120c, 0x1210, 0x1438, 0x401c, 0x4030, 0x4034, 0x40b0, 0x40b4,
+   0x40c0, 0x40c4, 0x4100) and the words the arm writes itself (0x1000, 0x4004, 0x4010 to 0x4018, 0x4080).
+5. The front end of the snapshot's channel: the set of its switch-on, then the words of its scale, in the order the stock
+   system sent them (section 8); then the twelve select lines at the levels the snapshot read.
+6. A read-back of steps 2 and 4: how many words and registers read as in the snapshot, and the first that do not.
+   A write-only register or a status bit may read otherwise and be right.
+7. One acquisition with the sequences of the DHO800/DHO900 (acquisition-start.md, record-play.md): the status
+   cleared, the arm, up to 2 s for 0x4080 bit 30, the play side's pass-through, the play-last read-out of 4000
+   points around the record's middle, then one read of the stream. The FSM's channel mask is the snapshot's (bits
+   3:0 of 0x4008). Up to three tries.
+
+The verdict: the words decoded at the snapshot's scale (section 5) hold a square wave when two levels at least half a
+division apart each hold a tenth of the points or more, within the screen. `oos-mho-live` then shows the frames on the
+screen with oos-ui's live source (`--fpga-live --snapshot FILE`), one acquisition after the other.
