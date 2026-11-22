@@ -224,10 +224,10 @@ fn clear_empties_the_display_in_stop() {
     assert_eq!(lit(&ui), 0);
 }
 
-/// A tap on Measure opens the measurement list. A press-and-hold opens a short menu and Add meas,
-/// released on the button, adds the next usual measurement. The rest of the Measure page is unchanged.
+/// The Measure key opens the measurement list and closes it again. Held on the front panel it adds the next usual
+/// measurement instead, at once, and its release does nothing more. The rest of the Measure page is unchanged.
 #[test]
-fn measure_tap_lists_and_hold_adds() {
+fn measure_key_lists_and_its_long_press_adds() {
     use super::*;
     let mut ui = crate::ui::testkit::demo_ui();
     let rest = vec![
@@ -259,42 +259,32 @@ fn measure_tap_lists_and_hold_adds() {
         assert_ne!(ui.item_label(it), "Add item");
     }
     ui.close_menu();
-    let r = ui.measure_btn().unwrap();
-    let (x, y) = mid(r);
-    ui.tap(x, y);
+    ui.key(key::MEASURE);
     assert!(ui.menu_open && ui.menu == MenuId::MeasAdd);
-    assert!(!ui.m.meas.iter().any(|e| e.0 == Meas::Period));
-    ui.tap(x, y);
+    ui.key(key::MEASURE);
     assert!(!ui.menu_open);
-    // a short press is still a tap
-    ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
+    // a short press on the front panel is the key
+    ui.panel_key(key::MEASURE);
     ui.step(0.2);
     assert!(!ui.menu_open);
-    ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
+    ui.panel_key(0);
     assert!(ui.menu_open && ui.menu == MenuId::MeasAdd);
     ui.close_menu();
-    // press and hold: the short menu, then the shortcut on release
-    ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
-    ui.step(0.5);
-    assert!(ui.menu_open && ui.menu == MenuId::MeasHold);
-    assert_eq!(ui.items(MenuId::MeasHold), vec![Item::AddMeas]);
-    assert_eq!(ui.item_label(Item::AddMeas), "Add meas");
+    // held: the next usual measurement, then nothing on the release
+    ui.m.meas.retain(|e| e.0 != Meas::Period);
     let n = ui.m.meas.len();
-    ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x, y });
-    assert!(ui.m.meas.contains(&(Meas::Period, WaveId::Ch(0))));
+    ui.panel_key(key::MEASURE);
+    ui.step(LONG_PRESS + 0.05);
     assert_eq!(ui.m.meas.len(), n + 1);
     assert!(!ui.menu_open);
-    // a lift away from the button leaves the menu and adds nothing further
-    ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x, y });
-    ui.step(0.5);
-    let n = ui.m.meas.len();
-    ui.handle(Ev::Touch { id: 0, phase: Phase::Up, x: 8, y: 300 });
-    assert!(ui.menu_open && ui.menu == MenuId::MeasHold);
-    assert_eq!(ui.m.meas.len(), n);
-    let (bx, by) = mid(row_of(&ui, Item::AddMeas).ctrl);
-    ui.tap(bx, by);
-    assert!(ui.m.meas.len() > n);
-    assert_eq!(ui.menu, MenuId::MeasHold);
+    ui.panel_key(0);
+    assert!(!ui.menu_open, "the release after a long press opens nothing");
+    assert_eq!(ui.m.meas.len(), n + 1);
+    // again: the next one that is not on yet
+    ui.panel_key(key::MEASURE);
+    ui.step(LONG_PRESS + 0.05);
+    ui.panel_key(0);
+    assert_eq!(ui.m.meas.len(), n + 2);
 }
 
 /// QUICK key and the Quick button run the action set in System > Quick key; Default keeps the setting.

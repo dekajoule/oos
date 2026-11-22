@@ -136,8 +136,6 @@ pub(super) enum Item {
     /// copies every measurement on Source A to the picked source
     MeasCopyTo,
     MeasAdd(Meas),
-    /// shortcut on the press-and-hold menu: the next usual measurement
-    AddMeas,
     /// settings of one added measurement, index into `m.meas`
     MeasCfg(u16),
     MeasPair(usize),
@@ -754,7 +752,6 @@ mod part_tests {
             Acquire,
             Measure,
             MeasAdd,
-            MeasHold,
             MeasPair,
             Dvm,
             Cursor,

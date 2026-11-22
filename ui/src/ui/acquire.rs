@@ -249,7 +249,6 @@ impl Ui {
         self.eye_auto_poll();
         self.relayout();
         self.now += dt_wall;
-        self.meas_hold_tick();
         self.workspace_hold_tick();
         for (_, poll) in POLLS {
             poll(self);
