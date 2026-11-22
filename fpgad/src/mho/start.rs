@@ -30,7 +30,7 @@ const DEFAULT_RECIPE: &str = "/oos/mho-recipe.txt";
 const CSV: &str = "/tmp/mho-frame.csv";
 /// The revision of this command, the first line of its report: says which `oos-fpgad` made a report (the mho-dev
 /// release it came with).
-const REVISION: &str = "mho-dev-21";
+const REVISION: &str = "mho-dev-22";
 /// Acquisitions tried, and how long each may take to complete.
 const TRIES: u32 = 3;
 const DONE_MS: u64 = 2000;

@@ -102,7 +102,9 @@ fn run(out: &HwShared) {
         if settings.is_some() { "; the keys set the board" } else { "; no settings file: the keys don't" }
     ));
     let mut buf = DmaBuf::new();
-    let (mut seq, mut settle) = (0u64, SETTLE);
+    let (mut seq, mut settle, mut fired) = (0u64, SETTLE, 0u32);
+    // the stock system's upper bits of 0x1154 for the pass-through: the snapshot's, then each plan's
+    let mut keep_1154 = s.fpga.get(&0x1154).copied().unwrap_or(0);
     loop {
         let (hold, want) = {
             let g = lock(out);
@@ -118,6 +120,7 @@ fn run(out: &HwShared) {
                     match st.plan(ch, w.tdiv, w.scale) {
                         Ok(p) => {
                             apply(&mut bar, afe.as_mut(), &p);
+                            keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
                             now = Now {
                                 ch,
                                 scale: p.scale,
@@ -143,12 +146,28 @@ fn run(out: &HwShared) {
         win.n = now.n;
         win.start = now.pre.saturating_sub(now.n / 2);
         win.fsm = now.mask;
-        let r = snapshot::acquire(&mut bar, &mut sh, &win, DONE_MS, &mut |ms| {
-            std::thread::sleep(Duration::from_millis(ms))
-        });
-        if let Err(a) = r {
-            status(format!("MHO900: no acquisition within {} ms (status {:#x})", a.ms, a.status));
-            continue;
+        let pass = snapshot::passthrough_keeping(keep_1154);
+        let r = snapshot::acquire_with(
+            &mut bar,
+            &mut sh,
+            &win,
+            DONE_MS,
+            &mut |ms| std::thread::sleep(Duration::from_millis(ms)),
+            &pass,
+        );
+        let a = match r {
+            Ok(a) => a,
+            Err(a) => {
+                status(format!("MHO900: no acquisition within {} ms (status {:#x})", a.ms, a.status));
+                continue;
+            }
+        };
+        // how often the FPGA's trigger fired, against the auto trigger's timeout (0x4034 bit 6, as on the DHO800/DHO900:
+        // assumed on the MHO900), in the screen's log every 50 frames
+        fired += (a.status & 1 << 6 != 0) as u32;
+        if seq % 50 == 49 {
+            eprintln!("oos-ui mho: trigger fired in {} of the last 50 acquisitions (status {:#x})", fired, a.status);
+            fired = 0;
         }
         let words: Vec<u16> = match buf.read(&mut c2h, 2 * win.n as usize, |_, _| {}) {
             Ok(b) => b.as_chunks::<2>().0.iter().map(|w| u16::from_le_bytes(*w)).collect(),

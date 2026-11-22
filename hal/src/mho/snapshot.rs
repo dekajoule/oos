@@ -335,6 +335,27 @@ pub fn acquire<B: Bus>(
     done_ms: u64,
     sleep: &mut dyn FnMut(u64),
 ) -> Result<Armed, Armed> {
+    acquire_with(bus, sh, win, done_ms, sleep, &scu::passthrough())
+}
+
+/// The play side's pass-through for the MHO900: the DHO800/DHO900's (`scu::passthrough`) with the upper bits of
+/// 0x1154 kept as the stock system set them in `word` (0x4c3 in every recorded setting from 20 ns/div on, 0x5c6 with
+/// the sinc interpolation below; the DHO's sets them 0). At 1 GSa/s and above the read-out held a flat line with the
+/// DHO's (hp197's MHO98, mho-dev-21, issue #4), where the stock system's settings of 1 us/div and 2 us/div differ in
+/// the rate code only (assumed: those bits matter where the two ADCs interleave).
+pub fn passthrough_keeping(word: u32) -> Vec<crate::dho::Write> {
+    scu::passthrough().into_iter().map(|(a, v)| if a == 0x1154 { (a, v | (word & !0x7)) } else { (a, v) }).collect()
+}
+
+/// `acquire` with the play side's pass-through `pass`.
+pub fn acquire_with<B: Bus>(
+    bus: &mut B,
+    sh: &mut Shadows,
+    win: &Window,
+    done_ms: u64,
+    sleep: &mut dyn FnMut(u64),
+    pass: &[crate::dho::Write],
+) -> Result<Armed, Armed> {
     let last = bus.rd(0x4034);
     bus.apply(&scu::clear_status(last));
     bus.apply(&scu::arm(win.fsm, sh, 0, 1));
@@ -350,7 +371,7 @@ pub fn acquire<B: Bus>(
         return Err(a);
     }
     sh.s4080 = v;
-    bus.apply(&scu::passthrough());
+    bus.apply(pass);
     bus.apply(&scu::readout(win, sh));
     Ok(a)
 }
@@ -551,6 +572,17 @@ mod tests {
         assert!(parse_afe_init("no mark\n").is_err());
         assert!(parse_afe_init(&text.replace("end\n", "")).is_err());
         assert!(parse_afe_init(&text.replace("afe 4", "afe 5")).is_err());
+    }
+
+    // Break it catches: the stock system's upper bits of 0x1154 cleared by the pass-through (the read-out at 1 GSa/s
+    // and above was flat with them cleared), or the pass-through's other words changed.
+    #[test]
+    fn the_mho_pass_through_keeps_the_stock_bits_of_0x1154() {
+        let p = passthrough_keeping(0x4c3);
+        let w1154: Vec<u32> = p.iter().filter(|w| w.0 == 0x1154).map(|w| w.1).collect();
+        assert_eq!(w1154, [0x4c1, 0x4c3]);
+        let others = |v: &[(u32, u32)]| v.iter().filter(|w| w.0 != 0x1154).copied().collect::<Vec<_>>();
+        assert_eq!(others(&p), others(&scu::passthrough()));
     }
 
     // Break it catches: a flat line, noise, a clipped trace or a single spike taken for the probe compensation signal.

@@ -511,3 +511,15 @@ go to the nearest recorded step of each (by ratio), and the state is made from t
 The sample interval is the reciprocal of the sample rate the stock system reported, the trigger at the pre-trigger
 count 0x4050, the points read the record's depth (at most 100 000, around the trigger). The first two acquisitions
 after a change are dropped while the board settles. Frames are volts at the probe tip (the screen's probe ratio).
+
+**Seen on the unit** (hp197's MHO98, mho-dev-21, issue #4): the keys set the board on CH1 (the snapshot was CH2):
+every scale from 1 mV/div to 5 V/div showed the probe compensation signal at the same 0 to 0.3 V, and the time bases
+from 2 us/div to 10 ms/div at the recorded sample rates. From 1 us/div on (1 GSa/s and above) the read-out was a flat
+line. The stock system's settings of 1 us/div and 2 us/div differ in the rate code 0x10d0 only (0x8004 against
+0x8008); the read-out's pass-through of the DHO800/DHO900 cleared the upper bits of 0x1154 that the stock system sets
+(0x4c3). From mho-dev-22 on the MHO900's pass-through keeps them (`snapshot::passthrough_keeping`; assumed: they matter
+where the two ADCs interleave). The trigger: the stock system's level words hold a window around the level (0x2004
+0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
+0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
+holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open. The acquisition thread counts
+0x4034 bit 6 in the screen's log.
