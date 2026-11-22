@@ -150,7 +150,8 @@ The Bode plot shows the gain above and the phase below over the frequency. Both 
 steps (dB, or V/V for an impedance sweep, and degrees); the title line of each half names its whole range. Once a
 sweep has points, **Save CSV** in the Bode menu writes them where **Storage > Save to** points, as `bode-....csv`:
 frequency in Hz, gain in dB (or Vout/Vin) and phase in degrees, one line a point. Over SCPI `:BODE:DATA?` returns the
-same points.
+same points. With the menu closed, the **Multipurpose 2** knob moves the cursor from point to point, so the menu
+does not cover the plot while you read it.
 
 ### Bode with an external generator
 
