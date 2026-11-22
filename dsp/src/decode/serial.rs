@@ -269,7 +269,36 @@ fn spi_lines(l: &Lines) -> Result<Vec<Packet>, &'static str> {
         _ => None,
     };
     let cs = cs_hi.as_deref().or(l.lines[2]);
-    Ok(spi(clk, l.main(), None, cs, l.sh.spi_mode, l.sh.bits, true, l.thr, l.hy, gap))
+    let p = spi(clk, l.main(), None, cs, l.sh.spi_mode, l.sh.bits, true, l.thr, l.hy, gap);
+    match cs {
+        Some(c) if spi_frames_cut(clk, c, l.sh.spi_mode, l.thr, l.hy, &p) => Err(SPI_CUT),
+        _ => Ok(p),
+    }
+}
+
+/// What the band of an SPI decoder says where most frames end before a word is whole: the record has too few samples
+/// for the clock (a slower time base at the same memory), or the frames are shorter than the Data bits set.
+pub const SPI_CUT: &str = "Frames shorter than a word: too few samples for the clock, or Data bits";
+
+/// A bus the record does not show: more frames of `cs` (active low) have capture edges of the clock and no whole word
+/// than frames with a word. What a long frame still gives is then no reading of the bus (200 kbit/s in a record of
+/// 125 kSa/s read "05 05 05 05" for a frame of 16 words, and nothing for the frames of one word around it).
+fn spi_frames_cut(clk: &[f32], cs: &[f32], mode: u8, thr: f32, hy: f32, words: &[Packet]) -> bool {
+    let rising = matches!(mode, 0 | 3);
+    let cs_e = edges(cs, thr, hy);
+    let falls: Vec<f64> = cs_e.iter().filter(|e| !e.rising).map(|e| e.t).collect();
+    let clocks: Vec<f64> = edges(clk, thr, hy).iter().filter(|e| e.rising == rising).map(|e| e.t).collect();
+    let (mut read, mut cut) = (0, 0);
+    for (k, &start) in falls.iter().enumerate() {
+        let next = falls.get(k + 1).copied().unwrap_or(f64::INFINITY);
+        let end = cs_e.iter().find(|e| e.rising && e.t > start).map_or(f64::INFINITY, |e| e.t);
+        if words.iter().any(|w| w.t0 >= start && w.t0 < next) {
+            read += 1;
+        } else if clocks.get(clocks.partition_point(|&t| t <= start)).is_some_and(|&t| t < end) {
+            cut += 1;
+        }
+    }
+    cut > read
 }
 
 /// SPI: words of `bits` bits sampled on the capture edge of `mode` (0/3: rising, 1/2: falling); a word ends after
@@ -641,6 +670,54 @@ mod tests {
             ]
         );
         assert!(i2c(&a, &c, 1.65, 0.2).iter().all(|x| !matches!(x.kind, Kind::Addr { .. } | Kind::Data)));
+    }
+
+    /// An SPI bus the record has too few samples for: the frames of one word give nothing and a long frame gives
+    /// words that are none. The decoder says what is wrong; it lists no such words.
+    #[test]
+    fn spi_says_when_the_frames_are_shorter_than_a_word() {
+        use crate::protocols::{Lines, Shared, OPTS};
+        // one word a frame, a frame every 500 us, clock 200 kHz; every eighth frame has 16 words
+        let short = spi_logic(&[(0xa5, 0)], 8, 0, 200e3, 0.0, 3.3);
+        let words: Vec<(u32, u32)> = (0..16).map(|k| (k, 0)).collect();
+        let long = spi_logic(&words, 8, 0, 200e3, 0.0, 3.3);
+        let (period, burst) = (500e-6, 8.0 * 500e-6);
+        let line = |i: usize, dt: f64| -> Vec<f32> {
+            let v = |t: f64| {
+                let t = t.rem_euclid(burst);
+                if t < 2.0 * period {
+                    long[i].v(t)
+                } else {
+                    short[i].v(t.rem_euclid(period))
+                }
+            };
+            sample(v, 0.0, dt, (40e-3 / dt) as usize)
+        };
+        let decode = |dt: f64, bits: u32| {
+            let [cs, clk, mosi] = [0, 1, 2].map(|i| line(i, dt));
+            let sh = Shared {
+                baud: 9600.0,
+                bits,
+                parity: Parity::None,
+                spi_mode: 0,
+                can_rate: 500e3,
+                canh: false,
+                usb_speed: crate::decode::UsbSpeed::Auto,
+                cphy_rate: 0.0,
+                uart_inv: false,
+                spi_timeout: 0.0,
+                spi_cs_high: false,
+            };
+            let lines = [Some(&mosi[..]), Some(&clk[..]), Some(&cs[..]), None];
+            SPI.decode(&Lines { lines, dt, thr: 1.65, hy: 0.2, opt: [0; OPTS], sh, chans: [None; 4], src: [None; 4] })
+        };
+        // 2.5 samples a bit: every word is read
+        let p = decode(2e-6, 8).unwrap();
+        assert!(p.iter().filter(|x| x.kind == Kind::Data).count() > 100);
+        // 8 us a sample: under one sample a bit
+        assert_eq!(decode(8e-6, 8).err(), Some(SPI_CUT));
+        // enough samples, and Data bits 16 on frames of 8: the same note
+        assert_eq!(decode(2e-6, 16).err(), Some(SPI_CUT));
     }
 
     #[test]
