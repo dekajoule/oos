@@ -347,15 +347,24 @@ impl Ui {
         } else if self.menu_open && self.menu == MenuId::Channel(c) {
             m.ch[c].on = false;
             self.menu_open = false;
-            if let Some(o) = (0..NCH).find(|&i| self.m.ch[i].on) {
-                self.m.active = o;
-            }
+            self.select_a_channel_that_is_on(c);
         } else {
             m.active = c;
             self.open_menu(MenuId::Channel(c));
         }
         self.select_workspace_source(WaveId::Ch(if self.m.ch[c].on { c } else { self.m.active }));
         self.settings_changed();
+    }
+
+    /// After channel `c` went off: when it was the selected one, the first channel still on is selected, so the
+    /// vertical knobs act on a channel that is shown (#523). The key and the menu's On both come here.
+    pub(super) fn select_a_channel_that_is_on(&mut self, c: usize) {
+        if self.m.active != c || self.m.ch[c].on {
+            return;
+        }
+        if let Some(o) = (0..NCH).find(|&i| self.m.ch[i].on) {
+            self.select_workspace_source(WaveId::Ch(o));
+        }
     }
 
     /// The Default key: the default set-up, keeping the Quick key action and the text size.
