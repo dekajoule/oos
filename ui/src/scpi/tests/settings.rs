@@ -398,6 +398,15 @@ fn a_bad_value_of_a_known_header_is_224_and_an_unknown_header_113() {
         assert_eq!(line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?"), "0,\"No error\"", "{header} {value}");
         assert_eq!(line(&mut s, &mut ui, &cv, query), before, "{header} {value} changed the setting");
     }
+    // nor is a refused value taken as a change of the settings (that clears the measurement statistics, Copilot on
+    // #516); a good one still is
+    let (mut s, mut ui, cv) = session();
+    ui.m.run = RunState::Run;
+    ui.dirty_map = false;
+    line(&mut s, &mut ui, &cv, ":TRIGger:HOLDoff 11");
+    assert!(!ui.dirty_map, "a refused value marked the settings changed");
+    line(&mut s, &mut ui, &cv, ":TRIGger:HOLDoff 0.001");
+    assert!(ui.dirty_map, "a taken value did not mark the settings changed");
     // a logic line is a source of :TRIGger:EDGE:SOURce only; the trigger's own source refuses it as any other
     let (mut s, mut ui, cv) = session();
     line(&mut s, &mut ui, &cv, ":TRIGger:SOURce D3");

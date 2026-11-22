@@ -56,9 +56,11 @@ impl Scpi {
         if nodes.first().is_some_and(|n| kw(n, "TIMebase")) {
             return self.timebase_cmd(ui, &nodes, query, arg);
         }
+        // a value `model_cmd` refused queued its error and set nothing, so nothing is marked changed
+        let errors = self.error_serial;
         let r = self.model_cmd(&mut ui.m, &ui.src, &nodes, query, arg);
         if let Some(resp) = r {
-            if !query {
+            if !query && self.error_serial == errors {
                 ui.mark_changed();
             }
             return resp;
@@ -668,8 +670,9 @@ impl Scpi {
         None
     }
 
-    /// A value a known header does not take: -224 with the value, and the command counts as answered. A branch of
-    /// `model_cmd` that answered None instead would read as an unknown header to `exec_cmd`, which ends in -113.
+    /// A value a known header does not take: -224 with the value, and the command counts as answered (`exec_cmd` sees
+    /// the error and marks nothing changed). A branch of `model_cmd` that answered None instead would read as an
+    /// unknown header to `exec_cmd`, which ends in -113.
     fn refused(&mut self, arg: &str) -> Option<Option<Vec<u8>>> {
         self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
         Some(None)
