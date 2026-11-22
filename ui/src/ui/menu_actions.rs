@@ -308,12 +308,10 @@ impl Ui {
 
     pub(super) fn adjust(&mut self, it: Item, d: i32) {
         if matches!(it, Item::CatSourceC | Item::CatSourceD) {
-            let current = if it == Item::CatSourceC { self.cat.c } else { self.cat.d };
-            let next = self.step_wave(current, d);
             if it == Item::CatSourceC {
-                self.cat.c = next;
+                self.cat.c = self.step_wave(self.cat.c, d);
             } else {
-                self.cat.d = next;
+                self.cat.d = self.step_wave(self.cat.d, d);
             }
             return;
         }
@@ -483,14 +481,8 @@ impl Ui {
         let m = &mut self.m;
         match it {
             Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
-            Item::MeasSrc => {
-                let cur = self.sources.a;
-                self.sources.a = self.step_wave(cur, d);
-            }
-            Item::MeasSrcB => {
-                let cur = self.sources.b;
-                self.sources.b = self.step_wave(cur, d);
-            }
+            Item::MeasSrc => self.sources.a = self.step_wave(self.sources.a, d),
+            Item::MeasSrcB => self.sources.b = self.step_wave(self.sources.b, d),
             // Track cursor B on its own source (follows cursor A's until set)
             Item::CurSrcB => {
                 let cur = self.cursor_b_source();

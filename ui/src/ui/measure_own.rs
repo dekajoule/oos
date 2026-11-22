@@ -53,16 +53,7 @@ impl Ui {
         {
             return None;
         }
-        let shared = MeasOwn::shared(&self.m);
-        Some(MeasOwn {
-            low: if own.refs_set { own.low } else { shared.low },
-            high: if own.refs_set { own.high } else { shared.high },
-            idle: if own.idle_set { own.idle } else { shared.idle },
-            side: if own.side_set { own.side } else { shared.side },
-            n: if own.n_set { own.n } else { shared.n },
-            data: if own.data_set { own.data } else { shared.data },
-            ..own
-        })
+        Some(own.effective(&self.m))
     }
 
     fn own_key(&self, source: WaveId, own: MeasOwn) -> Option<(Key, f64)> {
