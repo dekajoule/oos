@@ -1255,17 +1255,17 @@ impl Device {
     /// The settings to SETUP_FILE every 2 s when they changed, and to OOS's own data partition.
     fn save_setup(&mut self) {
         use std::time::Instant;
+        let setup_path = std::path::Path::new(SETUP_FILE);
         if self.setup_t.elapsed().as_secs() >= 2 {
             self.setup_t = Instant::now();
             let t = store::setup_text(self.ui.setup_model());
             if t != self.setup_last {
-                // `<file>.new`, synced, renamed over the file; the directory is not synced
-                let o = oos_hal::fsutil::Opts { dir_sync: oos_hal::fsutil::DirSync::Skip, ..Default::default() };
-                let write = |p: &str| oos_hal::fsutil::write_atomic(std::path::Path::new(p), t.as_bytes(), &o);
-                if write(SETUP_FILE).is_ok() {
+                let tmp = format!("{}.new", SETUP_FILE);
+                if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
                     // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
                     if sysconf::data_partition() {
-                        let _ = write("/oos/oos-ui.setup");
+                        let _ = std::fs::write("/oos/oos-ui.setup.new", &t)
+                            .and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
                     }
                     self.setup_last = t;
                 }
