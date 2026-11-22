@@ -1263,7 +1263,7 @@ impl Device {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
                     // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
-                    if std::path::Path::new("/oos/setups").is_dir() {
+                    if sysconf::data_partition() {
                         let _ = std::fs::write("/oos/oos-ui.setup.new", &t)
                             .and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
                     }

@@ -495,9 +495,18 @@ impl Flag {
     }
 }
 
-/// `/oos/system.conf` when the data partition is there (it has `/oos/setups`), else the file in RAM.
+/// The setups of the slots on the data partition; `oos-mount-data` makes it when it mounts the partition.
+pub const SETUPS_DIR: &str = "/oos/setups";
+
+/// OOS's data partition is there: `SETUPS_DIR` is a directory (the scripts of the image ask the same with
+/// `[ -d /oos/setups ]`).
+pub fn data_partition() -> bool {
+    Path::new(SETUPS_DIR).is_dir()
+}
+
+/// `/oos/system.conf` when the data partition is there (`data_partition`), else the file in RAM.
 pub fn default_path() -> PathBuf {
-    if Path::new("/oos/setups").is_dir() {
+    if data_partition() {
         PATH.into()
     } else {
         TMP_PATH.into()
