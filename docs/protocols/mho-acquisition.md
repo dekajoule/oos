@@ -270,6 +270,19 @@ DATA` in the order the stock system sent them (`on` the whole set, `base`, `scal
 `fpga OFFSET VALUE` and `adc N REG DATA`, all hex, then `end`. The values in it are the unit's own (section 8); OOS
 reads them from the file on the unit and ships none (ADR 0013).
 
+`tools/mho-check.py <scope-ip> --capture-all` records the stock system's cold start of the acquisition board, then
+takes the snapshot. It stops the stock scope program, unloads xdma and the PCIe host, loads the FPGA again with the
+stock tool of the start script (`spi2fpga`, section 1) and the PCIe drivers with the stock script (`load_pcie.sh`), and
+starts the program again, as at power-on. Meanwhile the trace event of `--afe` records the board's GPIO lines, and
+`mho-poll` (a static program of OOS, pushed over adb) watches the ADC bridge word 0x3000, the link reset 0x2003c and
+0x10120 from a read-only mapping. Each ADC transfer leaves its word in 0x3000 for at least 100 us (section 4); the
+watcher reads it about once a microsecond, and its file says how fast it read (`loop_us`). It opens the device only
+after `load_pcie.sh`, so it never holds it while the drivers are unloaded. At its start it writes a mark into the
+kernel's trace buffer, which puts both records on one time line. The report `mho-capture-<model>-<date>.txt` ends,
+after the line `---- oos capture ----`, with `format 1`, the steps in the order the stock program made them in the
+recipe form of section 10 (`adc`, `adcread`, `afe`, `select`, `wr`, and `wait` for pauses over 2 ms), then `end`.
+The ADC words are the ones the stock program wrote, its masks applied.
+
 `tools/mho-check.py <scope-ip> --afe-init` records the front ends' set-up at the start of the stock scope program:
 it switches on the trace event of `--afe` (a 16 MiB buffer in memory), restarts the program (`am force-stop`;
 Android's launcher starts it again, else `monkey` does), records for about half a minute, and sets the trace back.
@@ -439,6 +452,15 @@ stock system reads 0x0440ff: the bus answers, but bits 18 and 10 are not set, al
 frames. Assumed: the front ends are not in their working state, because they miss the set-up the stock program gives
 them when it starts (registers 0x22, 0x26 and 0x36 were in none of the recorded steps). `mho-check.py --afe-init`
 records that set-up (section 7).
+
+**Recipes.** With the capture (`/oos/mho-capture.txt`) or a recipe (`/oos/mho-recipe.txt`) on the unit,
+`mho-start` runs a recipe after the bring-up instead of the steps above: one line per item, the steps in the form
+`wr OFFSET VALUE`, `wait MS`, `adc N REG DATA`, `adcread N REG`, `afe CH REG DATA`, `select NAME LEVEL`, and
+`plan PHASE` (a phase of the snapshot's start), `capture` (the capture's steps), `acquire [MASK]` (one acquisition,
+reported), `status` (the front ends' status reads), `afe-delay US`, `afe-power-cycle` and `label TEXT`
+(hal/src/mho/recipe.rs lists them). Without a recipe but with a capture it runs the capture, then the snapshot's
+link, configuration and channel, and one acquisition. The read-back and the diagnostics follow either way. A recipe
+changes what is tried without a new build.
 
 The verdict: the words decoded at the snapshot's scale (section 5) hold a square wave when two levels at least half a
 division apart each hold a tenth of the points or more, within the screen. `oos-mho-live` then shows the frames on the

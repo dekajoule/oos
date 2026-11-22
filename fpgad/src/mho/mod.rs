@@ -9,13 +9,16 @@
 //!       supplies, the sample clock from the unit's own table, the FPGA from the unit's own image (volatile: lost at
 //!       power-off), PCIe, and a read of the first registers. Not yet verified on hardware.
 //!
-//!   oos-fpgad mho-start [--snapshot FILE] [--init FILE] [--hw-code N] [--n POINTS] [--no-bringup] [--dry] [--yes]
+//!   oos-fpgad mho-start [--snapshot FILE] [--init FILE] [--capture FILE] [--recipe FILE] [--hw-code N] [--n POINTS]
+//!                       [--no-bringup] [--dry] [--yes]
 //!       the first acquisition, by hand (docs/mho.md, "First acquisition"): the bring-up, then the ADCs, the JESD204
 //!       receiver, the FPGA's configuration and one front end set from the unit's own snapshot of the stock system
 //!       (`tools/mho-check.py --snapshot`, default /oos/mho-snapshot.txt), the front ends' set-up of the stock
 //!       program's start before it (`--afe-init`, default /oos/mho-afe-init.txt, if there), all read back, then one
 //!       acquisition of the
-//!       probe compensation signal with the read-out of the DHO800/DHO900. Volatile. Not yet verified on hardware.
+//!       probe compensation signal with the read-out of the DHO800/DHO900. With the capture of the stock system's cold
+//!       start (`--capture-all`, default /oos/mho-capture.txt) or a recipe (default /oos/mho-recipe.txt) it runs the
+//!       recipe instead (hal/src/mho/recipe.rs). Volatile. Not yet verified on hardware.
 //!
 //! Every other command but `model` (answered by the neutral part) and `help` is refused.
 

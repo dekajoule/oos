@@ -85,6 +85,8 @@ pub enum Step {
     Wait(u32),
     /// an ADC register write through the bridge (`acq::adc_write`): ADC, register, data
     Adc(u32, u8, u16),
+    /// an ADC register read through the bridge, reported (a recipe's check, or the stock program's read in a capture)
+    AdcRead(u32, u8),
     /// a frame on a channel's front end: channel (1 to 4), register, data
     Afe(usize, u8, u16),
     /// a select line (its device-tree name) to a level

@@ -16,5 +16,6 @@ pub mod bus {
 }
 pub mod board;
 pub mod bringup;
+pub mod recipe;
 pub mod snapshot;
 pub mod target;

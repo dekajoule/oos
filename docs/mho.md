@@ -176,6 +176,18 @@ has run on a unit (ADR 0010); `Target::acquisition` stays false until then.
 
 ## First acquisition (by hand, for owners who test it)
 
+From mho-dev-14 on, two steps cover what the earlier builds asked for one at a time:
+
+1. Under the stock system: `tools/mho-check.py <scope-ip> --capture-all`, with `mho-poll` of the release next to it.
+   It records the stock system's cold start of the acquisition board and then takes the snapshot
+   (protocols/mho-acquisition.md, section 7).
+2. Under OOS: copy `mho-capture-*.txt` to `/oos/mho-capture.txt` and `mho-snapshot-*.txt` to
+   `/oos/mho-snapshot.txt`, then `oos-mho-live`. Later tries need no new build: a recipe copied to
+   `/oos/mho-recipe.txt` (section 10), or a newer `oos-fpgad` copied to `/oos/bin/oos-fpgad`, is used by the next
+   `oos-mho-live`.
+
+The steps of the earlier builds follow.
+
 **Not yet verified on hardware** (ADR 0075). The board is started from the unit's own snapshot of the stock system and
 measures at that one setting: the probe compensation signal on the snapshot's channel.
 

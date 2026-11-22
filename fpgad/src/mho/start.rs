@@ -12,6 +12,7 @@
 use oos_hal::dho::bus::{Bar1, Bus};
 use oos_hal::dho::gpio::Line;
 use oos_hal::dho::scu;
+use oos_hal::mho::recipe::{self, Item};
 use oos_hal::mho::snapshot::{self as snap, Levels, Snapshot, Step};
 use oos_hal::mho::{acq, bringup as b};
 use std::time::{Duration, Instant};
@@ -21,6 +22,10 @@ const DEFAULT_FILE: &str = "/oos/mho-snapshot.txt";
 /// Where the front ends' set-up of the stock program's start (`mho-check.py --afe-init`) is looked for when `--init`
 /// is not given; without the file the start goes on without it.
 const DEFAULT_INIT: &str = "/oos/mho-afe-init.txt";
+/// The capture of the stock system's cold start (`mho-check.py --capture-all`) and a recipe, each used when it is
+/// there (`--capture`, `--recipe` name other files).
+const DEFAULT_CAPTURE: &str = "/oos/mho-capture.txt";
+const DEFAULT_RECIPE: &str = "/oos/mho-recipe.txt";
 /// Where the frame goes, one line per point: index, word, volts.
 const CSV: &str = "/tmp/mho-frame.csv";
 /// Acquisitions tried, and how long each may take to complete.
@@ -70,6 +75,22 @@ pub(super) fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
+    let capture = match read_optional(args, "--capture", DEFAULT_CAPTURE, recipe::parse_capture) {
+        Ok(c) => c.unwrap_or_default(),
+        Err(e) => {
+            eprintln!("oos-fpgad mho-start: {}", e);
+            return 2;
+        }
+    };
+    let items = match read_optional(args, "--recipe", DEFAULT_RECIPE, recipe::parse) {
+        Ok(Some(r)) => Some(r),
+        Ok(None) if !capture.is_empty() => recipe::parse(recipe::WITH_CAPTURE).ok(),
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("oos-fpgad mho-start: {}", e);
+            return 2;
+        }
+    };
     let code = opt(args, "--hw-code").and_then(|c| c.parse::<u32>().ok()).or(s.hwcode);
     let Some((table, image)) = code.and_then(|c| Some((b::clock_table(c)?, acq::fpga_image(c)?))) else {
         eprintln!("oos-fpgad mho-start: no clock table or FPGA image for hardware code {:?} (--hw-code N)", code);
@@ -88,11 +109,22 @@ pub(super) fn run(args: &[String]) -> i32 {
     for (name, steps) in &plan {
         println!("mho-start: phase {}: {} steps", name, steps.len());
     }
+    println!(
+        "mho-start: capture: {} steps; recipe: {}",
+        capture.len(),
+        items.as_ref().map_or("none".into(), |r| { format!("{} lines", r.len()) })
+    );
     if args.iter().any(|a| a == "--dry") {
         for (name, steps) in &plan {
             for st in steps {
-                println!("{} {:?}", name, st);
+                println!("{} {}", name, recipe::step_line(st));
             }
+        }
+        for st in &capture {
+            println!("capture {}", recipe::step_line(st));
+        }
+        for it in items.iter().flatten() {
+            println!("recipe {:?}", it);
         }
         return 0;
     }
@@ -105,23 +137,8 @@ pub(super) fn run(args: &[String]) -> i32 {
         );
         return 0;
     }
-    if !args.iter().any(|a| a == "--no-bringup") {
-        let up: [super::bringup::Stage; 4] = [
-            ("power", &|| super::bringup::power(&[b::line::ADC_POWER, b::line::AFE_POWER])),
-            ("clock", &|| super::bringup::clock(table)),
-            ("fpga", &|| super::bringup::power(&[b::line::FPGA_POWER]).and_then(|_| super::bringup::fpga(image))),
-            ("pcie", &super::bringup::pcie),
-        ];
-        for (name, step) in up {
-            println!("---- bring-up: {}", name);
-            if let Err(e) = step() {
-                println!("RESULT: the bring-up stopped at {}: {}", name, e);
-                return 1;
-            }
-        }
-    } else if let Err(e) = crate::pcie::pcie_up() {
-        println!("RESULT: PCIe is not up ({}); run without --no-bringup", e);
-        return 1;
+    if let Err(code) = bring_up(args, table, image) {
+        return code;
     }
     let mut bar = match Bar1::open_len(acq::WINDOW_USED) {
         Ok(b) => b,
@@ -138,25 +155,57 @@ pub(super) fn run(args: &[String]) -> i32 {
             return 1;
         }
     };
-    for (name, steps) in &plan {
-        println!("---- {} ({} steps)", name, steps.len());
-        let t = Instant::now();
-        for st in steps {
-            if let Err(e) = apply(&mut bar, &afe, st) {
-                println!("mho-start: {:?}: {}", st, e);
+    let (first, from_recipe) = match &items {
+        Some(items) => (1, run_recipe(&mut bar, &afe, &Ctx { s: &s, plan: &plan, capture: &capture, n }, items)),
+        None => {
+            for (name, steps) in &plan {
+                run_steps(&mut bar, &afe, name, steps);
             }
+            println!("---- read back");
+            read_back(&mut bar, &s);
+            println!("---- acquisition");
+            (acquire(&mut bar, &s, n), None)
         }
-        println!("mho-start: {} done in {} ms", name, t.elapsed().as_millis());
+    };
+    if items.is_some() {
+        println!("---- read back");
+        read_back(&mut bar, &s);
     }
-    println!("---- read back");
-    read_back(&mut bar, &s);
-    println!("---- acquisition");
-    let first = acquire(&mut bar, &s, n);
     println!("---- diagnostics");
     let found = diagnose(&mut bar, &afe, &s, &plan, n);
+    verdict(first, from_recipe.or(found), s.channel)
+}
+
+/// The bring-up of `bringup` (supplies, clock, FPGA, PCIe), or with `--no-bringup` only PCIe; the exit code when it
+/// stops.
+fn bring_up(args: &[String], table: &str, image: &str) -> Result<(), i32> {
+    if !args.iter().any(|a| a == "--no-bringup") {
+        let up: [super::bringup::Stage; 4] = [
+            ("power", &|| super::bringup::power(&[b::line::ADC_POWER, b::line::AFE_POWER])),
+            ("clock", &|| super::bringup::clock(table)),
+            ("fpga", &|| super::bringup::power(&[b::line::FPGA_POWER]).and_then(|_| super::bringup::fpga(image))),
+            ("pcie", &super::bringup::pcie),
+        ];
+        for (name, step) in up {
+            println!("---- bring-up: {}", name);
+            if let Err(e) = step() {
+                println!("RESULT: the bring-up stopped at {}: {}", name, e);
+                return Err(1);
+            }
+        }
+    } else if let Err(e) = crate::pcie::pcie_up() {
+        println!("RESULT: PCIe is not up ({}); run without --no-bringup", e);
+        return Err(1);
+    }
+    Ok(())
+}
+
+/// The one RESULT line of a run and its exit code: from the first acquisition (0 square, 1 not, 2 none read) and the
+/// recipe's or the diagnostics' first variant that held the square wave.
+fn verdict(first: i32, found: Option<String>, channel: usize) -> i32 {
     match (first, found) {
         (0, _) => {
-            println!("RESULT: IT MEASURES: the probe compensation signal on CH{}", s.channel);
+            println!("RESULT: IT MEASURES: the probe compensation signal on CH{}", channel);
             0
         }
         (_, Some(what)) => {
@@ -176,6 +225,102 @@ pub(super) fn run(args: &[String]) -> i32 {
     }
 }
 
+/// A file `--KEY FILE` names, or `default` when it is there: None when neither is.
+fn read_optional<T>(
+    args: &[String],
+    key: &str,
+    default: &str,
+    parse: fn(&str) -> Result<T, String>,
+) -> Result<Option<T>, String> {
+    let file = opt(args, key).unwrap_or(default);
+    match std::fs::read_to_string(file) {
+        Err(_) if opt(args, key).is_none() => Ok(None),
+        r => r
+            .map_err(|e| format!("{}: {}", file, e))
+            .and_then(|t| parse(&t))
+            .map(Some)
+            .map_err(|e| format!("{}: {}", file, e)),
+    }
+}
+
+/// The steps of one phase, each failure reported, the time it took.
+fn run_steps(bar: &mut Bar1, afe: &Afe, name: &str, steps: &[Step]) {
+    println!("---- {} ({} steps)", name, steps.len());
+    let t = Instant::now();
+    for st in steps {
+        if let Err(e) = apply(bar, afe, st) {
+            println!("mho-start: {}: {}", recipe::step_line(st), e);
+        }
+    }
+    println!("mho-start: {} done in {} ms", name, t.elapsed().as_millis());
+}
+
+/// What a recipe draws on besides the board: the snapshot, the plan made from it, the capture and the frame size.
+struct Ctx<'a> {
+    s: &'a Snapshot,
+    plan: &'a [(&'a str, Vec<Step>)],
+    capture: &'a [Step],
+    n: u32,
+}
+
+/// A recipe, line by line (hal/src/mho/recipe.rs). Returns the first acquisition that held the square wave, named by
+/// the label before it and its mask.
+fn run_recipe(bar: &mut Bar1, afe: &Afe, c: &Ctx, items: &[Item]) -> Option<String> {
+    let (s, plan, capture, n) = (c.s, c.plan, c.capture, c.n);
+    let (mut label, mut found) = (String::from("recipe"), None);
+    for it in items {
+        match it {
+            Item::Label(l) => {
+                println!("---- {}", l);
+                label = l.clone();
+            }
+            Item::Step(st) => {
+                if let Err(e) = apply(bar, afe, st) {
+                    println!("mho-start: {}: {}", recipe::step_line(st), e);
+                }
+            }
+            Item::Plan(p) => match plan.iter().find(|(name, _)| name == p) {
+                Some((name, steps)) => run_steps(bar, afe, name, steps),
+                None => println!("mho-start: plan {}: no such phase here (no file for it)", p),
+            },
+            Item::Capture if capture.is_empty() => println!("mho-start: capture: none (/oos/mho-capture.txt)"),
+            Item::Capture => run_steps(bar, afe, "capture", capture),
+            Item::Acquire(m) => {
+                let mask = m.unwrap_or_else(|| s.fsm_mask());
+                match one(bar, s, n, mask) {
+                    Ok(w) => {
+                        let (t, sq) = levels_line(&w, s.scale);
+                        println!("recipe: acquire {:#x}: {}", mask, t);
+                        if sq && found.is_none() {
+                            found = Some(format!("{}, mask {:#x}", label, mask));
+                        }
+                    }
+                    Err(e) => println!("recipe: acquire {:#x}: {}", mask, e),
+                }
+            }
+            Item::Status => {
+                let st: Vec<String> = (1..=4).map(|ch| format!("CH{} {:#08x}", ch, afe.read(ch, 0))).collect();
+                println!("recipe: front ends' status (stock 0x0440ff): {}", st.join(", "));
+            }
+            Item::AfeDelay(us) => {
+                afe.delay_us.set(*us);
+                println!("recipe: front ends' clock edges {} us apart", us);
+            }
+            Item::AfePowerCycle => {
+                let r = Line::output(b::line::AFE_POWER, false).map(|l| {
+                    std::thread::sleep(Duration::from_millis(100));
+                    l.set(true);
+                });
+                println!(
+                    "recipe: front ends' supply off and on: {}",
+                    r.map_or_else(|e| e.to_string(), |_| "done".into())
+                );
+            }
+        }
+    }
+    found
+}
+
 /// One step of the plan.
 fn apply(bar: &mut Bar1, afe: &Afe, st: &Step) -> Result<(), String> {
     match st {
@@ -186,6 +331,15 @@ fn apply(bar: &mut Bar1, afe: &Afe, st: &Step) -> Result<(), String> {
                 bar.wr(off, v);
                 std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
             }
+        }
+        Step::AdcRead(n, r) => {
+            let v = adc_read(bar, *n, *r);
+            println!(
+                "mho-start: ADC {} reg {:#04x} reads {}",
+                n,
+                r,
+                v.map_or("- (not valid)".into(), |x| format!("{:#06x}", x))
+            );
         }
         Step::Afe(ch, r, d) => afe.write(*ch, *r, *d),
         Step::Select(name, v) => drop(Line::output(name, *v).map_err(|e| format!("{}: {}", name, e))?),
@@ -442,6 +596,8 @@ struct Afe {
     mosi: Line,
     miso: Line,
     cs: Vec<Line>,
+    /// a pause at each clock edge (a recipe's `afe-delay`), 0 by default
+    delay_us: std::cell::Cell<u64>,
 }
 
 impl Afe {
@@ -453,13 +609,20 @@ impl Afe {
             mosi: out(acq::afe::MOSI_NAME, false)?,
             miso: Line::input(acq::afe::MISO_NAME).map_err(|x| e(acq::afe::MISO_NAME, x))?,
             cs: acq::afe::CS_NAMES.iter().map(|n| out(n, true)).collect::<Result<_, _>>()?,
+            delay_us: std::cell::Cell::new(0),
         })
     }
 
     fn bit_out(&self, v: bool) {
+        let pause = || match self.delay_us.get() {
+            0 => {}
+            us => std::thread::sleep(Duration::from_micros(us)),
+        };
         self.mosi.set(v);
         self.sclk.set(false);
+        pause();
         self.sclk.set(true);
+        pause();
     }
 
     fn write(&self, ch: usize, reg: u8, data: u16) {
