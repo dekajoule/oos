@@ -108,7 +108,7 @@ pub(super) fn run(args: &[String]) -> i32 {
         }
     };
     println!("mho-start: FPGA version {:#010x}", bar.rd(0x4));
-    let afe = match Afe::open(s.channel) {
+    let afe = match Afe::open() {
         Ok(a) => a,
         Err(e) => {
             println!("RESULT: the front ends' bus: {}", e);
@@ -119,7 +119,7 @@ pub(super) fn run(args: &[String]) -> i32 {
         println!("---- {} ({} steps)", name, steps.len());
         let t = Instant::now();
         for st in steps {
-            if let Err(e) = apply(&mut bar, &afe, st) {
+            if let Err(e) = apply(&mut bar, &afe, s.channel, st) {
                 println!("mho-start: {:?}: {}", st, e);
             }
         }
@@ -128,11 +128,33 @@ pub(super) fn run(args: &[String]) -> i32 {
     println!("---- read back");
     read_back(&mut bar, &s);
     println!("---- acquisition");
-    acquire(&mut bar, &s, n)
+    let first = acquire(&mut bar, &s, n);
+    println!("---- diagnostics");
+    let found = diagnose(&mut bar, &afe, &s, n);
+    match (first, found) {
+        (0, _) => {
+            println!("RESULT: IT MEASURES: the probe compensation signal on CH{}", s.channel);
+            0
+        }
+        (_, Some(what)) => {
+            println!("RESULT: IT MEASURES in a diagnostic variant: {}", what);
+            0
+        }
+        (1, None) => {
+            println!(
+                "RESULT: a frame was read, but no variant held the square wave; the diagnostics say what each saw"
+            );
+            1
+        }
+        _ => {
+            println!("RESULT: no acquisition was read; the lines above say how far it got");
+            1
+        }
+    }
 }
 
 /// One step of the plan.
-fn apply(bar: &mut Bar1, afe: &Afe, st: &Step) -> Result<(), String> {
+fn apply(bar: &mut Bar1, afe: &Afe, ch: usize, st: &Step) -> Result<(), String> {
     match st {
         Step::Wr(a, v) => bar.wr(*a, *v),
         Step::Wait(ms) => std::thread::sleep(Duration::from_millis(*ms as u64)),
@@ -142,7 +164,7 @@ fn apply(bar: &mut Bar1, afe: &Afe, st: &Step) -> Result<(), String> {
                 std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
             }
         }
-        Step::Afe(r, d) => afe.write(*r, *d),
+        Step::Afe(r, d) => afe.write(ch, *r, *d),
         Step::Select(name, v) => drop(Line::output(name, *v).map_err(|e| format!("{}: {}", name, e))?),
     }
     Ok(())
@@ -198,8 +220,8 @@ fn read_back(bar: &mut Bar1, s: &Snapshot) {
     );
 }
 
-/// Arms up to `TRIES` acquisitions with the DHO800/DHO900's sequence and reads the first that completes; says whether
-/// it holds the probe compensation signal.
+/// Arms up to `TRIES` acquisitions with the DHO800/DHO900's sequence and reads the first that completes: 0 when it
+/// holds the probe compensation signal, 1 when it does not, 2 when none was read.
 fn acquire(bar: &mut Bar1, s: &Snapshot, n: u32) -> i32 {
     let mut sh = s.shadows();
     let win = s.window(n);
@@ -225,8 +247,106 @@ fn acquire(bar: &mut Bar1, s: &Snapshot, n: u32) -> i32 {
             Err(e) => println!("mho-start: read-out of {} bytes: {}", 2 * win.n, e),
         }
     }
-    println!("RESULT: no acquisition was read; the lines above say how far it got");
-    1
+    println!("mho-start: first acquisition: none was read");
+    2
+}
+
+/// One acquisition with FSM channel mask `mask` (the snapshot's shadows otherwise), read whole.
+fn one(bar: &mut Bar1, s: &Snapshot, n: u32, mask: u32) -> Result<Vec<u16>, String> {
+    let mut sh = s.shadows();
+    sh.s4008 = (sh.s4008 & !0xf) | mask;
+    let mut win = s.window(n);
+    win.fsm = mask;
+    snap::acquire(bar, &mut sh, &win, DONE_MS, &mut |ms| std::thread::sleep(Duration::from_millis(ms)))
+        .map_err(|a| format!("not complete after {} ms, status {:#010x}", a.ms, a.status))?;
+    read_frame(2 * win.n as usize)
+}
+
+/// One line of what a frame holds: its extremes and mean in codes and volts, and whether it is the square wave.
+fn levels_line(words: &[u16], scale: f64) -> (String, bool) {
+    let Some(l) = Levels::of(words, scale) else {
+        return ("empty".into(), false);
+    };
+    let (lo, hi) = (words.iter().min().copied().unwrap_or(0), words.iter().max().copied().unwrap_or(0));
+    let sq = l.is_square(scale);
+    (
+        format!(
+            "codes {:04x}..{:04x}, {:.3} V..{:.3} V, mean {:.3} V, levels {:.3}/{:.3} V{}",
+            lo,
+            hi,
+            l.min,
+            l.max,
+            l.mean,
+            l.low,
+            l.high,
+            if sq { "  SQUARE WAVE" } else { "" }
+        ),
+        sq,
+    )
+}
+
+/// Variants after the first acquisition, each with one acquisition read, so that one run says where the signal is
+/// lost: the front ends' status read, every FSM channel mask (and all four, split by word), 0x1004 written again,
+/// and the ADC registers that did not read back written once more. Returns the first variant that held the square
+/// wave.
+fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, n: u32) -> Option<String> {
+    let mut found = None;
+    let mut note = |what: String, sq: bool| {
+        if sq && found.is_none() {
+            found = Some(what);
+        }
+    };
+    for ch in 1..=4 {
+        println!("diag: front end CH{} status read: {:#08x} (stock reads 0x0440ff at 1 MOhm)", ch, afe.status(ch));
+    }
+    for mask in [1u32, 2, 4, 8, 0xf] {
+        match one(bar, s, n, mask) {
+            Err(e) => println!("diag: mask {:#x}: {}", mask, e),
+            Ok(w) if mask == 0xf => {
+                for k in 0..4 {
+                    let lane: Vec<u16> = w.iter().skip(k).step_by(4).copied().collect();
+                    let (t, sq) = levels_line(&lane, s.scale);
+                    println!("diag: mask 0xf, word 4i+{}: {}", k, t);
+                    note(format!("mask 0xf, word 4i+{}", k), sq);
+                }
+            }
+            Ok(w) => {
+                let (t, sq) = levels_line(&w, s.scale);
+                println!("diag: mask {:#x}: {}", mask, t);
+                note(format!("mask {:#x}", mask), sq);
+            }
+        }
+    }
+    if let Some(&v) = s.fpga.get(&0x1004) {
+        bar.wr(0x1004, v);
+        println!("diag: 0x1004 written {:#010x} again, reads {:#010x}", v, bar.rd(0x1004));
+        if let Ok(w) = one(bar, s, n, s.fsm_mask()) {
+            let (t, sq) = levels_line(&w, s.scale);
+            println!("diag: after 0x1004: {}", t);
+            note("0x1004 written again".into(), sq);
+        }
+    }
+    for a in 0..2u32 {
+        let mut out = Vec::new();
+        for (&r, &v) in &s.adc[a as usize] {
+            if adc_read(bar, a, r) == Some(v) {
+                continue;
+            }
+            for (off, w) in acq::adc_write(a, r as u32, v).into_iter().flatten() {
+                bar.wr(off, w);
+                std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
+            }
+            let now = adc_read(bar, a, r);
+            out.push(format!("{:02x}:{}", r, now.map_or("-".into(), |x| format!("{:04x}", x))));
+        }
+        println!("diag: ADC {} written again where it differed, then read: {}", a, out.join(" "));
+    }
+    if let Ok(w) = one(bar, s, n, s.fsm_mask()) {
+        let (t, sq) = levels_line(&w, s.scale);
+        println!("diag: after the ADC registers again: {}", t);
+        note("ADC registers written again".into(), sq);
+    }
+    found
 }
 
 /// One read of the read-out stream, given up after `READ_S` (the driver's own timeout may be longer).
@@ -257,7 +377,7 @@ fn judge(s: &Snapshot, words: &[u16]) -> i32 {
         words.iter().step_by(step).map(|w| format!("{:04x}", w)).collect::<Vec<_>>().join(" ")
     );
     let Some(l) = Levels::of(words, s.scale) else {
-        println!("RESULT: the read-out was empty");
+        println!("mho-start: first acquisition: the read-out was empty");
         return 1;
     };
     println!(
@@ -270,46 +390,62 @@ fn judge(s: &Snapshot, words: &[u16]) -> i32 {
         100.0 * l.high_share
     );
     if l.is_square(s.scale) {
-        println!(
-            "RESULT: IT MEASURES: a square wave between {:.2} V and {:.2} V on CH{} (the probe compensation signal)",
-            l.low, l.high, s.channel
-        );
+        println!("mho-start: first acquisition: the square wave, {:.2} V to {:.2} V", l.low, l.high);
         0
     } else {
-        println!(
-            "RESULT: a frame was read, but it is not the square wave (a line, noise or clipped): see the words above"
-        );
+        println!("mho-start: first acquisition: not the square wave (a line, noise or clipped)");
         1
     }
 }
 
 /// The front ends' bus, driven bit by bit as the stock driver does (mho-acquisition.md, section 8): the data line set,
-/// then the clock low and high; 24 bits, MSB first, while the channel's chip select is low.
+/// then the clock low and high; 24 bits, MSB first, while the channel's chip select is low. A status read is 32
+/// clocks: 0x80 out, then 24 bits in on the data-in line, each read after its rising edge (assumed).
 struct Afe {
     sclk: Line,
     mosi: Line,
-    cs: Line,
+    miso: Line,
+    cs: Vec<Line>,
 }
 
 impl Afe {
-    fn open(ch: usize) -> Result<Afe, String> {
+    fn open() -> Result<Afe, String> {
         let e = |n: &str, e: std::io::Error| format!("{}: {}", n, e);
-        let cs = acq::afe::CS_NAMES[ch - 1];
+        let out = |n: &str, v: bool| Line::output(n, v).map_err(|x| e(n, x));
         Ok(Afe {
-            sclk: Line::output(acq::afe::SCLK_NAME, true).map_err(|x| e(acq::afe::SCLK_NAME, x))?,
-            mosi: Line::output(acq::afe::MOSI_NAME, false).map_err(|x| e(acq::afe::MOSI_NAME, x))?,
-            cs: Line::output(cs, true).map_err(|x| e(cs, x))?,
+            sclk: out(acq::afe::SCLK_NAME, true)?,
+            mosi: out(acq::afe::MOSI_NAME, false)?,
+            miso: Line::input(acq::afe::MISO_NAME).map_err(|x| e(acq::afe::MISO_NAME, x))?,
+            cs: acq::afe::CS_NAMES.iter().map(|n| out(n, true)).collect::<Result<_, _>>()?,
         })
     }
 
-    fn write(&self, reg: u8, data: u16) {
+    fn bit_out(&self, v: bool) {
+        self.mosi.set(v);
+        self.sclk.set(false);
+        self.sclk.set(true);
+    }
+
+    fn write(&self, ch: usize, reg: u8, data: u16) {
         let w = acq::afe::frame(reg, data);
-        self.cs.set(false);
+        self.cs[ch - 1].set(false);
         for i in (0..acq::afe::FRAME_BITS).rev() {
-            self.mosi.set(w >> i & 1 != 0);
-            self.sclk.set(false);
-            self.sclk.set(true);
+            self.bit_out(w >> i & 1 != 0);
         }
-        self.cs.set(true);
+        self.cs[ch - 1].set(true);
+    }
+
+    fn status(&self, ch: usize) -> u32 {
+        self.cs[ch - 1].set(false);
+        for i in (0..8).rev() {
+            self.bit_out(0x80 >> i & 1 != 0);
+        }
+        let mut v = 0u32;
+        for _ in 0..acq::afe::READ_FRAME_BITS - 8 {
+            self.bit_out(false);
+            v = v << 1 | self.miso.get() as u32;
+        }
+        self.cs[ch - 1].set(true);
+        v
     }
 }

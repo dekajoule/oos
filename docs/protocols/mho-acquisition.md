@@ -410,6 +410,18 @@ and 4); a step that does not read back as written does not stop the run, it is r
    points around the record's middle, then one read of the stream. The FSM's channel mask is the snapshot's (bits
    3:0 of 0x4008). Up to three tries.
 
+8. Diagnostics, each variant with one acquisition read and reported: the front ends' status read on all four
+   channels (32 clocks, 0x80 out, 24 bits in; the stock system reads 0x0440ff at 1 MOhm, section 8); the FSM channel
+   masks 0x1, 0x2, 0x4, 0x8 and 0xf (all four split into the words 4i+k); 0x1004 written again; and the ADC registers
+   that did not read back written once more and read at once. A variant that holds the square wave ends the run with
+   `RESULT: IT MEASURES in a diagnostic variant`.
+
+**Seen on the unit** (hp197's MHO98, mho-dev-11, issue #4): every step ran, the first acquisition completed (forced
+by the auto trigger after 100 ms) and its 4000 words were read: a flat line at -9 mV whose words step by 18 codes,
+real samples of an input without the signal. 237 of 261 FPGA words and 93 and 109 of the ADCs' registers read back
+as in the snapshot; in each eight-register block of the ADCs' lanes bit 6 of the seventh register did not (0x0044
+read 0x0004), nor bit 15 of 0x0a; 0x1004 read 0x04004084 for 0x04004a84 written.
+
 The verdict: the words decoded at the snapshot's scale (section 5) hold a square wave when two levels at least half a
 division apart each hold a tenth of the points or more, within the screen. `oos-mho-live` then shows the frames on the
 screen with oos-ui's live source (`--fpga-live --snapshot FILE`), one acquisition after the other.

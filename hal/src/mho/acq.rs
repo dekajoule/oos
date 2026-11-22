@@ -142,6 +142,7 @@ pub mod afe {
     /// first.
     pub const SCLK_NAME: &str = "spi_afe_sclk";
     pub const MOSI_NAME: &str = "spi_afe_mosi";
+    pub const MISO_NAME: &str = "spi_afe_miso";
     pub const CS_NAMES: [&str; 4] = ["spi_afe_cs_3", "spi_afe_cs_2", "spi_afe_cs_1", "spi_afe_cs_0"];
 
     /// The device-tree name of select line `gpio` (`afe_sel_a_ch1` ...), None for another line.
@@ -265,7 +266,7 @@ mod tests {
             let name = afe::select_name(*g).unwrap();
             assert!(dts.contains(&format!("\"{}\"", name)), "{} is not named in the device tree", name);
         }
-        for n in afe::CS_NAMES.iter().chain(&[afe::SCLK_NAME, afe::MOSI_NAME]) {
+        for n in afe::CS_NAMES.iter().chain(&[afe::SCLK_NAME, afe::MOSI_NAME, afe::MISO_NAME]) {
             assert!(dts.contains(&format!("\"{}\"", n)), "{} is not named in the device tree", n);
         }
     }
