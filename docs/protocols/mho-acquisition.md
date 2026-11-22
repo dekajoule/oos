@@ -270,6 +270,13 @@ DATA` in the order the stock system sent them (`on` the whole set, `base`, `scal
 `fpga OFFSET VALUE` and `adc N REG DATA`, all hex, then `end`. The values in it are the unit's own (section 8); OOS
 reads them from the file on the unit and ships none (ADR 0013).
 
+`tools/mho-check.py <scope-ip> --afe-init` records the front ends' set-up at the start of the stock scope program:
+it switches on the trace event of `--afe` (a 16 MiB buffer in memory), restarts the program (`am force-stop`;
+Android's launcher starts it again, else `monkey` does), records for about half a minute, and sets the trace back.
+The report `mho-afe-init-<model>-<date>.txt` lists the frames of every channel and the select lines' changes in
+order and ends, after the line `---- oos afe init ----`, with a part for OOS: `format 1`, `afe CH REG DATA` and
+`select NAME LEVEL` in the order they happened, then `end`.
+
 ## 8. Seen on units (stock system 00.01.00, hardware code 3)
 
 From `mho-check.py` on an MHO954 (twice) and an MHO98 and `--map` on an MHO98 and the MHO954 (issue #4),
@@ -401,7 +408,10 @@ and 4); a step that does not read back as written does not stop the run, it is r
    reads back as set: the record depth 0x10e4 10000 points and the TX length 0x11f0 the same at 200 us/div, 0x10d8 50
    (250 MSa/s / 50 = 5 MSa/s, 10000 points in 2 ms), 0x4050 and 0x4054 5000 each, and 0x1004, 0x1010 and 0x4020 the
    same on both units.
-5. The front end of the snapshot's channel: the set of its switch-on, then the words of its scale, in the order the stock
+5. The front ends' set-up of the stock program's start, when the unit's file of `mho-check.py --afe-init` is there
+   (`/oos/mho-afe-init.txt`): every channel's frames and the select lines' changes in the order the stock program
+   made them when it started. Then the front end of the snapshot's channel: the set of its switch-on, then the words
+   of its scale, in the order the stock
    system sent them (section 8); then the twelve select lines at the levels the snapshot read.
 6. A read-back of steps 2 and 4: how many words and registers read as in the snapshot, and the first that do not.
    A write-only register or a status bit may read otherwise and be right.
@@ -411,7 +421,8 @@ and 4); a step that does not read back as written does not stop the run, it is r
    3:0 of 0x4008). Up to three tries.
 
 8. Diagnostics, each variant with one acquisition read and reported: the front ends' status read on all four
-   channels (32 clocks, 0x80 out, 24 bits in; the stock system reads 0x0440ff at 1 MOhm, section 8); the FSM channel
+   channels (32 clocks, 0x80 out, 24 bits in; the stock system reads 0x0440ff at 1 MOhm, section 8), and the snapshot
+   channel's registers read the same way with 0x80 | register (assumed: the stock system reads register 0 only); the FSM channel
    masks 0x1, 0x2, 0x4, 0x8 and 0xf (all four split into the words 4i+k); 0x1004 written again; and the ADC registers
    that did not read back written once more and read at once. A variant that holds the square wave ends the run with
    `RESULT: IT MEASURES in a diagnostic variant`.
@@ -421,6 +432,13 @@ by the auto trigger after 100 ms) and its 4000 words were read: a flat line at -
 real samples of an input without the signal. 237 of 261 FPGA words and 93 and 109 of the ADCs' registers read back
 as in the snapshot; in each eight-register block of the ADCs' lanes bit 6 of the seventh register did not (0x0044
 read 0x0004), nor bit 15 of 0x0a; 0x1004 read 0x04004084 for 0x04004a84 written.
+
+**Seen on two units** (hp197's and skluehspies' MHO98, mho-dev-12, issues #4 and #491): every channel mask and all
+four lanes held flat lines of real samples, and the front ends' status read 0x0000ff on all four channels, where the
+stock system reads 0x0440ff: the bus answers, but bits 18 and 10 are not set, also on the channel that got its 53
+frames. Assumed: the front ends are not in their working state, because they miss the set-up the stock program gives
+them when it starts (registers 0x22, 0x26 and 0x36 were in none of the recorded steps). `mho-check.py --afe-init`
+records that set-up (section 7).
 
 The verdict: the words decoded at the snapshot's scale (section 5) hold a square wave when two levels at least half a
 division apart each hold a tenth of the points or more, within the screen. `oos-mho-live` then shows the frames on the

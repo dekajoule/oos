@@ -18,6 +18,9 @@ use std::time::{Duration, Instant};
 
 /// Where the snapshot is looked for when `--snapshot` is not given.
 const DEFAULT_FILE: &str = "/oos/mho-snapshot.txt";
+/// Where the front ends' set-up of the stock program's start (`mho-check.py --afe-init`) is looked for when `--init`
+/// is not given; without the file the start goes on without it.
+const DEFAULT_INIT: &str = "/oos/mho-afe-init.txt";
 /// Where the frame goes, one line per point: index, word, volts.
 const CSV: &str = "/tmp/mho-frame.csv";
 /// Acquisitions tried, and how long each may take to complete.
@@ -40,7 +43,27 @@ pub(super) fn run(args: &[String]) -> i32 {
                 return 2;
             }
         };
-    let plan = match s.plan() {
+    let init_file = opt(args, "--init").unwrap_or(DEFAULT_INIT);
+    let init = match std::fs::read_to_string(init_file) {
+        Err(_) if opt(args, "--init").is_none() => {
+            println!(
+                "mho-start: no {} (mho-check.py --afe-init): the front ends get the snapshot's words only",
+                init_file
+            );
+            Vec::new()
+        }
+        r => match r.map_err(|e| e.to_string()).and_then(|t| snap::parse_afe_init(&t)) {
+            Ok(i) => {
+                println!("mho-start: the front ends' set-up from {}: {} steps", init_file, i.len());
+                i
+            }
+            Err(e) => {
+                eprintln!("oos-fpgad mho-start: {}: {}", init_file, e);
+                return 2;
+            }
+        },
+    };
+    let plan = match s.plan(&init) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("oos-fpgad mho-start: {}: {}", file, e);
@@ -119,7 +142,7 @@ pub(super) fn run(args: &[String]) -> i32 {
         println!("---- {} ({} steps)", name, steps.len());
         let t = Instant::now();
         for st in steps {
-            if let Err(e) = apply(&mut bar, &afe, s.channel, st) {
+            if let Err(e) = apply(&mut bar, &afe, st) {
                 println!("mho-start: {:?}: {}", st, e);
             }
         }
@@ -130,7 +153,7 @@ pub(super) fn run(args: &[String]) -> i32 {
     println!("---- acquisition");
     let first = acquire(&mut bar, &s, n);
     println!("---- diagnostics");
-    let found = diagnose(&mut bar, &afe, &s, n);
+    let found = diagnose(&mut bar, &afe, &s, &plan, n);
     match (first, found) {
         (0, _) => {
             println!("RESULT: IT MEASURES: the probe compensation signal on CH{}", s.channel);
@@ -154,7 +177,7 @@ pub(super) fn run(args: &[String]) -> i32 {
 }
 
 /// One step of the plan.
-fn apply(bar: &mut Bar1, afe: &Afe, ch: usize, st: &Step) -> Result<(), String> {
+fn apply(bar: &mut Bar1, afe: &Afe, st: &Step) -> Result<(), String> {
     match st {
         Step::Wr(a, v) => bar.wr(*a, *v),
         Step::Wait(ms) => std::thread::sleep(Duration::from_millis(*ms as u64)),
@@ -164,7 +187,7 @@ fn apply(bar: &mut Bar1, afe: &Afe, ch: usize, st: &Step) -> Result<(), String> 
                 std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
             }
         }
-        Step::Afe(r, d) => afe.write(ch, *r, *d),
+        Step::Afe(ch, r, d) => afe.write(*ch, *r, *d),
         Step::Select(name, v) => drop(Line::output(name, *v).map_err(|e| format!("{}: {}", name, e))?),
     }
     Ok(())
@@ -289,7 +312,7 @@ fn levels_line(words: &[u16], scale: f64) -> (String, bool) {
 /// lost: the front ends' status read, every FSM channel mask (and all four, split by word), 0x1004 written again,
 /// and the ADC registers that did not read back written once more. Returns the first variant that held the square
 /// wave.
-fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, n: u32) -> Option<String> {
+fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, plan: &[(&str, Vec<Step>)], n: u32) -> Option<String> {
     let mut found = None;
     let mut note = |what: String, sq: bool| {
         if sq && found.is_none() {
@@ -297,8 +320,21 @@ fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, n: u32) -> Option<String> {
         }
     };
     for ch in 1..=4 {
-        println!("diag: front end CH{} status read: {:#08x} (stock reads 0x0440ff at 1 MOhm)", ch, afe.status(ch));
+        println!("diag: front end CH{} status read: {:#08x} (stock reads 0x0440ff at 1 MOhm)", ch, afe.read(ch, 0));
     }
+    // the snapshot channel's registers as last written, read back with the status frame's read bit (assumed: the
+    // read of register r is 0x80 | r, as the status read is register 0)
+    let mut last = std::collections::BTreeMap::new();
+    for st in plan.iter().flat_map(|(_, steps)| steps) {
+        if let Step::Afe(ch, r, d) = st {
+            if *ch == s.channel {
+                last.insert(*r, *d);
+            }
+        }
+    }
+    let reads: Vec<String> =
+        last.iter().map(|(&r, &d)| format!("{:02x}:{:06x}(w {:04x})", r, afe.read(s.channel, r), d)).collect();
+    println!("diag: front end CH{} registers read back (24 bits, written 16): {}", s.channel, reads.join(" "));
     for mask in [1u32, 2, 4, 8, 0xf] {
         match one(bar, s, n, mask) {
             Err(e) => println!("diag: mask {:#x}: {}", mask, e),
@@ -435,10 +471,12 @@ impl Afe {
         self.cs[ch - 1].set(true);
     }
 
-    fn status(&self, ch: usize) -> u32 {
+    /// A read frame: 0x80 | `reg` out (the stock system reads register 0 only, its status), 24 bits in.
+    fn read(&self, ch: usize, reg: u8) -> u32 {
+        let cmd = 0x80 | reg;
         self.cs[ch - 1].set(false);
         for i in (0..8).rev() {
-            self.bit_out(0x80 >> i & 1 != 0);
+            self.bit_out(cmd >> i & 1 != 0);
         }
         let mut v = 0u32;
         for _ in 0..acq::afe::READ_FRAME_BITS - 8 {

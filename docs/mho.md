@@ -181,7 +181,10 @@ measures at that one setting: the probe compensation signal on the snapshot's ch
 
 1. Under the stock system, right after a power-on with at least one channel off: `tools/mho-check.py <scope-ip>
    --snapshot`, with the probe compensation output on the channel it names (protocols/mho-acquisition.md, section 7).
-2. Start OOS (a build from `mho-acq-1` on), copy the file to the scope: `scp mho-snapshot-*.txt
+   Then, also under the stock system, `tools/mho-check.py <scope-ip> --afe-init`: it restarts the stock program
+   and records how it sets the front ends up (protocols/mho-acquisition.md, section 7).
+2. Start OOS (a build from `mho-acq-1` on), copy the files to the scope (the second one from mho-dev-13 on:
+   `scp mho-afe-init-*.txt root@<scope>:/oos/mho-afe-init.txt`): `scp mho-snapshot-*.txt
    root@<scope>:/oos/mho-snapshot.txt`. The signal stays connected to the same channel.
 3. Over SSH: `oos-mho-live`. It runs `oos-fpgad mho-start --snapshot /oos/mho-snapshot.txt --yes` (the report goes
    to `/oos/mho-start.txt`, its last line says `RESULT: IT MEASURES` when the square wave came back), then restarts

@@ -85,8 +85,8 @@ pub enum Step {
     Wait(u32),
     /// an ADC register write through the bridge (`acq::adc_write`): ADC, register, data
     Adc(u32, u8, u16),
-    /// a frame on the snapshot channel's front end: register, data
-    Afe(u8, u16),
+    /// a frame on a channel's front end: channel (1 to 4), register, data
+    Afe(usize, u8, u16),
     /// a select line (its device-tree name) to a level
     Select(String, bool),
 }
@@ -186,8 +186,10 @@ impl Snapshot {
     }
 
     /// The start in its phases, in order: the ADCs' registers, the link (reset pulse, the receiver's words, the sync
-    /// enable for 50 ms), the FPGA's configuration (the SCU's mode word last), the front end and its select lines.
-    pub fn plan(&self) -> Result<Vec<(&'static str, Vec<Step>)>, String> {
+    /// enable for 50 ms), the FPGA's configuration (the SCU's mode word last), the front ends' set-up of the stock
+    /// program's start (`init`, from `parse_afe_init`; left out when empty), the snapshot channel's front end and the
+    /// select lines.
+    pub fn plan(&self, init: &[Step]) -> Result<Vec<(&'static str, Vec<Step>)>, String> {
         let adc: Vec<Step> =
             (0..2u32).flat_map(|n| self.adc[n as usize].iter().map(move |(&r, &d)| Step::Adc(n, r, d))).collect();
         let jesd = |a: &u32| (JESD.0..=JESD.1).contains(a) && *a != LINK_RESET;
@@ -200,7 +202,8 @@ impl Snapshot {
         if self.fpga.contains_key(&MODE) {
             cfg.push(Step::Wr(MODE, self.shadows().s4008));
         }
-        let mut afe: Vec<Step> = self.afe_frames()?.into_iter().map(|(r, d)| Step::Afe(r, d)).collect();
+        let ch = self.channel;
+        let mut afe: Vec<Step> = self.afe_frames()?.into_iter().map(|(r, d)| Step::Afe(ch, r, d)).collect();
         for &(g, v) in &self.select {
             // only the front ends' select lines: the snapshot also reads others (the PMIC's VSEL lines, the panel's
             // reset, `sysref_reset`), which the start never drives
@@ -211,7 +214,12 @@ impl Snapshot {
         if adc.is_empty() {
             return Err("the snapshot holds no ADC register".into());
         }
-        Ok(vec![("adc", adc), ("link", link), ("fpga", cfg), ("afe", afe)])
+        let mut plan = vec![("adc", adc), ("link", link), ("fpga", cfg)];
+        if !init.is_empty() {
+            plan.push(("afe-init", init.to_vec()));
+        }
+        plan.push(("afe", afe));
+        Ok(plan)
     }
 
     /// The SCU's shadows for the arm and the read-out of the DHO800/DHO900 (the same registers and bits,
@@ -255,6 +263,53 @@ impl Snapshot {
         let fsm = self.fsm_mask();
         Window { n, start: (depth / 2).saturating_sub(n / 2), ratio: 1, fsm, la: false, avg: false }
     }
+}
+
+/// The line that starts the machine-readable part of `mho-check.py --afe-init`.
+pub const AFE_INIT_MARK: &str = "---- oos afe init ----";
+
+/// The front ends' set-up at the start of the stock program (`mho-check.py --afe-init`, the unit's own file): its
+/// frames on every channel and the changes of the front ends' select lines, in the order they happened. Other lines
+/// the trace saw (the PMIC's, the panel's, `sysref_reset`) are left out: the start never drives them.
+pub fn parse_afe_init(text: &str) -> Result<Vec<Step>, String> {
+    let mut lines = text.lines().skip_while(|l| l.trim() != AFE_INIT_MARK);
+    if lines.next().is_none() {
+        return Err(format!("no line {:?}: not a file of mho-check.py --afe-init", AFE_INIT_MARK));
+    }
+    let (mut out, mut format, mut end) = (Vec::new(), None, false);
+    for (i, line) in lines.enumerate() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let bad = |e: String| format!("afe-init line {} {:?}: {}", i + 1, line, e);
+        match f.as_slice() {
+            [] => {}
+            ["end"] => {
+                end = true;
+                break;
+            }
+            ["format", v] => format = Some(num(v).map_err(bad)?),
+            ["afe", ch, r, d] => {
+                let (ch, r, d) = (num(ch).map_err(bad)?, num(r).map_err(bad)?, num(d).map_err(bad)?);
+                if !(1..=4).contains(&ch) || r > 0xff || d > 0xffff {
+                    return Err(bad("channel 1 to 4, register 8 bits, data 16".into()));
+                }
+                out.push(Step::Afe(ch as usize, r as u8, d as u16));
+            }
+            ["select", name, v] => {
+                let g = &name[name.trim_end_matches(|c: char| c.is_ascii_digit()).len()..];
+                if let Some(n) = acq::afe::select_name(num(g).map_err(bad)?) {
+                    out.push(Step::Select(n, *v == "1"));
+                }
+            }
+            _ => {}
+        }
+    }
+    if format != Some(FORMAT) {
+        return Err(format!("afe-init format {:?}, this build reads {}", format, FORMAT));
+    }
+    if !end {
+        return Err("the afe-init file ends before its line `end` (cut off?)".into());
+    }
+    Ok(out)
 }
 
 /// What one arm showed: the time to completion (or to giving up), the play information word, the status and the stop
@@ -388,7 +443,7 @@ mod tests {
     // the mode word before the rest of the configuration, the sync enable left on.
     #[test]
     fn the_plan_writes_the_configuration_but_no_status_and_the_mode_last() {
-        let p = Snapshot::parse(TEXT).unwrap().plan().unwrap();
+        let p = Snapshot::parse(TEXT).unwrap().plan(&[]).unwrap();
         let names: Vec<&str> = p.iter().map(|(n, _)| *n).collect();
         assert_eq!(names, ["adc", "link", "fpga", "afe"]);
         assert_eq!(p[0].1, [Step::Adc(0, 0x0a, 0x8080), Step::Adc(1, 0x09, 0x0700)]);
@@ -425,7 +480,10 @@ mod tests {
         busy.fpga.extend([(0x4004, 0x0f00_a829), (0x400c, 0xa280_8dc2), (0x1000, 0x0585_0a80), (0x4080, 0x5c00_0023)]);
         let (h, b) = (Shadows::HANDOVER, busy.shadows());
         assert_eq!((b.s4004, b.s400c, b.s1000, b.s4080), (0, h.s400c, h.s1000, h.s4080));
-        assert!(!busy.plan().unwrap()[2].1.iter().any(|w| matches!(w, Step::Wr(0x400c | 0x4004 | 0x4080 | 0x1000, _))));
+        assert!(!busy.plan(&[]).unwrap()[2]
+            .1
+            .iter()
+            .any(|w| matches!(w, Step::Wr(0x400c | 0x4004 | 0x4080 | 0x1000, _))));
         let mut no_mode = s.clone();
         no_mode.fpga.remove(&MODE);
         assert_eq!(no_mode.window(4000).fsm, 2);
@@ -471,6 +529,26 @@ mod tests {
         let pos = |o: u32| soon.writes.iter().position(|w| w.0 == o).unwrap();
         assert!(pos(0x1170) < pos(0x1100), "the pass-through comes before the read-out window");
         assert_eq!(soon.writes.last(), Some(&(0x4004, 5)), "the read-out ends with the play-last bit and the FSM run");
+    }
+
+    // Break it catches: the set-up of another channel replayed on the snapshot's, a select line of the PMIC or the
+    // panel driven, the set-up after the snapshot's own words (it would undo them)
+    #[test]
+    fn the_stock_programs_set_up_comes_before_the_snapshots_front_end() {
+        let text = "x\n---- oos afe init ----\nformat 1\nafe 1 0x22 0x0000\nselect vsel46 1\nselect c153 1\n\
+                    afe 4 0x36 0x1234\nend\n";
+        let init = parse_afe_init(text).unwrap();
+        assert_eq!(
+            init,
+            [Step::Afe(1, 0x22, 0), Step::Select("afe_sel_c_ch1".into(), true), Step::Afe(4, 0x36, 0x1234)]
+        );
+        let p = Snapshot::parse(TEXT).unwrap().plan(&init).unwrap();
+        let names: Vec<&str> = p.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, ["adc", "link", "fpga", "afe-init", "afe"]);
+        assert_eq!(p[4].1[0], Step::Afe(2, 0x07, 0xc440));
+        assert!(parse_afe_init("no mark\n").is_err());
+        assert!(parse_afe_init(&text.replace("end\n", "")).is_err());
+        assert!(parse_afe_init(&text.replace("afe 4", "afe 5")).is_err());
     }
 
     // Break it catches: a flat line, noise, a clipped trace or a single spike taken for the probe compensation signal.
