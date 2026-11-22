@@ -319,5 +319,30 @@ class AfeInit(unittest.TestCase):
                           "end"])
 
 
+class Capture(unittest.TestCase):
+    POLL = "0 0x3000 0x00000000\n0 0x2003c 0x00000000\n0 0x10120 0x00000000\n100 0x3000 0x050a8078\n" \
+           "210 0x3000 0x010a8078\n400 0x3000 0x06890000\n500 0x3000 0x02890000\n900 0x2003c 0x00000001\n" \
+           "polls 1000\nloop_us 1.5\nmarker 1\nend\n"
+
+    def test_the_watchers_file_and_its_transfers(self):
+        events, meta = mc.parse_poll(self.POLL)
+        self.assertEqual(meta, {"polls": 1000.0, "loop_us": 1.5, "marker": 1.0})
+        self.assertEqual(len(events), 8)
+        # a write with the strobe, then without (one transfer); a read of ADC 1
+        self.assertEqual(mc.bridge_transfers(events[3:]),
+                         [(100, "adc", 0, 0x0a, 0x8078), (400, "adcread", 1, 0x09, 0)])
+        self.assertEqual(mc.parse_poll(self.POLL.replace("end\n", ""))[1], {}, "a cut-off file says so")
+
+    def test_the_part_for_oos_is_in_time_order_with_the_pauses(self):
+        lines = mc.capture_lines([(1.010, "afe 2 0x07 0xc440"), (1.000, "adc 0 0x0a 0x8078"),
+                                  (1.011, "select c131 1"), (2.0, "wr 0x2003c 0x00000001")])
+        self.assertEqual(lines, [mc.CAPTURE_MARK, "format 1", "adc 0 0x0a 0x8078", "wait 10", "afe 2 0x07 0xc440",
+                                 "select c131 1", "wait 200", "wr 0x2003c 0x00000001", "end"])
+
+    def test_the_time_mark_of_the_watcher_is_found_in_the_trace(self):
+        trace = "  mho-poll-1234 [002] ...1   812.500100: tracing_mark_write: mho-poll t0\n"
+        self.assertEqual(float(mc.MARKER_RE.search(trace).group(1)), 812.5001)
+
+
 if __name__ == "__main__":
     unittest.main()

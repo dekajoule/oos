@@ -4,7 +4,7 @@
 """Check on an MHO900 under its stock system what OOS assumes about its acquisition board.
 
   mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes]
-               [--map | --afe | --panel | --snapshot | --afe-init] [--fifty]
+               [--map | --afe | --panel | --snapshot | --afe-init | --capture-all [--poll PATH]] [--fifty]
 
 Every assumption of docs/protocols/mho-acquisition.md that can be seen without writing to the hardware is checked, and
 the result is written to mho-check-<model>-<date>.txt in the current directory, to attach to the GitHub issue.
@@ -55,18 +55,28 @@ event of --afe, restarts the program (am force-stop; Android's launcher starts i
 for about half a minute and switches the event off. It writes mho-afe-init-<model>-<date>.txt; its last part is what
 OOS reads on the scope (/oos/mho-afe-init.txt) to set the front ends up before the snapshot's words.
 
+With --capture-all it records the stock system's cold start of the acquisition board, then takes the snapshot. It
+stops the stock scope program, unloads xdma and the PCIe host, loads the FPGA again with the stock tool of the start
+script and the PCIe drivers with the stock script, and starts the program again, the way the stock system starts the
+board at power-on. Meanwhile the trace event of --afe records the board's GPIO lines, and mho-poll (pushed over adb,
+read only, from the release) watches the ADC bridge word 0x3000 and the link words; a mark in the trace buffer puts
+both on one time line. It writes mho-capture-<model>-<date>.txt, whose last part is what OOS reads on the scope
+(/oos/mho-capture.txt): the front ends' frames, the select lines and the ADC transfers in the order the stock program
+made them.
+
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
 """
 import argparse
 import datetime
+import os
 import re
 import socket
 import subprocess
 import sys
 import time
 
-VERSION = "10"
+VERSION = "11"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -1609,6 +1619,175 @@ def afe_init_main(a, adb):
     return 0 if frames else 1
 
 
+# ---- --capture-all: the stock system's cold start of the acquisition board, whole ----
+
+CAPTURE_MARK = "---- oos capture ----"
+POLL_REMOTE = "/data/local/tmp/mho-poll"
+POLL_LOG = "/data/local/tmp/mho-poll.txt"
+MARKER_RE = re.compile(r"\s(\d+\.\d+):\s+tracing_mark_write:\s+mho-poll t0")
+# A pause longer than this between two recorded steps becomes a `wait` line, capped (the stock program's own waits:
+# the 5 ms of the link reset, the 50 ms of the sync enable, section 4)
+WAIT_MIN_MS, WAIT_MAX_MS = 2, 200
+
+
+def parse_poll(text):
+    """([(microseconds, offset, value)], {"polls", "loop_us", "marker"}) of mho-poll's file; the dict empty when the
+    file is cut off before `end`."""
+    events, meta, ended = [], {}, False
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) == 3 and f[0].isdigit():
+            events.append((int(f[0]), int(f[1], 16), int(f[2], 16)))
+        elif len(f) == 2 and f[0] in ("polls", "loop_us", "marker"):
+            meta[f[0]] = float(f[1])
+        elif f == ["end"]:
+            ended = True
+    return events, (meta if ended else {})
+
+
+def bridge_transfers(events):
+    """[(microseconds, "adc" | "adcread", ADC, register, data)] from the changes of the bridge word 0x3000: a transfer
+    writes its word with the strobe (bit 26), then without; the first of the two seen starts it. Two transfers of
+    the same word in a row show as one."""
+    out, last = [], None
+    for t, off, v in events:
+        if off != 0x3000 or v == 0:
+            continue
+        key = v & ~(1 << 26)
+        if key == last:
+            continue
+        last = key
+        sel = (v >> 24) & 3
+        if sel not in (1, 2):
+            continue
+        kind = "adcread" if v & (1 << 23) else "adc"
+        out.append((t, kind, 0 if sel == 1 else 1, (v >> 16) & 0x7F, v & 0xFFFF))
+    return out
+
+
+def capture_lines(steps):
+    """The machine-readable part of --capture-all from [(seconds, line)] in any order: the lines in time order, with
+    `wait MS` where the stock program paused longer than WAIT_MIN_MS (at most WAIT_MAX_MS)."""
+    out, prev = [CAPTURE_MARK, "format 1"], None
+    for t, line in sorted(steps, key=lambda s: s[0]):
+        if prev is not None and (t - prev) * 1e3 > WAIT_MIN_MS:
+            out.append(f"wait {min(WAIT_MAX_MS, int((t - prev) * 1e3))}")
+        out.append(line)
+        prev = t
+    return out + ["end"]
+
+
+def capture_main(a, adb):
+    if not adb.is_root():
+        return "--capture-all needs adb root; nothing done"
+    tracer = Tracer(adb)
+    why = tracer.available()
+    if why:
+        return f"--capture-all: {why}; nothing done"
+    here = os.path.dirname(os.path.abspath(__file__))
+    poll = a.poll or os.path.join(here, "mho-poll")
+    if not os.path.exists(poll):
+        return f"--capture-all needs mho-poll (from the release, next to this script, or --poll PATH): {poll} is missing"
+    app = scope_program(adb)
+    if not app:
+        return "--capture-all: no process holds /dev/xdma0_bypass open (is the stock scope program running?); nothing done"
+    code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
+    # the stock start script's FPGA step for this hardware code (docs/protocols/mho-acquisition.md, section 1)
+    load = ("/rigol/tools/spi2fpga_V00_01 -f /rigol/FPGA/sparrow3_K160T.bit" if code == "1" else "/rigol/tools/spi2fpga")
+    if not a.yes:
+        ans = input(f"--capture-all starts the acquisition board again the way the stock system starts it at power-on: "
+                    f"it stops the stock scope program, reloads the FPGA with the stock tool ({load.split()[0]}) and "
+                    "the PCIe drivers, and starts the program again, while it records the board's lines (kernel trace "
+                    "event) and watches the ADC bridge (mho-poll, read only). The screen goes dark for about a "
+                    "minute. Then it takes the snapshot (--snapshot) and asks for the probe compensation signal. If "
+                    "the program does not come back, switch the scope off and on. Go on? [y/N] ")
+        if ans.strip().lower() not in ("y", "yes", "j", "ja"):
+            return "declined; nothing done"
+    subprocess.run(["adb", "-s", adb.target, "push", poll, POLL_REMOTE], capture_output=True, timeout=60)
+    adb.sh(f"chmod 755 {POLL_REMOTE}; rm -f {POLL_LOG}")
+    model = "MHO900"
+    try:
+        scpi = Scpi(a.host, a.scpi_port)
+        idn = idn_without_serial(scpi.query("*IDN?"))
+        model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else model).replace(" ", "")
+        scpi.s.close()
+    except OSError:
+        idn = "not asked (no SCPI)"
+    out = [f"mho-check {VERSION} --capture-all (OOS tools/mho-check.py), {datetime.datetime.now():%Y-%m-%d %H:%M}",
+           f"instrument: {idn}", f"hardware code: {code}", f"kernel: {adb.sh('uname -r').strip()}",
+           f"stock program: {app}", f"FPGA step: {load}"]
+    levels = {}
+    for g, line in gpio_lines(adb.sh("cat /sys/kernel/debug/gpio")).items():
+        if g in traced_lines():
+            levels[g] = 1 if line.split()[-1] == "hi" else 0
+
+    def cold_start():
+        left = adb.sh(f"kill -9 $(pidof {app}); sleep 2; rmmod xdma; rmmod pcie_rockchip; lsmod | "
+                      "grep -c -E '^(xdma|pcie_rockchip) '", timeout=60).strip()
+        out.append(f"stop: {left} drivers left")
+        if left == "0":
+            out.append("FPGA: " + adb.sh(f"{load} 2>&1 | tail -2; sleep 5", timeout=120).strip().replace("\n", " | "))
+        else:
+            # the FPGA must not be loaded again behind a bound PCIe endpoint: only the program restarts then
+            out.append("FPGA: NOT loaded again (the drivers are still loaded); the program restarts only")
+        out.append("PCIe: " + adb.sh("/rigol/shell/load_pcie.sh 2>&1 | tail -2", timeout=120).strip().replace("\n", " | "))
+        # the watcher only now, when xdma is back: it must not hold the device while the drivers are unloaded
+        adb.sh(f"nohup {POLL_REMOTE} --seconds 45 --wait 10 {POLL_LOG} > /dev/null 2>&1 &")
+        time.sleep(1)
+        adb.sh(f"monkey -p {app} -c android.intent.category.LAUNCHER 1")
+        t = time.time()
+        while time.time() - t < 30 and not adb.sh(f"pidof {app}").strip():
+            time.sleep(1)
+        out.append(f"program: pid {adb.sh(f'pidof {app}').strip() or 'NOT RUNNING'} after {time.time() - t:.0f} s")
+    print("cold start of the acquisition board, recording (about a minute and a half)")
+    tracer.start(buffer_kb=16384)
+    try:
+        trace = tracer.record(cold_start, seconds=50)
+    finally:
+        left = tracer.stop()
+    out.append("trace settings: " + ("as before" if not left else "NOT ALL SET BACK: " + "; ".join(left)))
+    ev = parse_trace(trace)
+    m = MARKER_RE.search(trace)
+    poll_text = adb.sh(f"cat {POLL_LOG}; rm -f {POLL_LOG} {POLL_REMOTE}", timeout=120)
+    events, meta = parse_poll(poll_text)
+    out.append(f"mho-poll: {len(events)} changes, " + (", ".join(f"{k} {v:g}" for k, v in meta.items()) if meta
+                                                       else "CUT OFF or not run: " + poll_text.strip()[:200]))
+    frames = []
+    for t, cs, n, rise, fall, miso in decode_bus(ev, AFE_BUS, levels):
+        reg = afe_register(cs, n, rise)
+        if reg:
+            frames.append((t, *reg))
+    selects = select_changes(ev, levels)
+    # the first three lines are the words at the watcher's start, no change
+    transfers = bridge_transfers(events[3:])
+    t0 = float(m.group(1)) if m else None
+    steps = [(t, f"afe {ch[2:]} 0x{r:02x} 0x{d:04x}") for t, ch, r, d in frames]
+    steps += [(t, f"select {name.replace(' ', '')} {new}") for t, name, old, new in selects]
+    if t0 is not None:
+        steps += [(t0 + us / 1e6, f"{kind} {n} 0x{r:02x}" + (f" 0x{d:04x}" if kind == "adc" else ""))
+                  for us, kind, n, r, d in transfers]
+        steps += [(t0 + us / 1e6, f"wr 0x{off:x} 0x{v:08x}") for us, off, v in events[3:] if off != 0x3000]
+    per = {ch: sum(1 for f in frames if f[1] == ch) for ch in ("CH1", "CH2", "CH3", "CH4")}
+    writes = sum(1 for x in transfers if x[1] == "adc")
+    summary = (f"front-end frames: {', '.join(f'{k} {v}' for k, v in per.items())}; ADC writes {writes}, reads "
+               f"{len(transfers) - writes}; select changes {len(selects)}"
+               + ("" if t0 is not None else "; NO TIME MARK: the ADC steps are left out of the part for OOS"))
+    out += ["", summary]
+    print("  " + summary)
+    out += ["", "## ADC bridge transfers (microseconds after mho-poll's start)"]
+    out += [f"{us:10d} {kind} ADC {n} reg 0x{r:02x}" + (f" = 0x{d:04x}" if kind == "adc" else "")
+            for us, kind, n, r, d in transfers]
+    out += ["", "## front-end frames"] + [f"{t:.6f} {ch} reg 0x{r:02x} = 0x{d:04x}" for t, ch, r, d in frames]
+    out += ["", "The part below is for OOS (copy the file to the scope as /oos/mho-capture.txt); please leave it as it "
+            "is.", *capture_lines(steps)]
+    name = f"mho-capture-{model}-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
+    with open(name, "w") as f:
+        f.write("\n".join(out) + "\n")
+    print(f"written: {name} - please attach it to the GitHub issue")
+    print("now the snapshot:")
+    return snapshot_main(a, adb)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("host")
@@ -1629,6 +1808,11 @@ def main():
                     help="instead of the checks: take one setting of the stock system whole (front-end words, FPGA and "
                          "ADC registers) for the first acquisition under OOS; the probe compensation signal on the "
                          "channel it names (about 3 minutes; best right after a power-on)")
+    ap.add_argument("--capture-all", action="store_true",
+                    help="instead of the checks: record the stock system's cold start of the acquisition board (FPGA "
+                         "reloaded, program restarted; the board's lines traced, the ADC bridge watched with mho-poll), "
+                         "then take the snapshot (about 5 minutes)")
+    ap.add_argument("--poll", help="with --capture-all: the mho-poll program (default: next to this script)")
     ap.add_argument("--afe-init", action="store_true",
                     help="instead of the checks: record the front ends' set-up while the stock scope program "
                          "restarts (kernel trace event; the screen goes dark for about half a minute)")
@@ -1648,6 +1832,8 @@ def main():
     if "pcie2dev" not in adb.sh(f"ls {PCIE2DEV}"):
         sys.exit(f"{PCIE2DEV} is missing; nothing done")
 
+    if a.capture_all:
+        sys.exit(capture_main(a, adb))
     if a.afe_init:
         sys.exit(afe_init_main(a, adb))
     if a.snapshot:
