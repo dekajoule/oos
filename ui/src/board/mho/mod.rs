@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The MHO900 behind `Board`, a port of the platform alone (docs/mho.md): OOS has no code for its acquisition board,
-//! so this board never starts an acquisition thread and drives no generator; the front panel is only listened to. The screen shows
-//! the demo signal (the image starts oos-ui without `--hw`, and `Platform::drives_hardware` is false for this build).
+//! so this board never starts an acquisition thread and drives no generator; of the front panel it reads the keys and
+//! sets the LEDs. The screen shows the demo signal (the image starts oos-ui without `--hw`, and
+//! `Platform::drives_hardware` is false for this build).
 //! What remains are the UI's terms of the board: channels, scales, couplings, depths, and the SoC's temperatures.
 
 use super::{Board, PanelCmd, Slow, Zone};
@@ -177,9 +178,10 @@ impl Board for Mho {
         oos_hal::target::ACTIVE.clock_steps
     }
 
-    // The front panel is read, not driven: UART0 as on the DHO (the stock system opens ttyS0 and sends on it, platform
-    // probe: assumed to be the same MCU protocol, frontpanel.md). Its frames go to the panel log, keys of the DHO's
-    // codes act as keys. Nothing is written to the MCU: no LEDs, no power commands (tools: oos-panel, docs/mho.md).
+    // The front panel: UART0 and the MCU protocol of the DHO (frontpanel.md). Verified on an MHO934 (GitHub issue
+    // #248): every key and knob sends the DHO's codes, and the LED frames switch all LEDs on and off. Its frames go to
+    // the panel log, keys act as keys, and the LEDs are set as on the DHO (which bit is which LED on the MHO900 is not
+    // yet verified on hardware). No power or other commands go to the MCU (tools: oos-panel, docs/mho.md).
     fn panel_port(&self) -> (&'static str, u32) {
         ("/dev/ttyS0", 1_500_000)
     }
@@ -188,8 +190,8 @@ impl Board for Mho {
         Vec::new()
     }
 
-    fn panel_leds(&self, _: u32) -> Vec<Vec<u8>> {
-        Vec::new()
+    fn panel_leds(&self, mask: u32) -> Vec<Vec<u8>> {
+        panel::led_frames(mask).iter().map(|f| f.to_vec()).collect()
     }
 
     fn panel_keys(&self, b: &mut Vec<u8>) -> Vec<u8> {
