@@ -176,7 +176,8 @@ pub fn parse_capture(text: &str) -> Result<Vec<Step>, String> {
 
 /// The recipe `mho-start` runs when the unit's capture is there and no recipe is given: the stock program's cold
 /// start in its order, then the snapshot's link, configuration and channel, the ADC registers brought to the
-/// snapshot's values, one acquisition and the status read. **Verified on the unit** (hp197's MHO98, mho-dev-15, issue
+/// snapshot's values, two acquisitions while the board settles (the first after the set-up came with spikes on an
+/// MHO98, issue #491), the acquisition and the status read. **Verified on the unit** (hp197's MHO98, mho-dev-15, issue
 /// #4): in this order the probe compensation signal came back; without the ADC registers it did not (the cold start
 /// leaves the ADCs' input selection 0x54/0x55 and the lanes' trims as the program's start had them).
 pub const WITH_CAPTURE: &str = "label the stock program's cold start (capture), then the snapshot
@@ -185,6 +186,10 @@ plan link
 plan fpga
 plan afe
 adc-sync
+wait 500
+acquire
+acquire
+label the measurement (two acquisitions before it, while the board settles)
 acquire
 status
 ";

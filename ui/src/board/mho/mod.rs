@@ -8,6 +8,8 @@
 //! What remains are the UI's terms of the board: channels, scales, couplings, depths, and the SoC's temperatures.
 
 #[cfg(target_os = "linux")]
+mod hw;
+#[cfg(target_os = "linux")]
 mod live;
 
 use super::{Board, PanelCmd, Slow, Zone};
@@ -66,11 +68,9 @@ impl Board for Mho {
 
     #[cfg(target_os = "linux")]
     fn spawn(&self, _: super::Spawn) -> super::HwShared {
-        // never asked for: the image starts oos-ui without --hw, and main drops --hw where the platform drives no
-        // hardware
-        let mut s = super::Shared::default();
-        s.status = "OOS drives no MHO900 acquisition hardware (docs/mho.md)".into();
-        std::sync::Arc::new(Mutex::new(s))
+        // by hand only (oos-mho-live, after oos-fpgad mho-start set the board up): main keeps --hw for this board
+        // where the platform drives no hardware (`LIVE_BY_HAND`)
+        hw::spawn()
     }
 
     #[cfg(target_os = "linux")]

@@ -198,7 +198,9 @@ measures at that one setting: the probe compensation signal on the snapshot's ch
 2. Start OOS (a build from `mho-acq-1` on), copy the files to the scope (the second one from mho-dev-13 on:
    `scp mho-afe-init-*.txt root@<scope>:/oos/mho-afe-init.txt`): `scp mho-snapshot-*.txt
    root@<scope>:/oos/mho-snapshot.txt`. The signal stays connected to the same channel.
-3. Over SSH: `oos-mho-live`. It runs `oos-fpgad mho-start --snapshot /oos/mho-snapshot.txt --yes` (the report goes
+3. Over SSH: `oos-mho-live`. From mho-dev-18 on it restarts oos-ui with `--hw`: the MHO900's acquisition thread
+   (`ui/src/board/mho/hw.rs`) reads whole records at the snapshot's setting and puts them on the snapshot's channel in
+   volts; switch that channel on on the screen. It runs `oos-fpgad mho-start --snapshot /oos/mho-snapshot.txt --yes` (the report goes
    to `/oos/mho-start.txt`, its last line says `RESULT: IT MEASURES` when the square wave came back), then restarts
    oos-ui on the board's frames. `oos-mho-live off` goes back to the demo signal; a power-off undoes all of it.
 
