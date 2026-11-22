@@ -161,6 +161,21 @@ pub enum Scpi {
     },
 }
 
+impl Scpi {
+    /// No command, and why: the reason is kept for the docs table and the tests only.
+    pub const fn none(why: &'static str) -> Scpi {
+        #[cfg(not(test))]
+        let _ = why;
+        Scpi::None {
+            #[cfg(test)]
+            why,
+        }
+    }
+}
+
+/// Why the rows of an analyser page have no command.
+const NO_COMMAND_YET: &str = "none yet: the page is set in its menu and by a setup file";
+
 pub struct Setting {
     /// the key in setup files; stored keys never change once released. `<line> <field>` (`dvm mode`) names a field of
     /// a setup line that holds several settings, which store.rs writes and reads by hand (`Setting::line`); `<n>`
