@@ -1264,7 +1264,7 @@ impl Device {
                 let write = |p: &str| oos_hal::fsutil::write_atomic(std::path::Path::new(p), t.as_bytes(), &o);
                 if write(SETUP_FILE).is_ok() {
                     // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
-                    if std::path::Path::new("/oos/setups").is_dir() {
+                    if sysconf::data_partition() {
                         let _ = write("/oos/oos-ui.setup");
                     }
                     self.setup_last = t;
