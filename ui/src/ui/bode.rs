@@ -315,12 +315,22 @@ impl Ui {
             }
             return true;
         }
+        // a generator that measures in another mode (the free sweep always in dB): the points of the last sweep are of
+        // the mode before, so they go, as with a change of the mode itself (setting_items.rs)
+        if it == Item::BodeGen {
+            let before = self.bode_mode();
+            self.m.bode_gen = (self.m.bode_gen as i32 + d).rem_euclid(GENERATORS.len() as i32) as usize;
+            if self.bode_mode() != before {
+                self.bode.points.clear();
+                self.bode.cursor = 0;
+            }
+            return true;
+        }
         let m = &mut self.m;
         match it {
             Item::BodeOn => super::analysers::toggle_view(m, AView::Bode),
             Item::BodeIn if free => m.bode_sw_in = opt_src_step(m.bode_sw_in, d),
             Item::BodeSync => m.bode_sync = src_step(m.bode_sync, NCH, d),
-            Item::BodeGen => m.bode_gen = (m.bode_gen as i32 + d).rem_euclid(GENERATORS.len() as i32) as usize,
             Item::BodeCur => {
                 let n = self.bode.points.len() as i32;
                 self.bode.cursor = (self.bode.cursor as i32 + d).clamp(0, (n - 1).max(0)) as usize;
@@ -1238,6 +1248,28 @@ mod tests {
             std::fs::read_to_string(&files[0]).unwrap(),
             "Frequency (Hz),Gain (dB),Phase (deg)\n1000,-0.043,-5.71\n10000,-3.010,-45.00\n100000,-20.043,\n"
         );
+    }
+
+    /// A generator that measures in another mode drops the points of the last sweep, so neither the plot nor the CSV
+    /// shows linear ratios as dB; one in the same mode keeps them.
+    #[test]
+    fn a_generator_of_another_mode_drops_the_points() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.m.bode_mode = oos_dsp::bode::Mode::Z;
+        ui.m.bode_gen = BUILTIN;
+        ui.bode.points = vec![(1e3, 0.5, 10.0)];
+        assert!(ui.bode_csv().starts_with("Frequency (Hz),Vout/Vin,"));
+        // to the generator after the built-in one: an external one, still in impedance mode
+        let next = (BUILTIN + 1) % GENERATORS.len();
+        if next != FREE {
+            ui.adjust(Item::BodeGen, 1);
+            assert_eq!(ui.bode.points.len(), 1, "same mode: the points stay");
+        }
+        while ui.bode_gen() != FREE {
+            ui.adjust(Item::BodeGen, 1);
+        }
+        assert!(ui.bode.points.is_empty(), "the free sweep measures in dB: the impedance points go");
+        assert!(!ui.bode_items().contains(&Item::BodeSave));
     }
 
     #[test]
