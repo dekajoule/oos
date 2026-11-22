@@ -595,8 +595,8 @@ pub fn parse_ref_looks(text: &str, n: usize) -> Vec<Option<RefLook>> {
         let l = out[i].get_or_insert_with(RefLook::default);
         match key {
             "on" => l.on = v.parse().ok(),
-            "vdiv" => l.vdiv = v.parse().ok().filter(|x: &f32| x.is_finite() && *x > 0.0),
-            "offset" => l.offset = v.parse().ok().filter(|x: &f32| x.is_finite()),
+            "vdiv" => l.vdiv = words::num(v).filter(|x| *x > 0.0),
+            "offset" => l.offset = words::num(v),
             "color" => l.color = v.parse().ok(),
             "name" => l.label = Some(v.to_string()),
             _ => {}

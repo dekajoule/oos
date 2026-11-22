@@ -335,12 +335,7 @@ impl Setting {
                     Val::F32(_) => crate::words::num(arg)
                         .filter(|&x| within(x as f64))
                         .map(|x| Val::F32(x.clamp(lo as f32, hi as f32))),
-                    _ => arg
-                        .trim()
-                        .parse::<f64>()
-                        .ok()
-                        .filter(|&x| x.is_finite() && within(x))
-                        .map(|x| Val::F64(x.clamp(lo, hi))),
+                    _ => crate::words::num64(arg).filter(|&x| within(x)).map(|x| Val::F64(x.clamp(lo, hi))),
                 }
             }
             Ty::Custom(io) => (io.take)(arg),

@@ -7,7 +7,7 @@
 //! registries of the measurements and the decoders it asks through `Registries`.
 
 use super::*;
-pub(crate) use crate::words::{p_bool, p_f32, p_f64, p_idx, p_u32};
+pub(crate) use crate::words::{num64, p_bool, p_f32, p_f64, p_idx, p_u32};
 
 const COUPLINGS: [Coupling; 4] = [Coupling::Dc, Coupling::Ac, Coupling::Gnd, Coupling::Dc50];
 const WHENS: [WhenKind; 5] = [WhenKind::Off, WhenKind::Gt, WhenKind::Lt, WhenKind::In, WhenKind::Out];
@@ -111,8 +111,7 @@ fn set_numbered(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<b
             .and_then(|i| i.checked_sub(1))
             .filter(|&i| i < values.len())
             .ok_or("invalid deskew source")?;
-        let value =
-            v.parse::<f64>().ok().filter(|x| x.is_finite() && x.abs() <= 1000.0).ok_or("invalid deskew seconds")?;
+        let value = num64(v).filter(|x| x.abs() <= 1000.0).ok_or("invalid deskew seconds")?;
         values[index] = value;
         return Ok(true);
     }
@@ -681,9 +680,8 @@ fn set_more(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
                 return Err("sim_extra: center deviation frequency DCD correlated-RJ corner".into());
             };
             let bounded = |s: &str, low: f64, high: f64| -> Result<f64, String> {
-                s.parse::<f64>()
-                    .ok()
-                    .filter(|value| value.is_finite() && *value >= low && *value <= high)
+                num64(s)
+                    .filter(|value| *value >= low && *value <= high)
                     .ok_or_else(|| format!("{s} must be between {low} and {high}"))
             };
             m.sim_ssc_center = p_bool(center)?;
