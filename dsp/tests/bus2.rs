@@ -84,7 +84,8 @@ fn mil1553_a_bit_without_its_middle_edge_is_an_error() {
     }
     let p = mil1553(&v, dt, 0.0, 1.0);
     assert_eq!(p.len(), 1);
-    assert!(!p[0].ok);
+    // bit 5 of 0x1234 is a zero, and its first half (negative) still reads as a zero
+    assert_eq!((p[0].value, p[0].ok), (0x1234, false));
 }
 
 #[test]
