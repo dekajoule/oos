@@ -1322,9 +1322,14 @@ mod tests {
         assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (1.25, "1.25 Vpp".into()));
         typed(&mut ui, &["5", "0", "Vpp"]);
         assert_eq!(ui.m.bode_amp, 1.25, "50 Vpp is refused");
-        // the knob still steps 1-2-5 from there
+        // the knob still steps 1-2-5 from there: up to the next step, down to the one below, whatever lies between
         ui.adjust(Item::BodeAmp, 1);
         assert_eq!(ui.m.bode_amp, 2.0);
+        for (x, d, want) in [(1.999, 1, 2.0), (1.0005, 1, 2.0), (1.25, -1, 1.0), (1.999, -1, 1.0), (2.0, 1, 5.0)] {
+            ui.m.bode_amp = x;
+            ui.adjust(Item::BodeAmp, d);
+            assert_eq!(ui.m.bode_amp, want, "{x} by {d}");
+        }
     }
 
     #[test]

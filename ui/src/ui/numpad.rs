@@ -106,8 +106,9 @@ impl Ui {
             if !(0.01..=20.0).contains(&v) {
                 return self.toast("The amplitude must be 10 mVpp to 20 Vpp");
             }
+            // as - and + of the Bode rows: no settings_changed (setting_items.rs), the statistics and the acquisition stay
             self.m.bode_amp = v;
-            return self.settings_changed();
+            return;
         }
         let m = &mut self.m;
         let v = v as f32;
