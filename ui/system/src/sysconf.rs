@@ -194,9 +194,9 @@ impl SysConf {
     pub fn parse_over(base: SysConf, text: &str) -> (SysConf, Vec<String>) {
         let mut c = base;
         let mut bad = Vec::new();
-        for (_, line, kv) in oos_hal::key_value_lines(text, |l| l) {
+        for (_, line, kv) in oos_hal::key_value_lines(text, str::trim) {
             let Some((k, v)) = kv else {
-                bad.push(format!("not key = value: {}", line.trim()));
+                bad.push(format!("not key = value: {}", line));
                 continue;
             };
             let (k, v) = (k.trim(), uncomment(v));
@@ -422,7 +422,7 @@ fn uncomment(v: &str) -> &str {
 /// for the scripts): a line that starts with `#` is a comment, so is the rest of a line from a `#` after a space or a
 /// tab, and of several lines of one key the last wins.
 pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    oos_hal::key_value_lines(text, |l| l)
+    oos_hal::key_value_lines(text, str::trim)
         .filter_map(|(_, _, kv)| kv.filter(|(k, _)| k.trim() == key).map(|(_, v)| uncomment(v)))
         .last()
 }
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(back, c);
         let (d, bad) = SysConf::parse("# by hand\nntp = on # comment\n future.key = 7 \n");
         assert!(bad.is_empty() && d.ntp);
-        assert!(d.text().contains("\n future.key = 7 \n"));
+        assert!(d.text().contains("\nfuture.key = 7\n"));
         assert_eq!(SysConf::parse(&d.text()).0, d);
         let t = "  # a = 0\na = 1 # c\n\n a =#2\nb\na=x#y\t#z\n";
         assert_eq!((value(t, "a"), value(&t[..20], "a"), value(t, "b")), (Some("x#y"), Some("1"), None));
