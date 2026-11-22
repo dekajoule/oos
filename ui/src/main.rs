@@ -589,7 +589,7 @@ fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
     use board::Board;
     eprintln!("oos-ui: power {:?}", a);
     inp.set_leds(0);
-    unsafe { libc::sync() };
+    store::sync_disks();
     match a {
         ui::PowerAction::Off => {
             inp.send(&board::board().panel_cmd(board::PanelCmd::PowerOff));
