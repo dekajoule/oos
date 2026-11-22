@@ -166,7 +166,17 @@ impl Ui {
         let (cap, y1) = (f.s.size * 72 / 100, r.y + 5 + f.s.size * 72 / 100);
         cv.circle(r.x + 11, y1 - cap / 2 + 1, 3, if addr.is_some() { GREEN } else { DIM });
         cv.text(&f.s, r.x + 20, y1, l1, DIM);
-        cv.text(&f.sb, r.x + 20, r.y + r.h - 4, addr.unwrap_or("not connected"), TEXT);
+        cv.text(&f.sb, r.x + 20, r.y + r.h - 4, self.link_line(addr), TEXT);
+    }
+
+    /// The second line of a link box: the address only where System > Network > Show address is on, since
+    /// pictures and photos of the screen are passed on; else whether the link has one.
+    fn link_line<'a>(&self, addr: Option<&'a str>) -> &'a str {
+        match addr {
+            Some(a) if self.sys.show_addr => a,
+            Some(_) => "connected",
+            None => "not connected",
+        }
     }
 
     /// The address of an interface, if it has one.
@@ -774,6 +784,26 @@ pub(super) const STATUS_BOXES: [StatusBox; 4] = [
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// The LAN and WLAN boxes show no address by default, only whether there is one; System > Network > Address in
+    /// top bar shows it, and the setting is kept with the system settings.
+    #[test]
+    fn the_top_bar_shows_an_address_only_when_switched_on() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        assert_eq!(ui.link_line(None), "not connected");
+        ui.net.ifs = vec![("eth0".into(), "192.0.2.7".into())];
+        let addr = ui.addr_of("eth0");
+        assert!(!ui.sys.show_addr);
+        assert_eq!(ui.link_line(addr), "connected", "no address by default");
+        assert!(ui.network_items().contains(&Item::NetShowAddr));
+        ui.select_option(Item::NetShowAddr, "On");
+        assert!(ui.sys.show_addr && ui.sys.text().contains("net.show_addr = on"));
+        let addr = ui.addr_of("eth0");
+        assert_eq!(ui.link_line(addr), "192.0.2.7");
+        assert_eq!(ui.link_line(None), "not connected");
+    }
+
     #[test]
     fn generator_and_la_light_their_front_panel_leds() {
         let mut ui = crate::ui::testkit::demo_ui();
