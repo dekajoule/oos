@@ -148,6 +148,8 @@ pub struct Bar1 {
     regs: *mut u32,
     /// bytes mapped: `WINDOW` of the DHO800/DHO900, more on a board whose blocks reach further (`open_len`)
     len: usize,
+    /// false for `open_read_only`: `wr` refuses (the mapping has no write permission)
+    writable: bool,
     _file: std::fs::File,
     pub gap_us: u64,
 }
@@ -161,26 +163,24 @@ impl Bar1 {
     /// Maps the first `len` bytes of the window (a multiple of 4 KiB): the MHO900's blocks reach 0x30000
     /// (docs/protocols/mho-acquisition.md, section 3).
     pub fn open_len(len: usize) -> std::io::Result<Bar1> {
-        Bar1::from_file(std::fs::OpenOptions::new().read(true).write(true).open("/dev/xdma0_bypass")?, len)
+        Bar1::from_file(std::fs::OpenOptions::new().read(true).write(true).open("/dev/xdma0_bypass")?, len, true)
+    }
+
+    /// Maps the first `len` bytes for reading only (the device opened read-only, the pages without write
+    /// permission): a watcher beside another program that drives the FPGA (`mho-poll`) can never write a register.
+    pub fn open_read_only(len: usize) -> std::io::Result<Bar1> {
+        Bar1::from_file(std::fs::File::open("/dev/xdma0_bypass")?, len, false)
     }
 
     /// Maps `len` bytes of BAR1 of an open `/dev/xdma0_bypass` (a plain file of that size in the tests).
-    fn from_file(f: std::fs::File, len: usize) -> std::io::Result<Bar1> {
+    fn from_file(f: std::fs::File, len: usize, writable: bool) -> std::io::Result<Bar1> {
         use std::os::unix::io::AsRawFd;
-        let p = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                len,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                f.as_raw_fd(),
-                0,
-            )
-        };
+        let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
         if p == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(Bar1 { regs: p as *mut u32, len, _file: f, gap_us: 10 })
+        Ok(Bar1 { regs: p as *mut u32, len, writable, _file: f, gap_us: 10 })
     }
 }
 
@@ -195,6 +195,7 @@ impl Drop for Bar1 {
 #[cfg(target_os = "linux")]
 impl Bus for Bar1 {
     fn wr(&mut self, off: u32, v: u32) {
+        assert!(self.writable, "a write to a read-only mapping of the register window");
         assert!((off as usize) < self.len && off.is_multiple_of(4));
         unsafe { std::ptr::write_volatile(self.regs.add((off >> 2) as usize), v) };
         if self.gap_us > 0 {
@@ -223,7 +224,7 @@ mod tests {
         f.set_len(0x8000).unwrap();
         let name = path.to_str().unwrap().to_string();
         let mapped = || std::fs::read_to_string("/proc/self/maps").unwrap().lines().any(|l| l.contains(&name));
-        let bar = super::Bar1::from_file(f, super::WINDOW).unwrap();
+        let bar = super::Bar1::from_file(f, super::WINDOW, true).unwrap();
         assert!(mapped(), "the test must see the mapping while the Bar1 lives");
         drop(bar);
         let still = mapped();
