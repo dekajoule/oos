@@ -350,8 +350,6 @@ impl Ui {
             Item::Open(MenuId::Features),
             Item::Open(MenuId::Time),
             Item::SysInfo,
-            Item::UpperUse,
-            Item::UpperProbe,
             Item::About,
             Item::Update,
             Item::UpdateRollback,

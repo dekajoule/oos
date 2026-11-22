@@ -16,13 +16,15 @@ Added:
 - **System > Probe optional memory** probes the memory above 256 MiB for every segment size of the Acquire menu's
   depths and switches it on when every size held; **System > Opt. memory** switches its use off and on again (on
   without a probe's yes probes first). Off by default; kept in system.conf (`mem.upper`, `mem.upper.found`)
-  ([First Steps](wiki/First-Steps.md#optional-memory)).
+  ([horizontal-config.md 1.8](docs/protocols/horizontal-config.md#18-frame-memory-above-256-mib-not-usable):
+  removed again after 0.1.15).
 - Hardware segments can use the acquisition memory above 256 MiB where the unit has it: twice as many segments of a
   size. The stock software uses only 256 MiB; the other half was found by observation and measurement on a unit. It
   is off until **System > Probe optional memory** found it on the unit (next entry), and a short probe at the first
   recording of a segment size the button did not probe checks it again. System info shows whether it is in use
-  ("Optional memory") ([horizontal-config.md](docs/protocols/horizontal-config.md#18-frame-memory-above-256-mib))
-  (unit).
+  ("Optional memory")
+  ([horizontal-config.md 1.8](docs/protocols/horizontal-config.md#18-frame-memory-above-256-mib-not-usable):
+  removed again) (unit).
 - A Windows button under the zoom magnifier opens the Windows menu ([First Steps](wiki/First-Steps.md)).
 
 Interface:
