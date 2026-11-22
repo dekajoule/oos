@@ -356,14 +356,10 @@ impl Platform {
 /// The `key = value` lines of a file in the limits format: (line number, key, value); a line without `=` is a warning.
 fn conf_lines<'a>(text: &'a str, warnings: &mut Vec<String>, file: &str) -> Vec<(usize, &'a str, &'a str)> {
     let mut out = Vec::new();
-    for (n, line) in text.lines().enumerate() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        match line.split_once('=') {
-            Some((k, v)) => out.push((n + 1, k.trim(), v.trim())),
-            None => warnings.push(format!("{}:{}: no '=' in {:?}", file, n + 1, line)),
+    for (n, line, kv) in crate::key_value_lines(text, |l| l.split('#').next().unwrap_or("").trim()) {
+        match kv {
+            Some((k, v)) => out.push((n, k.trim(), v.trim())),
+            None => warnings.push(format!("{}:{}: no '=' in {:?}", file, n, line)),
         }
     }
     out
@@ -669,6 +665,8 @@ mod tests {
         assert_eq!(p.overrides.len(), 4);
         assert_eq!(p.warnings.len(), 2, "{:?}", p.warnings);
         assert!(p.experimental());
+        let p = Platform::build(Some(&f), Some("  \nla = yes#x\nla#= no\n # la = no\n"), None);
+        assert!(p.caps.la && p.warnings == ["limits.conf:3: no '=' in \"la\""], "{:?}", p.warnings);
 
         // forced model (file or argument), capability overrides stay on top
         let p = Platform::build(Some(&f), Some("model = DHO924S\nafg = no\n"), None);

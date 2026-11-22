@@ -38,6 +38,17 @@ pub fn try_bytes_at<const N: usize>(b: &[u8], o: usize) -> Option<[u8; N]> {
     b.get(o..o.checked_add(N)?)?.try_into().ok()
 }
 
+/// The `key=value` lines of a text, each as `cut` (a file's rule for comments) leaves it, blank ones and those starting
+/// with `#` after blanks left out: (line number from 1, the line, key and value as written around its first `=`).
+pub fn key_value_lines<'a>(
+    text: &'a str,
+    cut: impl Fn(&'a str) -> &'a str,
+) -> impl Iterator<Item = (usize, &'a str, Option<(&'a str, &'a str)>)> {
+    let lines = text.lines().map(cut).enumerate();
+    let lines = lines.filter(|(_, l)| l.trim_start().chars().next().is_some_and(|c| c != '#'));
+    lines.map(|(n, l)| (n + 1, l, l.split_once('=')))
+}
+
 /// CRC-32 tables for eight bytes per step ("slicing by 8"): `T[0]` is the usual byte table, `T[k][n]` the CRC of byte
 /// `n` followed by `k` zero bytes.
 const CRC_T: [[u32; 256]; 8] = {

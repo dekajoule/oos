@@ -194,13 +194,9 @@ impl SysConf {
     pub fn parse_over(base: SysConf, text: &str) -> (SysConf, Vec<String>) {
         let mut c = base;
         let mut bad = Vec::new();
-        for line in text.lines() {
-            let l = line.trim();
-            if l.is_empty() || l.starts_with('#') {
-                continue;
-            }
-            let Some((k, v)) = l.split_once('=') else {
-                bad.push(format!("not key = value: {}", l));
+        for (_, line, kv) in oos_hal::key_value_lines(text, |l| l) {
+            let Some((k, v)) = kv else {
+                bad.push(format!("not key = value: {}", line.trim()));
                 continue;
             };
             let (k, v) = (k.trim(), uncomment(v));
@@ -426,16 +422,9 @@ fn uncomment(v: &str) -> &str {
 /// for the scripts): a line that starts with `#` is a comment, so is the rest of a line from a `#` after a space or a
 /// tab, and of several lines of one key the last wins.
 pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    text.lines()
-        .filter_map(|l| {
-            let l = l.trim();
-            if l.starts_with('#') {
-                return None;
-            }
-            let (k, v) = l.split_once('=')?;
-            (k.trim() == key).then(|| uncomment(v))
-        })
-        .next_back()
+    oos_hal::key_value_lines(text, |l| l)
+        .filter_map(|(_, _, kv)| kv.filter(|(k, _)| k.trim() == key).map(|(_, v)| uncomment(v)))
+        .last()
 }
 
 /// `env` if set (an environment variable's value), else the value of `key` in `conf`.
@@ -555,17 +544,19 @@ mod tests {
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
         assert_eq!(back, c);
-        let (d, bad) = SysConf::parse("# by hand\nntp = on # comment\nfuture.key = 7\n");
+        let (d, bad) = SysConf::parse("# by hand\nntp = on # comment\n future.key = 7 \n");
         assert!(bad.is_empty() && d.ntp);
-        assert!(d.text().contains("\nfuture.key = 7\n"));
+        assert!(d.text().contains("\n future.key = 7 \n"));
         assert_eq!(SysConf::parse(&d.text()).0, d);
+        let t = "  # a = 0\na = 1 # c\n\n a =#2\nb\na=x#y\t#z\n";
+        assert_eq!((value(t, "a"), value(&t[..20], "a"), value(t, "b")), (Some("x#y"), Some("1"), None));
     }
 
     #[test]
     fn bad_values_keep_the_default() {
         let (c, bad) = SysConf::parse("ntp = maybe\nntp.server = a b;rm\ntz = Mars+99\neth.retry_10m = 2\nnonsense\n");
         assert_eq!(c, SysConf::default());
-        assert_eq!(bad.len(), 5, "{:?}", bad);
+        assert_eq!((bad.len(), bad[4].as_str()), (5, "not key = value: nonsense"), "{:?}", bad);
         for s in ["pool.ntp.org", "192.168.1.1", "fe80::1", "time-a.example"] {
             assert!(server_ok(s), "{}", s);
         }
