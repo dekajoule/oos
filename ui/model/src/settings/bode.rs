@@ -57,7 +57,19 @@ pub const AMPS: [f64; 11] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.
 
 /// `d` steps along the ladder `l` from `x`; a value above all starts from the top.
 fn ladder(l: &[f64], x: f64, d: i32) -> f64 {
-    ladder_step(l, x, d, l.len() - 1)
+    let at = |i: i32| l[i.clamp(0, l.len() as i32 - 1) as usize];
+    // on a step (within rounding): `d` steps from it
+    if let Some(k) = l.iter().position(|&v| (v - x).abs() <= v.abs() * 1e-9) {
+        return at(k as i32 + d);
+    }
+    // between two steps (an amplitude typed on the pad, #52): up to the next step above, down to the next below
+    if d > 0 {
+        l.iter().position(|&v| v > x).map_or(at(l.len() as i32 - 1), |i| at(i as i32 + d - 1))
+    } else if d < 0 {
+        l.iter().rposition(|&v| v < x).map_or(at(0), |j| at(j as i32 + d + 1))
+    } else {
+        ladder_step(l, x, d, l.len() - 1)
+    }
 }
 
 /// The frequencies of a sweep: 1-2-5 from 1 Hz to 5 GHz.
@@ -115,7 +127,8 @@ pub const SWEEP: [Setting; 4] = [
         ty: Ty::Real { range: None, shown: |x| si_short(x, "Vpp") },
         label: "Amplitude",
         #[cfg(test)]
-        doc: "The amplitude the generator puts out, peak to peak. The menu steps 1-2-5 from 10 mVpp to 20 Vpp.",
+        doc: "The amplitude the generator puts out, peak to peak. The menu steps 1-2-5 from 10 mVpp to 20 Vpp; a tap \
+              on the value opens the number pad for any value in that range.",
         accept: None,
         step: Some(|m, _, d| Val::F64(ladder(&AMPS, m.bode_amp, d))),
         get: |m, _| Val::F64(m.bode_amp),

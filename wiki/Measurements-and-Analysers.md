@@ -165,7 +165,8 @@ Then **Connection**:
   without one the sweep stops with the reason (no USB device, a device that is not USBTMC, no permission). Rigol DG
   and Siglent SDG generators are USBTMC instruments as well. So far this is tested with a simulated device only.
 
-The scope sets channel 1 of the generator to a sine of **Amplitude** (Vpp) without offset, switches its output on and
+The scope sets channel 1 of the generator to a sine of **Amplitude** (Vpp; - and + step 1-2-5, a tap on the value
+opens the number pad for any value from 10 mVpp to 20 Vpp) without offset, switches its output on and
 steps through the frequencies. Over SCPI, `:BODE:GENerator "usb"` selects USB and
 `:BODE:GENerator "192.168.1.20:5025"` the LAN again.
 

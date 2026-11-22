@@ -1302,6 +1302,36 @@ mod tests {
         assert!(ui.menu_open, "multi 1 opens the menu as before");
     }
 
+    /// The amplitude takes any value from the number pad, as a tap on it opens (#52): 350 mVpp, 1.25 Vpp; outside
+    /// 10 mVpp to 20 Vpp it is refused.
+    #[test]
+    fn the_amplitude_takes_any_value_from_the_pad() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.m.view = AView::Bode;
+        ui.open_menu(MenuId::Bode);
+        let typed = |ui: &mut Ui, keys: &[&str]| {
+            ui.open_numpad(Item::BodeAmp);
+            for k in keys {
+                let i = ui.numpad_keys().iter().position(|x| x == k).unwrap_or_else(|| panic!("no key {k}"));
+                ui.numpad_key(i);
+            }
+        };
+        typed(&mut ui, &["3", "5", "0", "mVpp"]);
+        assert!((ui.m.bode_amp - 0.35).abs() < 1e-12 && ui.value(Item::BodeAmp) == "350 mVpp", "{}", ui.m.bode_amp);
+        typed(&mut ui, &["1", ".", "2", "5", "Vpp"]);
+        assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (1.25, "1.25 Vpp".into()));
+        typed(&mut ui, &["5", "0", "Vpp"]);
+        assert_eq!(ui.m.bode_amp, 1.25, "50 Vpp is refused");
+        // the knob still steps 1-2-5 from there: up to the next step, down to the one below, whatever lies between
+        ui.adjust(Item::BodeAmp, 1);
+        assert_eq!(ui.m.bode_amp, 2.0);
+        for (x, d, want) in [(1.999, 1, 2.0), (1.0005, 1, 2.0), (1.25, -1, 1.0), (1.999, -1, 1.0), (2.0, 1, 5.0)] {
+            ui.m.bode_amp = x;
+            ui.adjust(Item::BodeAmp, d);
+            assert_eq!(ui.m.bode_amp, want, "{x} by {d}");
+        }
+    }
+
     #[test]
     fn free_sweep_menu_settings() {
         let mut ui = crate::ui::testkit::demo_ui();
