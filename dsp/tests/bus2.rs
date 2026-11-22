@@ -68,6 +68,25 @@ fn mil1553_follows_a_bus_off_its_rate() {
     }
 }
 
+/// A bit without its edge in the middle is read from its first half, and the word is not ok: here the second half
+/// of data bit 5 is made the same as its first.
+#[test]
+fn mil1553_a_bit_without_its_middle_edge_is_an_error() {
+    let l = mil1553_wave(&[(false, 0x1234)], 7.0, 4.0);
+    let dt = 1e-6 / 50.0;
+    let mut v = sample(|t| l.v(t), 0.0, dt, 50 * 30);
+    // data bit 5 starts 4 + 3 + 5 us after t = 0
+    let t = 4.0 + 3.0 + 5.0;
+    let (a, m, b) = ((t * 50.0) as usize, ((t + 0.5) * 50.0) as usize, ((t + 1.0) * 50.0) as usize);
+    let first = v[a + 5];
+    for x in &mut v[m..b] {
+        *x = first;
+    }
+    let p = mil1553(&v, dt, 0.0, 1.0);
+    assert_eq!(p.len(), 1);
+    assert!(!p[0].ok);
+}
+
 #[test]
 fn mil1553_bad_parity_is_flagged() {
     let l = mil1553_wave(&[(false, 0x1234)], 7.0, 4.0);
