@@ -299,6 +299,8 @@ pub(super) enum Item {
     AfgModShape,
     BodeOn,
     BodeRun,
+    /// the points of the last sweep to a CSV file on the storage (#53)
+    BodeSave,
     BodeStart,
     BodeStop,
     BodePoints,

@@ -147,7 +147,10 @@ at the top right, which lead to **Exit**, **Settings** and what fits the view.
 If the source of an analyser is switched off, choose another one in its Settings. From 0.1.1 on it takes the first channel that is on by itself.
 
 The Bode plot shows the gain above and the phase below over the frequency. Both axes carry their values at round
-steps (dB, or V/V for an impedance sweep, and degrees); the title line of each half names its whole range.
+steps (dB, or V/V for an impedance sweep, and degrees); the title line of each half names its whole range. Once a
+sweep has points, **Save CSV** in the Bode menu writes them where **Storage > Save to** points, as `bode-....csv`:
+frequency in Hz, gain in dB (or Vout/Vin) and phase in degrees, one line a point. Over SCPI `:BODE:DATA?` returns the
+same points.
 
 ### Bode with an external generator
 

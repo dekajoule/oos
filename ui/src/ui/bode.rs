@@ -218,7 +218,7 @@ impl Ui {
             }
             v.extend([BodeOut, BodeGen, BodeSync, BodeSyncEdge, BodeSyncLvl]);
             if !self.bode.points.is_empty() {
-                v.push(BodeCur);
+                v.extend([BodeCur, BodeSave]);
             }
             return v;
         }
@@ -234,9 +234,9 @@ impl Ui {
             Item::BodeOut,
             Item::BodeGen,
         ];
-        // a cursor once there is something to read
+        // a cursor, and saving, once there is something to read
         if !self.bode.points.is_empty() {
-            v.push(Item::BodeCur);
+            v.extend([Item::BodeCur, Item::BodeSave]);
         }
         // the connection only for an external generator, the address only on the network
         if self.bode_gen() != BUILTIN {
@@ -251,7 +251,7 @@ impl Ui {
     pub(super) fn bode_kind(it: Item) -> Option<Kind> {
         Some(match it {
             Item::BodeAddr | Item::BodeCur => Kind::Value,
-            Item::BodeRun => Kind::Action,
+            Item::BodeRun | Item::BodeSave => Kind::Action,
             Item::BodeOn | Item::BodeIn | Item::BodeOut | Item::BodeGen | Item::BodeSync => Kind::Choice,
             _ => return None,
         })
@@ -262,6 +262,7 @@ impl Ui {
             Item::Open(MenuId::Bode) => "Bode",
             Item::BodeOn => "View",
             Item::BodeRun => "Start / stop sweep",
+            Item::BodeSave => "Save CSV",
             Item::BodeIn => "Input (ref)",
             Item::BodeOut => "Output",
             Item::BodeGen => "Generator",
@@ -340,6 +341,12 @@ impl Ui {
     }
 
     pub(super) fn bode_activate(&mut self, it: Item) -> bool {
+        if it == Item::BodeSave {
+            let p = self.new_file(&self.save_dir(), "bode", "csv");
+            let r = crate::store::write(&p, self.bode_csv().as_bytes());
+            self.toast_saved(&p, r);
+            return true;
+        }
         if it != Item::BodeRun {
             return false;
         }
@@ -719,6 +726,18 @@ impl Ui {
             self.bode_activate(Item::BodeRun);
         }
     }
+    /// The points as a CSV file (#53): a header, then frequency, gain and phase per line; the gain in dB, or the
+    /// linear Vout/Vin ratio of an impedance sweep, and no phase where there is none.
+    pub(super) fn bode_csv(&self) -> String {
+        let gain = if self.bode_mode() == oos_dsp::bode::Mode::Z { "Vout/Vin" } else { "Gain (dB)" };
+        let mut s = format!("Frequency (Hz),{},Phase (deg)\n", gain);
+        for &(hz, g, p) in &self.bode.points {
+            let p = if p.is_nan() { String::new() } else { format!("{:.2}", p) };
+            s.push_str(&format!("{},{:.3},{}\n", hz, g, p));
+        }
+        s
+    }
+
     pub fn bode_text(&self) -> String {
         self.bode
             .points
@@ -1199,6 +1218,26 @@ mod tests {
         }
         let (gmin, gmax) = ui.bode_gain_range();
         assert_eq!((gmin, gmax), (-60.0, 0.0));
+    }
+
+    /// The points of a sweep go to a CSV file on the storage (#53): a header, one line a point, no phase where there
+    /// is none; the row is there only once there are points.
+    #[test]
+    fn the_points_are_saved_as_csv() {
+        let dir = crate::ui::testkit::Scratch::new("bode-csv");
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.files.dir = dir.to_path_buf();
+        assert!(!ui.bode_items().contains(&Item::BodeSave), "nothing to save yet");
+        ui.bode.points = vec![(1e3, -0.043, -5.71), (1e4, -3.010, -45.0), (1e5, -20.043, f64::NAN)];
+        assert!(ui.bode_items().contains(&Item::BodeSave));
+        ui.activate(Item::BodeSave);
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].file_name().unwrap().to_string_lossy().starts_with("bode"), "{files:?}");
+        assert_eq!(
+            std::fs::read_to_string(&files[0]).unwrap(),
+            "Frequency (Hz),Gain (dB),Phase (deg)\n1000,-0.043,-5.71\n10000,-3.010,-45.00\n100000,-20.043,\n"
+        );
     }
 
     #[test]
