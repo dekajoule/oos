@@ -101,9 +101,9 @@ Choose a level inside the actual waveform range. Use `*OPC?` only when willing t
 The settings of the Channel menu, their `:CHANnel<n>` commands and their keys in a setup file. They are declared once,
 in `ui/model/src/settings/channel.rs`; this table is written from there
 (`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A command sets
-channel `<n>`, a key `ch<n>.*` channel n; `fine_v` and `v_expand_gnd` hold for every channel. A value `:UNITs`,
-`:VERNier` or `:EXPand` does not take is refused with `-224`, one of the others with `-113`. The scale, offset,
-coupling, probe, bias, deskew and label (above and below) are written by hand.
+channel `<n>`, a key `ch<n>.*` channel n; `fine_v` and `v_expand_gnd` hold for every channel. A value a command
+does not take is refused with `-224`. The scale, offset, coupling, probe, bias, deskew and label (above and below) are
+written by hand.
 
 <!-- settings:channel:begin -->
 | Command | Takes | Setup key | Channel menu | What it does |
@@ -136,7 +136,7 @@ command does not take is refused with `-224`. The scale, the delay, the fine swi
 The values of the Trigger menu, their `:TRIGger` commands and their keys in a setup file. They are declared once, in
 `ui/model/src/settings/trigger.rs`; this table is written from there
 (`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
-command does not take is refused with `-113`.
+command does not take is refused with `-224`.
 
 <!-- settings:trigger:begin -->
 | Command | Takes | Setup key | Trigger menu | What it does |
@@ -166,7 +166,7 @@ command does not take is refused with `-113`.
 The settings of the Acquire menu, their `:ACQuire` commands and their keys in a setup file. They are declared once,
 in `ui/model/src/settings/acquisition.rs`; this table is written from there
 (`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value
-`:TYPE` or `:AVERages` does not take is refused with `-224`, one of the others with `-113`. The memory depth
+a command does not take is refused with `-224`. The memory depth
 (`:ACQuire:MDEPth`, above) and the segment count (`:ACQuire:ULTRa:MAXFrame`, below) are written by hand.
 
 <!-- settings:acquisition:begin -->
@@ -515,7 +515,7 @@ sessions on a unit. Their answers are no stable interface. On a computer, withou
 
 ## Errors and compatibility limits
 
-Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue holds at most 20 bounded messages; overflow is -350. Errors latch their event bit once; draining old errors does not relatch it. Unsupported or failed queries reply with specific error text as well as queuing it, even when full. Legitimate pending `*OPC?` keeps its deferred response. Typical errors include -113 undefined header, -224 invalid parameter, -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.
+Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue holds at most 20 bounded messages; overflow is -350. Errors latch their event bit once; draining old errors does not relatch it. Unsupported or failed queries reply with specific error text as well as queuing it, even when full. Legitimate pending `*OPC?` keeps its deferred response. Typical errors include -113 undefined header (the header is not known), -224 invalid parameter (a known header with a value it does not take, the value in the message), -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.
 
 A Rigol script commonly needs adjustments when it assumes stock `*IDN?`, big-endian WORD assumptions, vendor-specific setup files, a full status/SRQ system, arbitrary trigger-specific subtrees, or references as physical ADC inputs. Check errors and actual readbacks after configuration. TekScope's `REMOTE:RUNStop`, `REMOTE:ACQMethod`, DATA/WFMOutpre/CURVe dialect is not implemented by these Rigol-style headers.
 
@@ -552,7 +552,7 @@ These commands are implemented by the same model and acquisition router above. T
 | `:CHANnel<n>:BIAS[?]` | Software channel zero-bias correction. This is not a calibration procedure. |
 | `:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]` | Label visibility and text. |
 | `:ACQuire:ULTRa:MAXFrame[?]` | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. |
-| `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, without the menu's steps; the interpreter sets a larger one than 100000 to 100000, `OFF` or `0` switches it off, another value is refused with `-113`. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |
+| `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, without the menu's steps; the interpreter sets a larger one than 100000 to 100000, `OFF` or `0` switches it off, another value is refused with `-224`. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |
 | `:ACQuire:SEGMents:INTerval[?] <s>` | Hardware segments: the pause after each segment in seconds; the interpreter keeps it within 0 to 10. Not yet verified on hardware ([upstream-audit.md](fork/upstream-audit.md)). |
 | `:ACQuire:SEGMents:TIMes?` | Hardware segments: the trigger time of each recorded segment since the first one, comma-separated seconds, `9.9E37` for a segment without a time stamp; empty before segments are recorded. Not yet verified on hardware ([upstream-audit.md](fork/upstream-audit.md)). |
 | `:DISPlay:VIEW[?] <n>` | Display > Views (OOS): show view n, 1 through the view count; the query answers the view shown. |

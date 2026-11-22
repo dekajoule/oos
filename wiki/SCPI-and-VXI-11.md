@@ -448,7 +448,7 @@ Read `:SYSTem:ERRor?` until it answers `0,"No error"`. Each read takes one error
 | -113 | undefined header (the command does not exist) |
 | -221 | settings conflict (e.g. `*OPC?` through MCP) |
 | -223 | too much data (a waveform page above 64 MiB) |
-| -224 | illegal parameter value |
+| -224 | illegal parameter value (the command exists, the value is not one it takes) |
 | -230 | data not available (analysis without a result) |
 | -241 | hardware missing (e.g. generator on a model without it) |
 | -256 | file not found |
