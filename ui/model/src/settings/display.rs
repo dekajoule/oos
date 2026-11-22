@@ -238,15 +238,7 @@ pub const TEXT: [Setting; 1] = [Setting {
 
 const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
 
-const PERSIST_LABELS: [&str; PERSIST.len()] = {
-    let mut a = [""; PERSIST.len()];
-    let mut i = 0;
-    while i < a.len() {
-        a[i] = PERSIST[i].0;
-        i += 1;
-    }
-    a
-};
+const PERSIST_LABELS: [&str; PERSIST.len()] = super::names(&PERSIST);
 
 /// An index into `PERSIST` in a setup; over SCPI `MIN`, `INFinite` or seconds, snapped to the nearest time of the
 /// ladder.
@@ -277,15 +269,7 @@ const DOTS_IO: CustomIo = CustomIo {
     store: |v| (v.index() != 0).to_string(),
     load: |t| crate::words::p_bool(t).map(Val::Bool),
     query: |v| if v.index() != 0 { "DOTS" } else { "VECT" }.to_string(),
-    take: |a| {
-        if crate::words::kw(a, "VECTors") {
-            Some(Val::Bool(false))
-        } else if crate::words::kw(a, "DOTS") {
-            Some(Val::Bool(true))
-        } else {
-            None
-        }
-    },
+    take: |a| super::switch_word(a, "VECTors", "DOTS"),
     labels: &["Off", "On"],
     #[cfg(test)]
     values: "`DOTS`, `VECTors`; the query answers `DOTS` or `VECT`",

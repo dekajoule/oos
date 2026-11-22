@@ -30,21 +30,13 @@ fn open(v6: bool) -> io::Result<UdpSocket> {
             let mut a: libc::sockaddr_in6 = std::mem::zeroed();
             a.sin6_family = libc::AF_INET6 as libc::sa_family_t;
             a.sin6_port = PORT.to_be();
-            libc::bind(
-                fd,
-                &a as *const _ as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
-            )
+            libc::bind(fd, &a as *const _ as *const libc::sockaddr, std::mem::size_of_val(&a) as libc::socklen_t)
         } else {
             opt(&s, libc::IPPROTO_IP, libc::IP_PKTINFO, 1)?;
             let mut a: libc::sockaddr_in = std::mem::zeroed();
             a.sin_family = libc::AF_INET as libc::sa_family_t;
             a.sin_port = PORT.to_be();
-            libc::bind(
-                fd,
-                &a as *const _ as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-            )
+            libc::bind(fd, &a as *const _ as *const libc::sockaddr, std::mem::size_of_val(&a) as libc::socklen_t)
         };
         if r != 0 {
             return Err(io::Error::last_os_error());
