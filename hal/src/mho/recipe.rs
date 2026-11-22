@@ -20,7 +20,6 @@
 //! | `capture` | the steps of the capture, in its order |
 //! | `acquire [MASK]` | one acquisition, its levels reported (the snapshot's channel mask if none) |
 //! | `status` | the four front ends' status read, reported |
-//! | `afe-delay US` | from here on, a pause of US microseconds at each edge of the front ends' clock |
 //! | `afe-power-cycle` | the front ends' supply off for 100 ms and on again |
 //! | `label TEXT` | a heading in the report |
 
@@ -38,7 +37,6 @@ pub enum Item {
     Capture,
     Acquire(Option<u32>),
     Status,
-    AfeDelay(u64),
     AfePowerCycle,
     Label(String),
 }
@@ -128,7 +126,6 @@ pub fn parse(text: &str) -> Result<Vec<Item>, String> {
             ["acquire"] => Item::Acquire(None),
             ["acquire", m] => Item::Acquire(Some(n(m)? & 0xf)),
             ["status"] => Item::Status,
-            ["afe-delay", us] => Item::AfeDelay(n(us)?.min(1000) as u64),
             ["afe-power-cycle"] => Item::AfePowerCycle,
             ["label", ..] => Item::Label(line["label".len()..].trim().to_string()),
             _ => return Err(bad("unknown line".into())),
@@ -196,7 +193,7 @@ mod tests {
         let r = parse(
             "# a comment\nwr 0x2003c 1\nwait 5\nadc 0 0x0a 0x8078\nadcread 1 9\nafe 2 0x07 0xc440 # dc\n\
              select c131 1\nselect afe_sel_a_ch1 0\nselect vsel46 1\nplan fpga\ncapture\nacquire\nacquire 0xf\n\
-             status\nafe-delay 5\nafe-power-cycle\nlabel try two\n",
+             status\nafe-power-cycle\nlabel try two\n",
         )
         .unwrap();
         assert_eq!(
@@ -214,7 +211,6 @@ mod tests {
                 Item::Acquire(None),
                 Item::Acquire(Some(0xf)),
                 Item::Status,
-                Item::AfeDelay(5),
                 Item::AfePowerCycle,
                 Item::Label("try two".into()),
             ]

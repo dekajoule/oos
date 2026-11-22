@@ -330,7 +330,11 @@ nothing of it driven by OOS:
   0x800 with one, two and three or four channels (verified on the unit).
 - The front ends' bus (`--afe`: MHO934, MHO954, two MHO98):
   - A write frame is 24 bits, MSB first: the driver sets the data line, then the clock low and high, so a bit is
-    valid at the rising edge. Register address in bits 23:16, data in bits 15:0.
+    valid at the rising edge. Register address in bits 23:16, data in bits 15:0. The clock rests low (SPI mode 0): it
+    is low when the chip select falls and goes low once more after each byte, and each half period is about 7 us (raw
+    events of a scale change, an MHO98, `--afe`). That is the bus of the DHO800/DHO900 (`dho::afe::GpioAfe`). OOS
+    drove it with the clock resting high and without pauses up to mho-dev-14, and no front end took a word: every
+    register and the status read 0x0000ff (two MHO98, mho-dev-13, issues #4 and #491).
   - A read frame is 32 clocks: the driver sends 0x80 (assumed: bit 7 read, register 0) and 24 bits come back on the
     data-in line. The stock system reads twice, 2 ms apart, every few hundred ms while a channel is at 50 ohm, and once
     more when it goes back to 1 MOhm; nowhere else. It read 0x0c40ff at 50 ohm and 0x0440ff after (MHO934, every
@@ -457,7 +461,7 @@ records that set-up (section 7).
 `mho-start` runs a recipe after the bring-up instead of the steps above: one line per item, the steps in the form
 `wr OFFSET VALUE`, `wait MS`, `adc N REG DATA`, `adcread N REG`, `afe CH REG DATA`, `select NAME LEVEL`, and
 `plan PHASE` (a phase of the snapshot's start), `capture` (the capture's steps), `acquire [MASK]` (one acquisition,
-reported), `status` (the front ends' status reads), `afe-delay US`, `afe-power-cycle` and `label TEXT`
+reported), `status` (the front ends' status reads), `afe-power-cycle` and `label TEXT`
 (hal/src/mho/recipe.rs lists them). Without a recipe but with a capture it runs the capture, then the snapshot's
 link, configuration and channel, and one acquisition. The read-back and the diagnostics follow either way. A recipe
 changes what is tried without a new build.

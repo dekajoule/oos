@@ -299,12 +299,8 @@ fn run_recipe(bar: &mut Bar1, afe: &Afe, c: &Ctx, items: &[Item]) -> Option<Stri
                 }
             }
             Item::Status => {
-                let st: Vec<String> = (1..=4).map(|ch| format!("CH{} {:#08x}", ch, afe.read(ch, 0))).collect();
-                println!("recipe: front ends' status (stock 0x0440ff): {}", st.join(", "));
-            }
-            Item::AfeDelay(us) => {
-                afe.delay_us.set(*us);
-                println!("recipe: front ends' clock edges {} us apart", us);
+                let st: Vec<String> = (1..=4).map(|ch| format!("CH{} {:#06x}", ch, afe.read(ch, 0))).collect();
+                println!("recipe: front ends' status (stock 0x0440): {}", st.join(", "));
             }
             Item::AfePowerCycle => {
                 let r = Line::output(b::line::AFE_POWER, false).map(|l| {
@@ -474,7 +470,7 @@ fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, plan: &[(&str, Vec<Step>)],
         }
     };
     for ch in 1..=4 {
-        println!("diag: front end CH{} status read: {:#08x} (stock reads 0x0440ff at 1 MOhm)", ch, afe.read(ch, 0));
+        println!("diag: front end CH{} status read: {:#06x} (stock reads 0x0440 at 1 MOhm)", ch, afe.read(ch, 0));
     }
     // the snapshot channel's registers as last written, read back with the status frame's read bit (assumed: the
     // read of register r is 0x80 | r, as the status read is register 0)
@@ -487,8 +483,8 @@ fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, plan: &[(&str, Vec<Step>)],
         }
     }
     let reads: Vec<String> =
-        last.iter().map(|(&r, &d)| format!("{:02x}:{:06x}(w {:04x})", r, afe.read(s.channel, r), d)).collect();
-    println!("diag: front end CH{} registers read back (24 bits, written 16): {}", s.channel, reads.join(" "));
+        last.iter().map(|(&r, &d)| format!("{:02x}:{:04x}(w {:04x})", r, afe.read(s.channel, r), d)).collect();
+    println!("diag: front end CH{} registers read back: {}", s.channel, reads.join(" "));
     for mask in [1u32, 2, 4, 8, 0xf] {
         match one(bar, s, n, mask) {
             Err(e) => println!("diag: mask {:#x}: {}", mask, e),
@@ -588,65 +584,33 @@ fn judge(s: &Snapshot, words: &[u16]) -> i32 {
     }
 }
 
-/// The front ends' bus, driven bit by bit as the stock driver does (mho-acquisition.md, section 8): the data line set,
-/// then the clock low and high; 24 bits, MSB first, while the channel's chip select is low. A status read is 32
-/// clocks: 0x80 out, then 24 bits in on the data-in line, each read after its rising edge (assumed).
+/// The front ends' bus: the bit-banged bus of the DHO800/DHO900 (`dho::afe::GpioAfe`: SPI mode 0, the clock idle
+/// low, a byte at a time, 5 us half period), which is how the stock MHO900 driver drives it too (its raw trace,
+/// mho-acquisition.md section 8: the clock low between bytes, about 7 us per half period). The MHO900 numbers the chip
+/// selects the other way round: CH1 is cs3 (`acq::afe::CS_NAMES`). A read is the address with bit 7, then 16 bits;
+/// the stock system's status read gives 0x0440 (then 0xff) at 1 MOhm.
 struct Afe {
-    sclk: Line,
-    mosi: Line,
-    miso: Line,
-    cs: Vec<Line>,
-    /// a pause at each clock edge (a recipe's `afe-delay`), 0 by default
-    delay_us: std::cell::Cell<u64>,
+    bus: std::cell::RefCell<oos_hal::dho::afe::GpioAfe>,
 }
 
 impl Afe {
     fn open() -> Result<Afe, String> {
-        let e = |n: &str, e: std::io::Error| format!("{}: {}", n, e);
-        let out = |n: &str, v: bool| Line::output(n, v).map_err(|x| e(n, x));
-        Ok(Afe {
-            sclk: out(acq::afe::SCLK_NAME, true)?,
-            mosi: out(acq::afe::MOSI_NAME, false)?,
-            miso: Line::input(acq::afe::MISO_NAME).map_err(|x| e(acq::afe::MISO_NAME, x))?,
-            cs: acq::afe::CS_NAMES.iter().map(|n| out(n, true)).collect::<Result<_, _>>()?,
-            delay_us: std::cell::Cell::new(0),
-        })
+        let bus = oos_hal::dho::afe::GpioAfe::open().map_err(|e| e.to_string())?;
+        Ok(Afe { bus: std::cell::RefCell::new(bus) })
     }
 
-    fn bit_out(&self, v: bool) {
-        let pause = || match self.delay_us.get() {
-            0 => {}
-            us => std::thread::sleep(Duration::from_micros(us)),
-        };
-        self.mosi.set(v);
-        self.sclk.set(false);
-        pause();
-        self.sclk.set(true);
-        pause();
+    /// The bus's chip-select index of channel `ch` (1 to 4): CH1 on cs3 ... CH4 on cs0.
+    fn cs(ch: usize) -> usize {
+        4 - ch
     }
 
     fn write(&self, ch: usize, reg: u8, data: u16) {
-        let w = acq::afe::frame(reg, data);
-        self.cs[ch - 1].set(false);
-        for i in (0..acq::afe::FRAME_BITS).rev() {
-            self.bit_out(w >> i & 1 != 0);
-        }
-        self.cs[ch - 1].set(true);
+        use oos_hal::dho::afe::AfeBus;
+        self.bus.borrow_mut().write(Self::cs(ch), reg, data);
     }
 
-    /// A read frame: 0x80 | `reg` out (the stock system reads register 0 only, its status), 24 bits in.
     fn read(&self, ch: usize, reg: u8) -> u32 {
-        let cmd = 0x80 | reg;
-        self.cs[ch - 1].set(false);
-        for i in (0..8).rev() {
-            self.bit_out(cmd >> i & 1 != 0);
-        }
-        let mut v = 0u32;
-        for _ in 0..acq::afe::READ_FRAME_BITS - 8 {
-            self.bit_out(false);
-            v = v << 1 | self.miso.get() as u32;
-        }
-        self.cs[ch - 1].set(true);
-        v
+        use oos_hal::dho::afe::AfeBus;
+        self.bus.borrow_mut().read(Self::cs(ch), reg) as u32
     }
 }
