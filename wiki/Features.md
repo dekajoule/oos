@@ -97,6 +97,8 @@ in the README. How to use it: the guides listed on [[Home]].
 - System > Date and time: the clock from an NTP server (off by default), time zones with daylight saving time, or set by
   hand; once the clock is set, file names carry the local date and time
 - System > Network > 10 Mbit retry: an Ethernet link that comes up at 10 Mbit/s gets one more autonegotiation
+- System > Network > Show address: the LAN and WLAN boxes of the top bar show the scope's address (off by
+  default: they say "connected", so a picture of the screen does not pass the address on)
 - On-screen keyboard for names, formulas and WLAN passwords, with arrow keys to correct inside a long entry
 - The start-up screen shows the version and the build
 - Signed update packages with trial start and automatic rollback

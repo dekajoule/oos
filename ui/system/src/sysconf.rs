@@ -10,6 +10,7 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
+//! net.show_addr = off       # System > Network > Show address: the address in the LAN and WLAN boxes of the top bar
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
 //!                           # remote.mdns; remote.telnet of an older version is read and dropped: no telnet, ADR 0054)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
@@ -58,6 +59,9 @@ pub struct SysConf {
     pub tz_fallback: String,
     /// a link that comes up at 10 Mbit/s gets one more autonegotiation (ethlink.rs)
     pub eth_retry_10m: bool,
+    /// System > Network > Show address: the LAN and WLAN boxes show the address. Off by default: pictures and
+    /// photos of the screen are passed on, and the address is the owner's to show (`net.show_addr`)
+    pub show_addr: bool,
     /// the network services (System > Network > Remote services): web page with the update path (8080), SCPI (5555),
     /// VXI-11 (111 and its core port), SSH (22, `/bin/oos-ssh` reads it too; off by default, docs/network.md 7)
     pub remote_web: bool,
@@ -100,6 +104,7 @@ impl Default for SysConf {
             tz: DEFAULT_TZ.into(),
             tz_fallback: DEFAULT_TZ.into(),
             eth_retry_10m: true,
+            show_addr: false,
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
@@ -214,6 +219,7 @@ impl SysConf {
                 "tz" => Tz::parse(v).is_ok().then(|| c.tz = v.into()).is_some(),
                 "tz.fallback" => Tz::parse(v).is_ok().then(|| c.tz_fallback = v.into()).is_some(),
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
+                "net.show_addr" => on_off(v).map(|b| c.show_addr = b).is_some(),
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
@@ -277,6 +283,7 @@ impl SysConf {
             s.push_str(&format!("tz.fallback = {}\n", self.tz_fallback));
         }
         s.push_str(&format!("eth.retry_10m = {}\n", word(self.eth_retry_10m)));
+        s.push_str(&format!("net.show_addr = {}\n", word(self.show_addr)));
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
@@ -525,6 +532,8 @@ mod tests {
         assert_eq!(c.ntp_server, "dhcp");
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
+        // the top bar shows no address unless the owner switches it on
+        assert!(!c.show_addr);
         // no shell on the network unless an image or the user switches SSH on
         assert!(!c.remote_ssh && c.ssh_password);
         assert_eq!(SysConf::parse("").0, c);
@@ -537,6 +546,7 @@ mod tests {
             ntp_server: "ptbtime1.ptb.de".into(),
             tz: "CET-1CEST,M3.5.0,M10.5.0/3".into(),
             eth_retry_10m: false,
+            show_addr: true,
             ..Default::default()
         };
         (c.remote_web, c.remote_ssh, c.ssh_password, c.remote_mdns) = (false, true, false, false);

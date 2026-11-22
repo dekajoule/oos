@@ -292,6 +292,7 @@ impl Ui {
             Item::NetEth,
             Item::NetRetry10,
             Item::NetMac,
+            Item::NetShowAddr,
             Item::Open(MenuId::Remote),
             Item::NetPorts,
             Item::NetWlan,

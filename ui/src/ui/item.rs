@@ -400,6 +400,7 @@ pub(super) enum Item {
     WlanForgetNet,
     /// one more autonegotiation for a link at 10 Mbit/s (ethlink.rs)
     NetRetry10,
+    NetShowAddr,
     /// System > Date and time (ui/time.rs)
     TimeNow,
     NtpOn,
