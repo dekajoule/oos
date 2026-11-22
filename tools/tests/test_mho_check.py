@@ -310,5 +310,14 @@ class Snapshot(unittest.TestCase):
                                  "adc 0 0x0a 0x8080", "end"])
 
 
+class AfeInit(unittest.TestCase):
+    def test_frames_and_select_changes_in_the_order_they_happened(self):
+        frames = [(1.0, "CH1", 0x22, 0x0000), (3.0, "CH2", 0x07, 0xc440)]
+        selects = [(2.0, "c 153", 0, 1)]
+        self.assertEqual(mc.afe_init_lines(frames, selects),
+                         [mc.AFE_INIT_MARK, "format 1", "afe 1 0x22 0x0000", "select c153 1", "afe 2 0x07 0xc440",
+                          "end"])
+
+
 if __name__ == "__main__":
     unittest.main()

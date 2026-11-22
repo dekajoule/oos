@@ -4,7 +4,7 @@
 """Check on an MHO900 under its stock system what OOS assumes about its acquisition board.
 
   mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes]
-               [--map | --afe | --panel | --snapshot] [--fifty]
+               [--map | --afe | --panel | --snapshot | --afe-init] [--fifty]
 
 Every assumption of docs/protocols/mho-acquisition.md that can be seen without writing to the hardware is checked, and
 the result is written to mho-check-<model>-<date>.txt in the current directory, to attach to the GitHub issue.
@@ -50,6 +50,11 @@ the only register this script writes, then reads 0x3004; twice, compared), and t
 measurements of the signal. Then it sets everything back. It writes mho-snapshot-<model>-<date>.txt; its last part is
 what OOS reads on the scope to start the acquisition board as the stock system had it.
 
+With --afe-init it records the front ends' set-up at the start of the stock scope program: it switches on the trace
+event of --afe, restarts the program (am force-stop; Android's launcher starts it again, else monkey does), records
+for about half a minute and switches the event off. It writes mho-afe-init-<model>-<date>.txt; its last part is what
+OOS reads on the scope (/oos/mho-afe-init.txt) to set the front ends up before the snapshot's words.
+
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
 """
@@ -61,7 +66,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "9"
+VERSION = "10"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -1088,10 +1093,10 @@ class Tracer:
             return f"the kernel's tracing is in use (tracer {tracer!r}, events {events!r}); left alone"
         return None
 
-    def start(self):
+    def start(self, buffer_kb=4096):
         for f in self.FILES:
             self.saved[f] = self.adb.sh(f"cat {TRACEFS}/{f}").strip().split()[0]
-        self.adb.sh(f"echo 0 > {TRACEFS}/tracing_on; echo 4096 > {TRACEFS}/buffer_size_kb; "
+        self.adb.sh(f"echo 0 > {TRACEFS}/tracing_on; echo {buffer_kb} > {TRACEFS}/buffer_size_kb; "
                     f"echo '{trace_filter(traced_lines())}' > {TRACEFS}/events/gpio/gpio_value/filter; "
                     f"echo 1 > {TRACEFS}/events/gpio/gpio_value/enable; echo > {TRACEFS}/trace")
 
@@ -1499,6 +1504,111 @@ def stock_reference(scpi, ch):
     return out
 
 
+# ---- --afe-init: the front ends' set-up at the start of the stock program ----
+
+AFE_INIT_MARK = "---- oos afe init ----"
+
+
+def scope_program(adb):
+    """The name of the stock program that holds the FPGA's register window open (its process name, read from /proc),
+    or None."""
+    out = adb.sh("for p in /proc/[0-9]*; do ls -l $p/fd 2>/dev/null | grep -q /dev/xdma0_bypass && "
+                 "cat $p/cmdline && echo; done")
+    names = [line.split()[0] for line in out.replace("\0", " ").splitlines() if line.split()]
+    return names[0] if names else None
+
+
+def afe_init_lines(frames, selects):
+    """The machine-readable part of --afe-init: `afe CH REG DATA` and `select NAME LEVEL` in the order they happened
+    (frames and select changes merged by time), hex."""
+    ev = [(t, f"afe {ch[2:]} 0x{r:02x} 0x{d:04x}") for t, ch, r, d in frames]
+    ev += [(t, f"select {name.replace(' ', '')} {new}") for t, name, old, new in selects]
+    return [AFE_INIT_MARK, "format 1"] + [line for _, line in sorted(ev, key=lambda e: e[0])] + ["end"]
+
+
+def afe_init_main(a, adb):
+    if not adb.is_root():
+        return "--afe-init needs adb root (the kernel's trace event); nothing done"
+    tracer = Tracer(adb)
+    why = tracer.available()
+    if why:
+        return f"--afe-init: {why}; nothing done"
+    app = scope_program(adb)
+    if not app:
+        return "--afe-init: no process holds /dev/xdma0_bypass open (is the stock scope program running?); nothing done"
+    if not a.yes:
+        ans = input(f"--afe-init restarts the stock scope program ({app}) while it records the front ends' bus "
+                    "with the kernel's trace event: the program sets the four front ends up when it starts. The "
+                    "screen goes dark for about half a minute; the program's settings stay. If it does not come "
+                    "back, switch the scope off and on. Go on? [y/N] ")
+        if ans.strip().lower() not in ("y", "yes", "j", "ja"):
+            return "declined; nothing done"
+    code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
+    model = "MHO900"
+    try:
+        scpi = Scpi(a.host, a.scpi_port)
+        idn = idn_without_serial(scpi.query("*IDN?"))
+        model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else model).replace(" ", "")
+        scpi.s.close()
+    except OSError:
+        idn = "not asked (no SCPI)"
+    out = [f"mho-check {VERSION} --afe-init (OOS tools/mho-check.py), {datetime.datetime.now():%Y-%m-%d %H:%M}",
+           f"instrument: {idn}", f"hardware code: {code}", f"kernel: {adb.sh('uname -r').strip()}"]
+    levels = {}
+    for g, line in gpio_lines(adb.sh("cat /sys/kernel/debug/gpio")).items():
+        if g in traced_lines():
+            levels[g] = 1 if line.split()[-1] == "hi" else 0
+    before = adb.sh(f"pidof {app}").strip()
+    out.append(f"{app} before: pid {before or 'none'}")
+
+    def restart():
+        adb.sh(f"am force-stop {app}")
+        t = time.time()
+        while time.time() - t < 30:
+            time.sleep(1)
+            now = adb.sh(f"pidof {app}").strip()
+            if now and now != before:
+                out.append(f"{app} started again by itself after {time.time() - t:.0f} s: pid {now}")
+                return
+        adb.sh(f"monkey -p {app} -c android.intent.category.LAUNCHER 1")
+        out.append(f"{app} not back after 30 s: started with monkey")
+    print("restarting the stock program and recording (about a minute)")
+    # the program's whole start in one buffer (per CPU, in memory; set back afterwards)
+    tracer.start(buffer_kb=16384)
+    try:
+        ev = parse_trace(tracer.record(restart, seconds=25))
+    finally:
+        left = tracer.stop()
+    out.append("trace settings: " + ("as before" if not left else "NOT ALL SET BACK: " + "; ".join(left)))
+    out.append(f"{app} after: pid {adb.sh(f'pidof {app}').strip() or 'NOT RUNNING'}")
+    frames, other = [], []
+    for bus in (AFE_BUS, PLL_BUS):
+        for t, cs, n, rise, fall, miso in decode_bus(ev, bus, levels):
+            reg = afe_register(cs, n, rise)
+            if reg:
+                frames.append((t, *reg))
+            else:
+                other.append(f"{cs}: {n} clocks, rise {rise}, fall {fall}" + (f", read {miso}" if miso != "-" else ""))
+    selects = select_changes(ev, levels)
+    per = {ch: sum(1 for f in frames if f[1] == ch) for ch in ("CH1", "CH2", "CH3", "CH4")}
+    out += ["", f"events: {len(ev)}; front-end frames: " + ", ".join(f"{k} {v}" for k, v in per.items())
+            + f"; other frames: {len(other)}; select line changes: {len(selects)}"]
+    print("  front-end frames: " + ", ".join(f"{k} {v}" for k, v in per.items()))
+    t0 = ev[0][0] if ev else 0
+    out += ["", "## front-end frames in order"]
+    out += [f"+{(t - t0) * 1e3:9.3f} ms {ch} reg 0x{r:02x} = 0x{d:04x}" for t, ch, r, d in frames]
+    out += ["", "## other frames"] + other + ["", "## select line changes"]
+    out += [f"+{(t - t0) * 1e3:9.3f} ms {name}: {old} -> {new}" for t, name, old, new in selects]
+    if frames:
+        out += ["", "The part below is for OOS (copy the file to the scope as /oos/mho-afe-init.txt); please leave it "
+                "as it is.", *afe_init_lines(frames, selects)]
+    name = f"mho-afe-init-{model}-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
+    with open(name, "w") as f:
+        f.write("\n".join(out) + "\n")
+    print(f"written: {name} - please attach it to the GitHub issue")
+    return 0 if frames else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("host")
@@ -1519,6 +1629,9 @@ def main():
                     help="instead of the checks: take one setting of the stock system whole (front-end words, FPGA and "
                          "ADC registers) for the first acquisition under OOS; the probe compensation signal on the "
                          "channel it names (about 3 minutes; best right after a power-on)")
+    ap.add_argument("--afe-init", action="store_true",
+                    help="instead of the checks: record the front ends' set-up while the stock scope program "
+                         "restarts (kernel trace event; the screen goes dark for about half a minute)")
     ap.add_argument("--fifty", action="store_true",
                     help="with --map or --afe: each channel at 50 ohm too (the inputs must be unconnected)")
     a = ap.parse_args()
@@ -1535,6 +1648,8 @@ def main():
     if "pcie2dev" not in adb.sh(f"ls {PCIE2DEV}"):
         sys.exit(f"{PCIE2DEV} is missing; nothing done")
 
+    if a.afe_init:
+        sys.exit(afe_init_main(a, adb))
     if a.snapshot:
         sys.exit(snapshot_main(a, adb))
     if a.afe:
