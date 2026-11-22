@@ -10,6 +10,7 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
+//! net.show_addr = off       # System > Network > Show address: the address in the LAN and WLAN boxes of the top bar
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
 //!                           # remote.mdns; remote.telnet of an older version is read and dropped: no telnet, ADR 0054)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
