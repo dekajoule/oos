@@ -56,9 +56,7 @@ impl Ui {
         } else {
             slot
         };
-        for part in slot.split(';').map(str::trim).filter(|p| !p.is_empty()) {
-            let Some((k, v)) = part.split_once('=') else { continue };
-            let (k, v) = (k.trim(), v.trim());
+        for (k, v) in store::views::pairs(slot).flatten() {
             match k {
                 "xy" => self.xy = v == "true",
                 "full" => self.full.on = v == "true",
