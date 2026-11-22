@@ -307,12 +307,10 @@ impl Ui {
         let free = self.bode_gen() == FREE;
         // the free sweep's input is an optional channel (`bode_sw_in`); otherwise both are any wave, a ref too
         if it == Item::BodeOut || (it == Item::BodeIn && !free) {
-            let cur = if it == Item::BodeIn { self.m.bode_in } else { self.m.bode_out };
-            let next = self.step_wave(cur, d);
             if it == Item::BodeIn {
-                self.m.bode_in = next;
+                self.m.bode_in = self.step_wave(self.m.bode_in, d);
             } else {
-                self.m.bode_out = next;
+                self.m.bode_out = self.step_wave(self.m.bode_out, d);
             }
             return true;
         }

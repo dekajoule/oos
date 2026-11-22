@@ -322,6 +322,29 @@ impl Scpi {
         None
     }
 
+    /// The commands every meter has (`:COUNter`, `:DVM`, `:MASK`): the rows of its table (`slices`) and `SOURce`,
+    /// the channel `src` of the model. None when `n` names neither.
+    fn meter_cmd(
+        &mut self,
+        ui: &mut Ui,
+        slices: &[&'static [crate::settings::Setting]],
+        n: &[&str],
+        query: bool,
+        arg: &str,
+        src: fn(&mut Model) -> &mut usize,
+    ) -> Option<Option<Vec<u8>>> {
+        if let Some(row) = crate::settings::command(slices, n) {
+            return Some(self.setting_cmd(ui, row, query, arg));
+        }
+        if n.len() != 1 || !kw(n[0], "SOURce") {
+            return None;
+        }
+        if query {
+            return Some(t(&format!("CHAN{}", (*src(&mut ui.m)).min(n_ch() - 1) + 1)));
+        }
+        Some(self.set_arg(ui, arg, parse_ch(arg), |ui, c| *src(&mut ui.m) = c))
+    }
+
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
     /// so a client blocked on a line never waits forever.
     fn push_err(&mut self, mut message: String) {

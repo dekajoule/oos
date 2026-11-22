@@ -60,6 +60,20 @@ impl MeasOwn {
             data_set: false,
         }
     }
+
+    /// The settings in force: its own where set, the shared measure menu's otherwise.
+    pub(super) fn effective(self, m: &Model) -> Self {
+        let shared = Self::shared(m);
+        Self {
+            low: if self.refs_set { self.low } else { shared.low },
+            high: if self.refs_set { self.high } else { shared.high },
+            idle: if self.idle_set { self.idle } else { shared.idle },
+            side: if self.side_set { self.side } else { shared.side },
+            n: if self.n_set { self.n } else { shared.n },
+            data: if self.data_set { self.data } else { shared.data },
+            ..self
+        }
+    }
 }
 
 /// Geometry of the settings dialog. Source and reference levels are always there.
@@ -505,7 +519,7 @@ impl Ui {
         let (Some(g), Some(index)) = (self.cfg_geom(), self.meas_own.dialog) else { return };
         let index = index as usize;
         let Some(&(k, id)) = self.m.meas.get(index) else { return };
-        let own = self.meas_own.rows.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
+        let own = self.meas_own.rows.get(&(k, id)).map_or_else(|| MeasOwn::shared(&self.m), |o| o.effective(&self.m));
         let f = &self.fonts();
         cv.framed(g.panel, 8, 2, ACCENT, 7, DLG_BG);
         cv.text(&f.mb, g.panel.x + 16, g.panel.y + 26, &format!("{} settings", k.name()), TEXT);
@@ -515,9 +529,8 @@ impl Ui {
         self.cfg_caption(cv, g.panel, 1, "Reference");
         let source = Rect::new(g.source_m.x, g.source_m.y, g.source_p.x + g.source_p.w - g.source_m.x, g.source_m.h);
         self.draw_stepper(cv, g.source_m, g.source_p, source, &self.wave_name(id));
-        let (low, high) = if own.refs_set { (own.low, own.high) } else { (self.m.meas_lpct, self.m.meas_hpct) };
         btn(cv, g.refs, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, g.refs, 1, &format!("{:.0}/{:.0}", low * 100.0, high * 100.0), TEXT);
+        cv.text_in(&f.mb, g.refs, 1, &format!("{:.0}/{:.0}", own.low * 100.0, own.high * 100.0), TEXT);
         if matches!(k, Meas::Rise | Meas::Fall) {
             self.cfg_caption(cv, g.panel, 2, "Edges used");
             let text = self.meas_edge_coverage_caption(id, k);
@@ -525,26 +538,22 @@ impl Ui {
         }
         if let (Some(mi), Some(pl)) = (g.idle_m, g.idle_p) {
             self.cfg_caption(cv, g.panel, 2, "Idle");
-            let idle = if own.idle_set { own.idle } else { self.m.meas_idle };
-            let text = if idle > 0.0 { si_short(idle, "s") } else { "period".into() };
+            let text = if own.idle > 0.0 { si_short(own.idle, "s") } else { "period".into() };
             self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &text);
         }
         if let Some(side) = g.side {
             self.cfg_caption(cv, g.panel, 2, "Outside");
-            let which = if own.side_set { own.side } else { self.m.meas_out };
             btn(cv, side, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, side, 1, &format!("{:?}", which), TEXT);
+            cv.text_in(&f.mb, side, 1, &format!("{:?}", own.side), TEXT);
         }
         if let (Some(mi), Some(pl)) = (g.n_m, g.n_p) {
             self.cfg_caption(cv, g.panel, 2, "N periods");
-            let n = if own.n_set { own.n } else { self.m.meas_n };
-            self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &n.to_string());
+            self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &own.n.to_string());
         }
         if let Some(edges) = g.edges {
             self.cfg_caption(cv, g.panel, 3, "Edges");
-            let data = if own.data_set { own.data } else { self.m.meas_data };
             btn(cv, edges, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, edges, 1, if data { "Data" } else { "Clock" }, TEXT);
+            cv.text_in(&f.mb, edges, 1, if own.data { "Data" } else { "Clock" }, TEXT);
         }
     }
 
@@ -666,82 +675,50 @@ impl Ui {
         self.clear_measurement_statistics();
     }
 
-    fn meas_cfg_refs(&mut self) {
+    /// Changes the dialog's measurement: `edit` gets the settings in force and writes its own row.
+    fn meas_cfg_edit(&mut self, edit: impl FnOnce(MeasOwn, &mut MeasOwn)) {
         let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self.meas_own.rows.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
-        let low = if cur.refs_set { cur.low } else { self.m.meas_lpct };
-        let (low, high) = if low < 0.15 { (0.2, 0.8) } else { (0.1, 0.9) };
         if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
-            own.low = low;
-            own.high = high;
-            own.refs_set = true;
+            edit(own.effective(&self.m), own);
         }
         self.clear_measurement_statistics();
+    }
+
+    fn meas_cfg_refs(&mut self) {
+        self.meas_cfg_edit(|cur, own| {
+            (own.low, own.high) = if cur.low < 0.15 { (0.2, 0.8) } else { (0.1, 0.9) };
+            own.refs_set = true;
+        });
     }
 
     fn meas_cfg_idle(&mut self, d: i32) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self
-            .meas_own
-            .rows
-            .get(&(k, id))
-            .map(|o| if o.idle_set { o.idle } else { self.m.meas_idle })
-            .unwrap_or(self.m.meas_idle);
-        let v = super::tools::time_step(cur, d);
-        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
-            own.idle = v;
+        self.meas_cfg_edit(|cur, own| {
+            own.idle = super::tools::time_step(cur.idle, d);
             own.idle_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 
     fn meas_cfg_side(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
         let all = [oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both];
-        let cur = self
-            .meas_own
-            .rows
-            .get(&(k, id))
-            .map(|o| if o.side_set { o.side } else { self.m.meas_out })
-            .unwrap_or(self.m.meas_out);
-        let i = all.iter().position(|&x| x == cur).unwrap_or(2);
-        let v = all[(i as i32 + 1).rem_euclid(all.len() as i32) as usize];
-        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
-            own.side = v;
+        self.meas_cfg_edit(|cur, own| {
+            let i = all.iter().position(|&x| x == cur.side).unwrap_or(2);
+            own.side = all[(i as i32 + 1).rem_euclid(all.len() as i32) as usize];
             own.side_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 
     fn meas_cfg_n(&mut self, d: i32) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self
-            .meas_own
-            .rows
-            .get(&(k, id))
-            .map(|o| if o.n_set { o.n } else { self.m.meas_n })
-            .unwrap_or(self.m.meas_n);
-        let v = (cur as i32 + d).clamp(1, 32) as u32;
-        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
-            own.n = v;
+        self.meas_cfg_edit(|cur, own| {
+            own.n = (cur.n as i32 + d).clamp(1, 32) as u32;
             own.n_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 
     fn meas_cfg_edges(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self
-            .meas_own
-            .rows
-            .get(&(k, id))
-            .map(|o| if o.data_set { o.data } else { self.m.meas_data })
-            .unwrap_or(self.m.meas_data);
-        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
-            own.data = !cur;
+        self.meas_cfg_edit(|cur, own| {
+            own.data = !cur.data;
             own.data_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 }
 
