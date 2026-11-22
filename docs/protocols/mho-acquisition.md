@@ -255,9 +255,9 @@ kernel (4.4 has it when tracing is built in; the stock kernel mounts tracefs) an
 `mho-afe-<model>-<date>.txt`; it ends with the front-end registers per step as a table and the raw events.
 
 `tools/mho-check.py <scope-ip> --snapshot` takes one setting of the stock system whole, for the first acquisition
-under OOS. It switches each channel that is off on and off again: the first switch-on since power-on sends the
-channel's whole set of front-end words (53 frames seen, section 8), which it records with the trace event of `--afe`.
-The first channel that got its whole set is the snapshot's channel: the owner connects the probe compensation output
+under OOS. It switches each channel that is off on and off again: switching a channel on sends its set of
+front-end words (25 frames, section 8), which it records with the trace event of `--afe`. The first channel that got
+its set is the snapshot's channel: the owner connects the probe compensation output
 to it, and the tool steps it through every scale (28 frames each), then sets it to 1 V/div (0.1 V/div when the signal
 is under 1 V peak to peak, behind a 10:1 probe), 1 MOhm, DC, 200 us/div, edge trigger at the signal's mean, and lets
 the stock system acquire. Then it reads the select lines, the FPGA's configuration registers (the offsets of section
@@ -319,8 +319,11 @@ nothing of it driven by OOS:
   - Chip select per channel: CH1 cs3 (gpio 68), CH2 cs2 (gpio 69), CH3 cs1 (gpio 66), CH4 cs0 (gpio 76).
   - A scale change sends 28 frames in a fixed order (some registers two or three times), the offset one frame
     (0x28), AC or DC coupling one (0x07), the bandwidth limit the scale's 28 frames with 0x2e and 0x28 changed. A
-    channel switched on for the first time gets its whole set (53 frames). GND coupling, the time base, the trigger
-    level and switching a channel off or on again send nothing, and nothing is sent while the scope runs untouched.
+    channel switched on gets 25 frames: 0x2f, 0x2c, 0x2d, 0x23, 0x29, 0x2a, 0x07, 0x2e, 0x2b, 0x35, 0x27, 0x06, 0x24,
+    0x25, 0x28, some of them twice or three times (MHO934, `--snapshot`, every channel switched on after a power-on,
+    three runs; the 53 frames `--afe` saw at its step "on, 1 V/div" were these and the scale's 28). 0x20 and 0x21 come
+    with the scale; 0x22, 0x26 and 0x36 with neither. GND coupling, the time base, the trigger level and switching a
+    channel off send nothing, and nothing is sent while the scope runs untouched.
     No frame went over the clock chip's bus in any step.
   - 50 ohm (MHO934 and the third MHO98, every channel): about 70 frames, among them a run of writes to 0x2c and 0x2d
     with the values stepping (assumed: a trim of the 50 ohm path), then 0x07 with bit 13 set (0xe440 at 10 mV/div,

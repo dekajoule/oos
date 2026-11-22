@@ -41,8 +41,8 @@ mho-panel-<model>-<date>.txt with the frames decoded (docs/protocols/frontpanel.
 records. Without strace it records only the ports' byte counters.
 
 With --snapshot it takes one setting of the stock system whole, for the first acquisition under OOS. It switches the
-channels that are off on (the first switch-on since power-on sends a channel's whole set of front-end words) and off
-again, records with the trace event of --afe the words of the first such channel and of every scale of it, then lets
+channels that are off on (switching a channel on sends its set of front-end words) and off again, records with the
+trace event of --afe the words of the first such channel and of every scale of it, then lets
 the stock system acquire the probe compensation signal on that channel (1 V/div, or 0.1 V/div behind a 10:1 probe,
 200 us/div) and reads the FPGA's configuration registers (pcie2dev, one address each, as above), the 128 registers of
 each ADC (read transfers through the FPGA's ADC bridge: pcie2dev writes the two words of a read transfer to 0x3000,
@@ -61,7 +61,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "8"
+VERSION = "9"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -1257,8 +1257,8 @@ SNAPSHOT_REGS = sorted(
     + list(range(0x20400, 0x20410, 4)) + list(range(0x2080c, 0x2081c, 4)) + [0x30000])
 # The ADC registers read through the bridge: every address its 7-bit field can hold.
 SNAPSHOT_ADC_REGS = range(0x80)
-# A channel's first switch-on since power-on sends its whole set to the front end (53 frames seen); a scale change 28.
-FULL_SET_MIN = 40
+# Switching a channel on sends 25 frames to its front end (MHO934, every channel, three runs); a scale change 28.
+FULL_SET_MIN = 20
 ADC_BRIDGE, ADC_BRIDGE_READ = 0x3000, 0x3004
 
 
@@ -1403,7 +1403,7 @@ def snapshot_main(a, adb):
         tracer.start()
         try:
             full = {}
-            print("channels switched on (their whole front-end set):")
+            print("channels switched on (their front-end set):")
             for n in (n for n in range(1, 5) if not on[n]):
                 own = traced(f"CH{n} on", [f":CHANnel{n}:DISPlay ON"], n)
                 print(f"  CH{n}: {len(own)} front-end frames")
@@ -1411,10 +1411,10 @@ def snapshot_main(a, adb):
                     full[n] = own
                 scpi.write(f":CHANnel{n}:DISPlay OFF")
             if not full:
-                out += ["", "NO WHOLE SET: no channel that was off got its whole front-end set when switched on. Power "
-                        "the scope off and on with at least one channel off, and run --snapshot again first thing."]
-                print("no channel got its whole front-end set: power the scope off and on with one channel off, then "
-                      "run --snapshot again first thing")
+                out += ["", f"NO SET: no channel that was off sent {FULL_SET_MIN} front-end frames or more when switched "
+                        "on. Switch at least one channel off, power the scope off and on, and run --snapshot again."]
+                print(f"no channel sent its front-end set (at least {FULL_SET_MIN} frames) when switched on: switch one "
+                      "channel off, power the scope off and on, and run --snapshot again")
             else:
                 ch = min(full)
                 afe.append(("on", full[ch]))
