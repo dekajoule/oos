@@ -68,12 +68,16 @@ def plan(quick=False):
                 f":CHANnel{n}:BWLimit OFF", f":CHANnel{n}:OFFSet 0", f":CHANnel{n}:SCALe 1")]
     steps = [("base", base, False)]
     for n in (1, 2, 3, 4):
-        steps.append((f"CH{n} alone", channels_commands((n,)) + [f":CHANnel{n}:SCALe 1"], False))
+        # the depth again for every channel: after 50 ms/div the stock system set 1 M points and kept them (an MHO934,
+        # issue #248)
+        steps.append((f"CH{n} alone", channels_commands((n,)) + [":TIMebase:MAIN:SCALe 1e-6", ":ACQuire:MDEPth 10k",
+                                                                 f":CHANnel{n}:SCALe 1"], False))
         steps += [(f"CH{n} tdiv={tb}", [f":TIMebase:MAIN:SCALe {tb}"], k == 0) for k, tb in enumerate(tbs)]
         steps.append((f"CH{n} tdiv=2e-4", [":TIMebase:MAIN:SCALe 2e-4"], False))
         steps += [(f"CH{n} scale={v}", [f":CHANnel{n}:SCALe {v}"], False) for v in MC.SCALES]
         steps.append((f"CH{n} scale=1 again", [f":CHANnel{n}:SCALe 1"], False))
-    steps.append(("CH1-4 on", channels_commands((1, 2, 3, 4)), False))
+    steps.append(("CH1-4 on", channels_commands((1, 2, 3, 4)) + [":TIMebase:MAIN:SCALe 1e-6", ":ACQuire:MDEPth 10k"],
+                  False))
     steps += [(f"CH1-4 tdiv={tb}", [f":TIMebase:MAIN:SCALe {tb}"], k == 0) for k, tb in enumerate(tbs)]
     steps.append(("tdiv=1e-6", [":TIMebase:MAIN:SCALe 1e-6"], False))
     for c in COMBOS:

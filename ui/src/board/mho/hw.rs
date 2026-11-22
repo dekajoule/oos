@@ -29,8 +29,10 @@ const SETTLE: u32 = 2;
 const PERIOD_MS: u64 = 20;
 /// Frames the queue holds at most: the screen takes the newest.
 const QUEUE_MAX: usize = 4;
-/// Points read of a record at most (a deeper record is read from its middle, around the trigger).
-const POINTS_MAX: u32 = 100_000;
+/// Points read of a record at most (a deeper record is read from its middle, around the trigger): a recording whose
+/// depth the stock system set to 1 M (an MHO934's, issue #248) is read whole, as the DHO800/DHO900 reads its deep
+/// records.
+const POINTS_MAX: u32 = 1_000_000;
 
 /// Starts the thread; its state is the board's `Shared`, as the DHO800/DHO900's thread keeps it.
 pub(super) fn spawn() -> HwShared {

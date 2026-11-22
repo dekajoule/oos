@@ -28,7 +28,11 @@ class Steps(unittest.TestCase):
         self.assertEqual(len(adc), 4 + 1 + 15)
         self.assertIn("CH3 tdiv=2e-9", adc)
         self.assertNotIn("CH3 tdiv=1e-6", adc)
-        self.assertIn(":ACQuire:MDEPth 10k", steps[0][1], "a fixed depth: the settings are comparable")
+        # a fixed depth, set again before each channel: the stock system changes it at slow time bases
+        self.assertIn(":ACQuire:MDEPth 10k", steps[0][1])
+        alone = [c for n, c, _ in steps if n.endswith(" alone") or n == "CH1-4 on"]
+        self.assertEqual(len(alone), 5)
+        self.assertTrue(all(":ACQuire:MDEPth 10k" in c for c in alone))
         self.assertNotIn("CH3 scale=0.1", adc)
         self.assertIn("CH3 scale=0.1", names)
         self.assertLess(len(ms.plan(quick=True)), len(steps))
