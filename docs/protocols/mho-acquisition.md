@@ -415,7 +415,7 @@ nothing of it driven by OOS:
 
 ## 10. The first acquisition from a snapshot
 
-**Not yet verified on hardware** (ADR 0075). `oos-fpgad mho-start` starts the board from the unit's own snapshot of
+**Not yet verified on hardware** (ADR 0077). `oos-fpgad mho-start` starts the board from the unit's own snapshot of
 the stock system (section 7) and arms one acquisition. The order is assumed from the stock cold start (sections 1
 and 4); a step that does not read back as written does not stop the run, it is reported.
 

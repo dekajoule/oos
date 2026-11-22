@@ -1,4 +1,4 @@
-# ADR 0075: the MHO900's first acquisition starts its board from the unit's own snapshot of the stock system
+# ADR 0077: the MHO900's first acquisition starts its board from the unit's own snapshot of the stock system
 
 - Status: proposed
 - Date: 2026-11-22
