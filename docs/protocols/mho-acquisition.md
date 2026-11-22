@@ -284,9 +284,11 @@ recipe form of section 10 (`adc`, `adcread`, `afe`, `select`, `wr`, and `wait` f
 The ADC words are the ones the stock program wrote, its masks applied.
 
 `tools/mho-settings.py <scope-ip>` (with `mho-check.py` next to it) records what the stock system sets per setting,
-for OOS to set the same: it steps over SCPI through the time bases from 2 ns/div to 100 ms/div with CH1 alone and with
-all four channels, through every combination of channels at 1 us/div, and through every scale of each channel alone
-at 200 us/div, and sets everything back. For each setting it records the scope's own report of it (channels, scales,
+for OOS to set the same: at a fixed depth of 10 k points it steps over SCPI, for each channel alone, through the time
+bases from 2 ns/div to 100 ms/div and through every scale at 200 us/div, then through the time bases with all four
+channels on and every combination of channels at 1 us/div, and sets everything back. The first version (mho-dev-17)
+left the depth to the scope: after 50 ms/div the stock system kept 1 M points, so its later settings were taken at
+another depth than the first (an MHO934, issue #248). For each setting it records the scope's own report of it (channels, scales,
 time base, sample rate, depth), the FPGA's configuration registers of the snapshot's list, the front-end words sent
 while it changed and the select lines, and where the sampling changes (the time bases and the channel combinations)
 the 128 registers of each ADC. The report `mho-settings-<model>-<date>.txt` ends, after `---- oos settings ----`,

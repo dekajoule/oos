@@ -21,9 +21,14 @@ class Steps(unittest.TestCase):
     def test_the_plan_reads_the_adcs_where_the_sampling_changes_only(self):
         steps = ms.plan()
         names = [n for n, _, _ in steps]
-        self.assertEqual(len(steps), 1 + 2 * (1 + len(ms.TIMEBASES)) + 1 + 15 + 1 + 4 * (2 + 13))
+        tb = len(ms.TIMEBASES)
+        self.assertEqual(len(steps), 1 + 4 * (1 + tb + 1 + 13 + 1) + 1 + tb + 1 + 15)
         adc = [n for n, _, r in steps if r]
-        self.assertTrue(all("tdiv=" in n or "chans=" in n for n in adc))
+        # once per channel alone, once for all four, and every combination
+        self.assertEqual(len(adc), 4 + 1 + 15)
+        self.assertIn("CH3 tdiv=2e-9", adc)
+        self.assertNotIn("CH3 tdiv=1e-6", adc)
+        self.assertIn(":ACQuire:MDEPth 10k", steps[0][1], "a fixed depth: the settings are comparable")
         self.assertNotIn("CH3 scale=0.1", adc)
         self.assertIn("CH3 scale=0.1", names)
         self.assertLess(len(ms.plan(quick=True)), len(steps))

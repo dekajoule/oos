@@ -15,11 +15,12 @@ mho-check.py --snapshot), the words sent to the front ends while the setting cha
 select lines, and for the settings that change the sampling, the 128 registers of each ADC (read transfers through the
 FPGA's ADC bridge, as --snapshot). The steps:
 
-- the time bases from 2 ns/div to 100 ms/div with CH1 alone, and with all four channels on (the ADCs' sampling);
-- every combination of channels on, at 1 us/div (the ADCs' input selection);
-- every scale of each channel alone, at 200 us/div (the front ends' words and the lanes' gain and offset).
+- at a fixed depth of 10 k points, for each channel alone: the time bases from 2 ns/div to 100 ms/div (the ADCs read
+  at the first) and every scale at 200 us/div (the front ends' words and the lanes' gain and offset);
+- the time bases with all four channels on;
+- every combination of channels on, at 1 us/div, with the ADCs (their input selection follows the channels).
 
-Then it sets everything back. About 15 minutes (--quick: fewer time bases, about 6). It writes
+Then it sets everything back, the depth included. About 12 minutes (--quick: fewer time bases, about 6). It writes
 mho-settings-<model>-<date>.txt; its last part, after `---- oos settings ----`, is what OOS reads.
 """
 import argparse
@@ -56,25 +57,27 @@ def channels_commands(on):
 
 
 def plan(quick=False):
-    """[(name, [SCPI commands], read the ADCs)] in order: time bases with CH1 alone and with all four, the channel
-    combinations, each channel's scales."""
+    """[(name, [SCPI commands], read the ADCs)] in order, at a fixed depth of 10 k points: for each channel alone,
+    every time base (the ADCs read at the first: they do not change with it) and every scale at 200 us/div; then the
+    time bases with all four channels on, and every combination of channels at 1 us/div with the ADCs (their input
+    selection follows the channels)."""
     tbs = TIMEBASES_QUICK if quick else TIMEBASES
-    base = [":CHANnel1:DISPlay ON", ":TRIGger:MODE EDGE", ":TRIGger:EDGE:SOURce CHANnel1", ":TRIGger:EDGE:LEVel 0",
-            ":RUN"] + [c for n in (1, 2, 3, 4) for c in (f":CHANnel{n}:PROBe 1", f":CHANnel{n}:IMPedance OMEG",
-                                                          f":CHANnel{n}:COUPling DC", f":CHANnel{n}:BWLimit OFF",
-                                                          f":CHANnel{n}:OFFSet 0")]
+    base = [":CHANnel1:DISPlay ON", ":ACQuire:MDEPth 10k", ":TRIGger:MODE EDGE", ":TRIGger:EDGE:SOURce CHANnel1",
+            ":TRIGger:EDGE:LEVel 0", ":RUN"] + [c for n in (1, 2, 3, 4) for c in (
+                f":CHANnel{n}:PROBe 1", f":CHANnel{n}:IMPedance OMEG", f":CHANnel{n}:COUPling DC",
+                f":CHANnel{n}:BWLimit OFF", f":CHANnel{n}:OFFSet 0", f":CHANnel{n}:SCALe 1")]
     steps = [("base", base, False)]
-    for chans, label in (((1,), "CH1"), ((1, 2, 3, 4), "CH1-4")):
-        steps.append((f"{label} on", channels_commands(chans) + [f":CHANnel{n}:SCALe 1" for n in chans], False))
-        steps += [(f"{label} tdiv={tb}", [f":TIMebase:MAIN:SCALe {tb}"], True) for tb in tbs]
+    for n in (1, 2, 3, 4):
+        steps.append((f"CH{n} alone", channels_commands((n,)) + [f":CHANnel{n}:SCALe 1"], False))
+        steps += [(f"CH{n} tdiv={tb}", [f":TIMebase:MAIN:SCALe {tb}"], k == 0) for k, tb in enumerate(tbs)]
+        steps.append((f"CH{n} tdiv=2e-4", [":TIMebase:MAIN:SCALe 2e-4"], False))
+        steps += [(f"CH{n} scale={v}", [f":CHANnel{n}:SCALe {v}"], False) for v in MC.SCALES]
+        steps.append((f"CH{n} scale=1 again", [f":CHANnel{n}:SCALe 1"], False))
+    steps.append(("CH1-4 on", channels_commands((1, 2, 3, 4)), False))
+    steps += [(f"CH1-4 tdiv={tb}", [f":TIMebase:MAIN:SCALe {tb}"], k == 0) for k, tb in enumerate(tbs)]
     steps.append(("tdiv=1e-6", [":TIMebase:MAIN:SCALe 1e-6"], False))
     for c in COMBOS:
         steps.append((f"chans={','.join(map(str, c))} tdiv=1e-6", channels_commands(c), True))
-    steps.append(("tdiv=2e-4", [":TIMebase:MAIN:SCALe 2e-4"], False))
-    for n in (1, 2, 3, 4):
-        steps.append((f"CH{n} alone", channels_commands((n,)), False))
-        steps += [(f"CH{n} scale={v}", [f":CHANnel{n}:SCALe {v}"], False) for v in MC.SCALES]
-        steps.append((f"CH{n} scale=1 again", [f":CHANnel{n}:SCALe 1"], False))
     return steps
 
 
@@ -132,7 +135,7 @@ def main():
     idn = MC.idn_without_serial(scpi.query("*IDN?"))
     model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else "MHO900").replace(" ", "")
     code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
-    cmds = MC.snapshot_restore_list()
+    cmds = MC.snapshot_restore_list() + [":ACQuire:MDEPth"]
     keep = {c + "?": scpi.query(c + "?") for c in MC.query_list(cmds) + [":TRIGger:STATus"]}
     levels = {}
     for g, line in MC.gpio_lines(adb.sh("cat /sys/kernel/debug/gpio")).items():
