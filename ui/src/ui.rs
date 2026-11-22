@@ -995,6 +995,8 @@ impl Ui {
 enum Ctl {
     /// segmented buttons: options, selected
     Seg(Vec<String>, Option<usize>),
+    /// an on/off setting: one field with its state and a slide switch, a tap anywhere on it switches (ADR 0075)
+    Switch(bool),
     /// - value +
     Value,
     /// - value +, the value opens the list of all options (MenuId::Pick)

@@ -23,6 +23,9 @@ starts OOS once more at the next power-on. When OOS works for you, set **System 
 
 Front-panel keys and knobs work as labelled. The Menu button at the bottom left reaches every function.
 
+In the menus a setting that is only off or on is a switch: a tap anywhere on it switches it. Settings with more
+choices are a row of buttons, or `-` value `+` where the choices do not fit.
+
 **Channel keys and cards.** A short press switches a channel that is off on and opens its menu. With several channels
 on, the first press on one that is not selected only selects it, so the knobs act on it (its card has the coloured
 border); the next press opens its menu, and a press with its menu open switches it off. A tap on a channel's card
