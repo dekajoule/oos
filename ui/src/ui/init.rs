@@ -53,7 +53,6 @@ impl Ui {
             toast: None,
             dialog: None,
             sysinfo: sysinfo::Page::default(),
-            upper: upper::State::default(),
             power: Default::default(),
             upd: Default::default(),
             wlan: Default::default(),
