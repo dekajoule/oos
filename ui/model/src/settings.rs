@@ -448,6 +448,22 @@ fn short(word: &str) -> String {
     word.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect()
 }
 
+/// The names of a table of named values, as the `labels` of a `CustomIo` (`BWS`, `PERSIST`).
+const fn names<T, const N: usize>(list: &[(&'static str, T); N]) -> [&'static str; N] {
+    let mut l = [""; N];
+    let mut i = 0;
+    while i < N {
+        l[i] = list[i].0;
+        i += 1;
+    }
+    l
+}
+
+/// The `take` of a switch of two keywords (`kw`, any case): `off` is false, `on` true; None for another word.
+fn switch_word(a: &str, off: &str, on: &str) -> Option<Val> {
+    [off, on].iter().position(|w| crate::words::kw(a, w)).map(|i| Val::Bool(i == 1))
+}
+
 /// The rows of `rows` as the Markdown table docs/scpi.md holds between `<!-- settings:<group>:begin -->` and
 /// `<!-- settings:<group>:end -->`; `subsystem` is the SCPI root of the group (`:DISPlay`).
 #[cfg(test)]
