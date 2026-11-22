@@ -393,7 +393,14 @@ and 4); a step that does not read back as written does not stop the run, it is r
    bit 0 set for 50 ms (assumed: the sync enable of the stock cold start), then with it cleared.
 4. The FPGA's configuration: the snapshot's words in address order, the SCU's mode word 0x4008 last. Left out: the
    status and read-back words (0x11e8, 0x1208, 0x120c, 0x1210, 0x1438, 0x401c, 0x4030, 0x4034, 0x40b0, 0x40b4,
-   0x40c0, 0x40c4, 0x4100) and the words the arm writes itself (0x1000, 0x4004, 0x4010 to 0x4018, 0x4080).
+   0x40c0, 0x40c4, 0x4100) and the words the arm writes itself (0x1000, 0x4004, 0x400c, 0x4010 to 0x4018, 0x4080).
+   The control words 0x4004, 0x400c, 0x1000 and 0x4080 read back with state bits: an MHO934 and an MHO98 read
+   different values in the same setting, and 0x4080 with its done bit set (verified on the unit, `--snapshot`,
+   issues #248 and #491). So the arm starts them from the DHO800/DHO900's stock values (assumed: the same bits), and
+   of 0x4008 takes only the channel mask (bits 3:0) and bit 27, which every MHO900 read had set. The configuration
+   reads back as set: the record depth 0x10e4 10000 points and the TX length 0x11f0 the same at 200 us/div, 0x10d8 50
+   (250 MSa/s / 50 = 5 MSa/s, 10000 points in 2 ms), 0x4050 and 0x4054 5000 each, and 0x1004, 0x1010 and 0x4020 the
+   same on both units.
 5. The front end of the snapshot's channel: the set of its switch-on, then the words of its scale, in the order the stock
    system sent them (section 8); then the twelve select lines at the levels the snapshot read.
 6. A read-back of steps 2 and 4: how many words and registers read as in the snapshot, and the first that do not.

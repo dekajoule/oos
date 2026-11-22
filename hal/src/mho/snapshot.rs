@@ -27,7 +27,7 @@ pub const SYNC: u32 = 0x10120;
 /// Configuration words that are not written back, and why: status, counters and read-back words, and the words the
 /// start writes itself (the run control and the frame window of the arm, the SPU's reset pulses, the link reset and
 /// the sync enable).
-pub const NOT_REPLAYED: [(u32, &str); 20] = [
+pub const NOT_REPLAYED: [(u32, &str); 21] = [
     (0x1000, "SPU control: reset pulses, written by the arm's stop sequence"),
     (0x11e8, "TX state (read)"),
     (0x1208, "recorded range (read)"),
@@ -35,6 +35,7 @@ pub const NOT_REPLAYED: [(u32, &str); 20] = [
     (0x1210, "ADC clock count (read)"),
     (0x1438, "temperature (read)"),
     (0x4004, "run control: written by the arm"),
+    (0x400c, "record and play mode: written by the arm; reads back with state bits (two units differ)"),
     (0x4010, "frame window: written by the arm"),
     (0x4014, "frame window: written by the arm"),
     (0x4018, "frame window: written by the arm"),
@@ -135,7 +136,8 @@ impl Snapshot {
                     s.afe.push((step.to_string(), r as u8, d as u16));
                 }
                 ["select", name, v] => {
-                    let g = name.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+                    // the line's name, then its gpio number (`a149`, `sysref_reset54`): the digits at the end
+                    let g = &name[name.trim_end_matches(|c: char| c.is_ascii_digit()).len()..];
                     s.select.push((num(g).map_err(bad)?, *v == "1"));
                 }
                 ["fpga", a, v] => {
@@ -195,13 +197,16 @@ impl Snapshot {
         link.extend([Step::Wr(SYNC, sync | 1), Step::Wait(50), Step::Wr(SYNC, sync & !1)]);
         let skip = |a: &u32| jesd(a) || *a == SYNC || *a == MODE || NOT_REPLAYED.iter().any(|(n, _)| n == a);
         let mut cfg: Vec<Step> = self.fpga.iter().filter(|(a, _)| !skip(a)).map(|(&a, &v)| Step::Wr(a, v)).collect();
-        if let Some(&m) = self.fpga.get(&MODE) {
-            cfg.push(Step::Wr(MODE, m));
+        if self.fpga.contains_key(&MODE) {
+            cfg.push(Step::Wr(MODE, self.shadows().s4008));
         }
         let mut afe: Vec<Step> = self.afe_frames()?.into_iter().map(|(r, d)| Step::Afe(r, d)).collect();
         for &(g, v) in &self.select {
-            let name = acq::afe::select_name(g).ok_or_else(|| format!("gpio {} is no select line", g))?;
-            afe.push(Step::Select(name, v));
+            // only the front ends' select lines: the snapshot also reads others (the PMIC's VSEL lines, the panel's
+            // reset, `sysref_reset`), which the start never drives
+            if let Some(name) = acq::afe::select_name(g) {
+                afe.push(Step::Select(name, v));
+            }
         }
         if adc.is_empty() {
             return Err("the snapshot holds no ADC register".into());
@@ -211,16 +216,21 @@ impl Snapshot {
 
     /// The SCU's shadows for the arm and the read-out of the DHO800/DHO900 (the same registers and bits,
     /// mho-acquisition.md section 3): the snapshot's values, the run bits of 0x4004 cleared.
+    ///
+    /// The control words 0x4004, 0x400c, 0x1000 and 0x4080 read back with state bits (an MHO934 and an MHO98 read
+    /// different values in the same setting, 0x4080 with its done bit set), so they are not taken from the snapshot:
+    /// they start from the DHO800/DHO900's stock values, the same bits (assumed). Of the mode word 0x4008 the snapshot
+    /// gives the FSM's channel mask and bit 27 (set on every MHO900 read so far); the rest is the DHO's.
     pub fn shadows(&self) -> Shadows {
         let h = Shadows::HANDOVER;
         let g = |a: u32, d: u32| self.fpga.get(&a).copied().unwrap_or(d);
         Shadows {
-            s4004: g(0x4004, h.s4004) & !(1 | 4 | 1 << 31),
-            s4008: g(MODE, h.s4008),
-            s400c: g(0x400c, h.s400c),
-            s1000: g(0x1000, h.s1000) & !0x11,
+            s4004: h.s4004 & !(1 | 4 | 1 << 31),
+            s4008: (h.s4008 & !0xf) | self.fsm_mask() | (g(MODE, 0) & 1 << 27),
+            s400c: h.s400c,
+            s1000: h.s1000,
             s1010: g(0x1010, h.s1010),
-            s4080: g(0x4080, h.s4080) & !(1 << 31),
+            s4080: h.s4080 & !(1 << 31),
             s1004: g(0x1004, h.s1004),
             s4020: g(0x4020, h.s4020),
             s1080: g(0x1080, h.s1080),
@@ -229,15 +239,20 @@ impl Snapshot {
         }
     }
 
+    /// The FSM's channel mask: bits 3:0 of the snapshot's 0x4008 (the channel's bit if none).
+    pub fn fsm_mask(&self) -> u32 {
+        match self.fpga.get(&MODE).map(|m| m & 0xf) {
+            Some(m) if m != 0 => m,
+            _ => 1 << (self.channel - 1),
+        }
+    }
+
     /// The read-out window: `n` points (at most the record, a multiple of 4) around the record's middle, where the
     /// trigger is at zero delay; the FSM's channel mask as the snapshot had it (the channel's bit if none).
     pub fn window(&self, n: u32) -> Window {
         let depth = self.fpga.get(&DEPTH).copied().filter(|&d| d >= 4).unwrap_or(n);
         let n = (n.min(depth) / 4 * 4).max(4);
-        let fsm = match self.fpga.get(&MODE).map(|m| m & 0xf) {
-            Some(m) if m != 0 => m,
-            _ => 1 << (self.channel - 1),
-        };
+        let fsm = self.fsm_mask();
         Window { n, start: (depth / 2).saturating_sub(n / 2), ratio: 1, fsm, la: false, avg: false }
     }
 }
@@ -333,8 +348,8 @@ mod tests {
 
     const TEXT: &str = "for people\n---- oos snapshot ----\nformat 1\nmodel MHO98\nhwcode 3\nchannel 2\nscale 1\n\
         timebase 2e-4\ntrigger-level 1.5\nafe on 0x07 0xc440\nafe on 0x2b 0x4c5f\nafe base 0x28 0x8000\n\
-        afe scale=0.5 0x07 0x8440\nafe scale=1 0x07 0x8440\nafe scale=1 0x29 0x0280\nselect a129 0\nselect c131 1\n\
-        fpga 0x1004 0x04004a50\nfpga 0x10e4 0x00002710\nfpga 0x1210 0x0000c34f\nfpga 0x4004 0x80000005\n\
+        afe scale=0.5 0x07 0x8440\nafe scale=1 0x07 0x8440\nafe scale=1 0x29 0x0280\nselect vsel46 0\n\
+        select reset52 1\nselect sysref_reset54 0\nselect a129 0\nselect c131 1\nfpga 0x1004 0x04004a50\nfpga 0x10e4 0x00002710\nfpga 0x1210 0x0000c34f\nfpga 0x4004 0x80000005\n\
         fpga 0x4008 0x08805182\nfpga 0x10120 0x00000000\nfpga 0x20004 0x00000011\nfpga 0x2003c 0x00000000\n\
         adc 0 0x0a 0x8080\nadc 1 0x09 0x0700\nend\n";
 
@@ -343,7 +358,7 @@ mod tests {
         let s = Snapshot::parse(TEXT).unwrap();
         assert_eq!((s.model.as_str(), s.hwcode, s.channel, s.scale), ("MHO98", Some(3), 2, 1.0));
         assert_eq!(s.afe.len(), 6);
-        assert_eq!(s.select, [(129, false), (131, true)]);
+        assert_eq!(s.select, [(46, false), (52, true), (54, false), (129, false), (131, true)]);
         assert_eq!(s.fpga.get(&0x4008), Some(&0x0880_5182));
         assert_eq!(s.adc[1].get(&0x09), Some(&0x0700));
     }
@@ -389,7 +404,9 @@ mod tests {
                 Step::Wr(0x10120, 0)
             ]
         );
-        assert_eq!(p[2].1, [Step::Wr(0x1004, 0x0400_4a50), Step::Wr(0x10e4, 0x2710), Step::Wr(0x4008, 0x0880_5182)]);
+        // the mode word: the DHO's with the snapshot's channel mask and bit 27, not its state bits
+        assert_eq!(p[2].1, [Step::Wr(0x1004, 0x0400_4a50), Step::Wr(0x10e4, 0x2710), Step::Wr(0x4008, 0x0880_0002)]);
+        // the PMIC's VSEL lines, the panel's reset and sysref_reset are in the snapshot, never in the plan
         assert_eq!(
             p[3].1[4..],
             [Step::Select("afe_sel_a_ch2".into(), false), Step::Select("afe_sel_c_ch2".into(), true)]
@@ -402,7 +419,13 @@ mod tests {
         let w = s.window(4000);
         assert_eq!((w.n, w.start, w.ratio, w.fsm), (4000, 3000, 1, 2));
         assert_eq!(s.window(100_000).n, 10_000);
-        assert_eq!(s.shadows().s4004, 0);
+        // Break it catches: a control word taken from its read-back, which carries state bits (0x4080 read with its
+        // done bit set on an MHO934): the arm would write them back into the run control
+        let mut busy = s.clone();
+        busy.fpga.extend([(0x4004, 0x0f00_a829), (0x400c, 0xa280_8dc2), (0x1000, 0x0585_0a80), (0x4080, 0x5c00_0023)]);
+        let (h, b) = (Shadows::HANDOVER, busy.shadows());
+        assert_eq!((b.s4004, b.s400c, b.s1000, b.s4080), (0, h.s400c, h.s1000, h.s4080));
+        assert!(!busy.plan().unwrap()[2].1.iter().any(|w| matches!(w, Step::Wr(0x400c | 0x4004 | 0x4080 | 0x1000, _))));
         let mut no_mode = s.clone();
         no_mode.fpga.remove(&MODE);
         assert_eq!(no_mode.window(4000).fsm, 2);
