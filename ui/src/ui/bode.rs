@@ -762,8 +762,7 @@ impl Ui {
             }
             d *= 10.0;
         }
-        cv.hline(a.x, a.x + a.w, py(0.0), LINE);
-        cv.hline(a.x, a.x + a.w, gy(0.0).clamp(gt, gb), LINE);
+        self.draw_bode_values(cv, (gt, gb, gmin, gmax), (pt, pb));
         let col_g = self.wave_color(self.m.bode_out);
         let mut prev: Option<((i32, i32), (i32, i32))> = None;
         for &(hz, g, p) in &self.bode.points {
@@ -795,9 +794,10 @@ impl Ui {
         };
         let mode = self.bode_mode();
         let (what, span) = match mode {
-            oos_dsp::bode::Mode::Psrr => ("PSRR", format!("{:.0} .. {:.0} dB", gmin, gmax)),
-            oos_dsp::bode::Mode::Z => ("Vout/Vin", format!("{:.3} .. {:.3}", gmin, gmax)),
-            oos_dsp::bode::Mode::Loop => ("Gain", format!("{:.0} .. {:.0} dB", gmin, gmax)),
+            // + 0.0: a range that ends at -0 reads 0
+            oos_dsp::bode::Mode::Psrr => ("PSRR", format!("{:.0} .. {:.0} dB", gmin + 0.0, gmax + 0.0)),
+            oos_dsp::bode::Mode::Z => ("Vout/Vin", format!("{:.3} .. {:.3}", gmin + 0.0, gmax + 0.0)),
+            oos_dsp::bode::Mode::Loop => ("Gain", format!("{:.0} .. {:.0} dB", gmin + 0.0, gmax + 0.0)),
         };
         cv.text(
             &f.s,
@@ -834,6 +834,42 @@ impl Ui {
         cv.set_clip(r);
         cv.text_in(&f.s, r, 1, &status, TEXT);
         cv.no_clip();
+    }
+
+    /// The values of both axes (#387): a line at every round step of the gain (dB, or V/V for impedance) and of the
+    /// phase, each labelled at the left edge, above its line or below it where a title stands, else left out.
+    fn draw_bode_values(&self, cv: &mut Canvas, gain: (i32, i32, f64, f64), phase: (i32, i32)) {
+        let a = self.plot.area;
+        let f = self.fonts();
+        let (gt, gb, gmin, gmax) = gain;
+        let (pt, pb) = phase;
+        let mid = a.y + a.h / 2;
+        // the rows the titles, the cursor's text and the margins take
+        let taken = [(gt, gt + 16), (mid - 12, mid + 4), (pt, pt + 16), (pt + 18, pt + 32)];
+        let free = |top: i32| top >= a.y && !taken.iter().any(|&(t, b)| top < b && top + 14 > t);
+        let label = |cv: &mut Canvas, y: i32, text: &str, col| {
+            if free(y - 15) {
+                cv.text(&f.s, a.x + 6, y - 3, text, col);
+            } else if free(y + 1) {
+                cv.text(&f.s, a.x + 6, y + 13, text, col);
+            }
+        };
+        let z = self.bode_mode() == oos_dsp::bode::Mode::Z;
+        let step = axis_step(gmax - gmin, 5);
+        let digits = if z { (-step.log10().floor()).max(0.0) as usize } else { 0 };
+        let mut g = (gmin / step).ceil() * step;
+        while g <= gmax + step * 1e-6 {
+            let y = gb - ((g - gmin) / (gmax - gmin) * (gb - gt) as f64).round() as i32;
+            cv.hline(a.x, a.x + a.w, y, LINE);
+            let text = if z { format!("{:.*}", digits, g + 0.0) } else { format!("{:.0} dB", g + 0.0) };
+            label(cv, y, &text, DIM);
+            g += step;
+        }
+        for p in [-180.0, -90.0, 0.0, 90.0, 180.0] {
+            let y = pb - ((p + 180.0) / 360.0 * (pb - pt) as f64).round() as i32;
+            cv.hline(a.x, a.x + a.w, y, LINE);
+            label(cv, y, &format!("{:.0}\u{b0}", p), DIM);
+        }
     }
 
     /// The ends of the gain axis for the points measured so far.
@@ -940,6 +976,13 @@ impl super::analysers::Analyser for BodePage {
     fn draw(&self, ui: &Ui, cv: &mut Canvas) {
         ui.draw_bode(cv);
     }
+}
+
+/// A round step (1, 2 or 5 times a power of ten) that divides `span` into at most `lines` parts.
+fn axis_step(span: f64, lines: usize) -> f64 {
+    let raw = (span / lines as f64).max(f64::MIN_POSITIVE);
+    let p = 10f64.powf(raw.log10().floor());
+    [1.0, 2.0, 5.0, 10.0].into_iter().map(|k| k * p).find(|&s| s >= raw).unwrap_or(10.0 * p)
 }
 
 #[cfg(test)]
@@ -1108,6 +1151,33 @@ mod tests {
             ui.render(&mut cv);
         }
         assert!(ui.bode.running || (ui.m.tscale == ts0 && ui.m.trig_mode == TrigMode::Auto), "{:?}", ui.toast);
+    }
+
+    /// The axes show their values (#387): round steps of the gain and the phase, labelled where no title stands.
+    #[test]
+    fn the_axes_show_their_values() {
+        assert_eq!(
+            [axis_step(50.0, 5), axis_step(60.0, 5), axis_step(0.3, 5), axis_step(2.2, 5)],
+            [10.0, 20.0, 0.1, 0.5]
+        );
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.m.view = AView::Bode;
+        // a first-order low pass at 10 kHz, 1 kHz .. 1 MHz
+        ui.bode.points = (0..=30)
+            .map(|i| {
+                let hz = 1e3 * 1e3f64.powf(i as f64 / 30.0);
+                let x = hz / 1e4;
+                (hz, -10.0 * (1.0 + x * x).log10(), -x.atan().to_degrees())
+            })
+            .collect();
+        ui.bode.cursor = 10;
+        let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
+        ui.render(&mut cv);
+        if let Some(dir) = std::env::var_os("OOS_SHOTS") {
+            std::fs::write(std::path::Path::new(&dir).join("bode-axes.png"), crate::store::png_of(&cv)).unwrap();
+        }
+        let (gmin, gmax) = ui.bode_gain_range();
+        assert_eq!((gmin, gmax), (-60.0, 0.0));
     }
 
     #[test]

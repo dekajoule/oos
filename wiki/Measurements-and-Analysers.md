@@ -145,6 +145,9 @@ at the top right, which lead to **Exit**, **Settings** and what fits the view.
 
 If the source of an analyser is switched off, choose another one in its Settings. From 0.1.1 on it takes the first channel that is on by itself.
 
+The Bode plot shows the gain above and the phase below over the frequency. Both axes carry their values at round
+steps (dB, or V/V for an impedance sweep, and degrees); the title line of each half names its whole range.
+
 ### Bode with an external generator
 
 In **Analysers > Bode** pick the Generator preset by the commands the generator takes: **APPL** (Rigol DG, `:APPL`),
