@@ -508,9 +508,6 @@ fn words(b: &[u8]) -> Vec<u32> {
 fn bytes(w: &[u32]) -> Vec<u8> {
     w.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
-fn u32_at(b: &[u8], o: usize) -> Option<u32> {
-    crate::try_bytes_at(b, o).map(u32::from_le_bytes)
-}
 
 /// The payload of vendor.bin under the outer key `k`; `None` if the checksum says it is the wrong key or no such file.
 pub(crate) fn vendor_payload(file: &[u8], k: &[u32; 4]) -> Option<Vec<u8>> {
@@ -519,8 +516,8 @@ pub(crate) fn vendor_payload(file: &[u8], k: &[u32; 4]) -> Option<Vec<u8>> {
     }
     let mut w = words(file);
     xxtea_decode(&mut w, k);
+    let (crc, len) = (w[0], w[1] as usize);
     let p = bytes(&w);
-    let (crc, len) = (u32_at(&p, 0)?, u32_at(&p, 4)? as usize);
     let payload = p.get(8..8usize.checked_add(len)?)?;
     (crate::crc32(payload) == crc).then(|| payload.to_vec())
 }
@@ -555,13 +552,11 @@ fn items(payload: &[u8], key: &[u32; 4]) -> Vendor {
     let mut v = Vendor::default();
     let mut o = 0;
     while o + 12 <= payload.len() {
-        let (Some(id), Some(n)) = (u32_at(payload, o + 4), u32_at(payload, o + 8)) else { break };
+        let [id, n] = [o + 4, o + 8].map(|at| u32::from_le_bytes(crate::bytes_at(payload, at)));
         let n = n as usize;
         let Some(item) = payload.get(o + 12..(o + 12).saturating_add(n)) else { break };
         o += 12 + n;
-        let (Some(icrc), Some(ilen), Some(slen)) = (u32_at(item, 0), u32_at(item, 4), u32_at(item, 8)) else {
-            continue;
-        };
+        let Some(&[icrc, ilen, slen]) = item.get(..12).map(words).as_deref() else { continue };
         let (ilen, slen) = (ilen as usize, slen as usize);
         let Some(signed) = item.get(8..12 + ilen) else { continue };
         if crate::crc32(signed) != icrc || ilen % 4 != 0 || slen > ilen {
