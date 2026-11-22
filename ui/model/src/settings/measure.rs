@@ -33,10 +33,7 @@ pub const VIEW: [Setting; 2] = [
     },
     Setting {
         key: "strip_dock",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: "a choice of the screen's layout, not of the measurement",
-        },
+        scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
         ty: Ty::Choice(
             &[
                 Choice { store: "Under", scpi: "", label: "Under" },

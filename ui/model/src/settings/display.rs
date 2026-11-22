@@ -91,10 +91,7 @@ pub const VIEW: [Setting; 5] = [
 /// Written after `windows`.
 pub const DENSITY: [Setting; 1] = [Setting {
     key: "density",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a choice of the screen's layout, not of the measurement",
-    },
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
     ty: Ty::Choice(
         &[
             Choice { store: "Scope", scpi: "", label: "Scope" },
@@ -119,10 +116,7 @@ pub const DENSITY: [Setting; 1] = [Setting {
 /// Written first of the panes and the views, after the decoders and the bus.
 pub const PANE: [Setting; 1] = [Setting {
     key: "pane",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a choice of the screen's layout, not of the measurement",
-    },
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
     ty: Ty::Custom(&PANE_IO),
     label: "Lower",
     #[cfg(test)]
@@ -162,10 +156,7 @@ pub const DRAW: [Setting; 4] = [
     },
     Setting {
         key: "bar",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: "a choice of the screen's layout, not of the measurement",
-        },
+        scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
         ty: Ty::Choice(
             &[
                 Choice { store: "cards", scpi: "", label: "Cards" },
@@ -184,10 +175,7 @@ pub const DRAW: [Setting; 4] = [
     },
     Setting {
         key: "hdmi",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: "a choice of the screen's layout, not of the measurement",
-        },
+        scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
         ty: Ty::Choice(
             &[
                 Choice { store: "Mirror", scpi: "", label: "Mirror" },
@@ -214,10 +202,7 @@ pub const DRAW: [Setting; 4] = [
 /// Written after `quick`.
 pub const TEXT: [Setting; 1] = [Setting {
     key: "text_size",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a choice of the screen's layout, not of the measurement",
-    },
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
     ty: Ty::Choice(
         &[
             Choice { store: "Normal", scpi: "", label: "Normal" },

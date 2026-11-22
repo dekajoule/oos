@@ -18,10 +18,7 @@ pub const SLICES: [&[Setting]; 3] = [&ON, &POS, &RW];
 /// Written first of the bus.
 pub const ON: [Setting; 1] = [Setting {
     key: "bus_on",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a trace of the screen, not of the decoders",
-    },
+    scpi: Scpi::none("a trace of the screen, not of the decoders"),
     ty: Ty::Bool,
     label: "Bus",
     #[cfg(test)]
@@ -35,10 +32,7 @@ pub const ON: [Setting; 1] = [Setting {
 /// Written after `bus_label`.
 pub const POS: [Setting; 1] = [Setting {
     key: "bus_pos",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a trace of the screen, not of the decoders",
-    },
+    scpi: Scpi::none("a trace of the screen, not of the decoders"),
     ty: Ty::Real { range: Some((BUS_POS_MIN as f64, BUS_POS_MAX as f64)), shown: |x| format!("{:.1} div", x) },
     label: "Position",
     #[cfg(test)]
@@ -52,10 +46,7 @@ pub const POS: [Setting; 1] = [Setting {
 /// Written last of the bus.
 pub const RW: [Setting; 1] = [Setting {
     key: "bus_rw",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a trace of the screen, not of the decoders",
-    },
+    scpi: Scpi::none("a trace of the screen, not of the decoders"),
     ty: Ty::Custom(&RW_IO),
     label: "R/W bit",
     #[cfg(test)]
