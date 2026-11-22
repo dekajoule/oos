@@ -19,28 +19,7 @@ pub use levels::*;
 pub use record::resample as resample_record;
 pub use record::{edge_near, sw_trig_level, to_record, trig_mean, trigger_point};
 
-pub struct Rng(u64);
-impl Rng {
-    pub fn new(seed: u64) -> Rng {
-        Rng(seed | 1)
-    }
-    pub fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        x
-    }
-    pub fn uniform(&mut self) -> f64 {
-        (self.next() >> 11) as f64 / (1u64 << 53) as f64
-    }
-    /// Approximate standard normal (sum of 4 uniforms).
-    pub fn gauss(&mut self) -> f32 {
-        let s = self.uniform() + self.uniform() + self.uniform() + self.uniform();
-        ((s - 2.0) * 1.7320508) as f32
-    }
-}
+pub use oos_hal::Rng;
 
 /// One acquisition: samples per channel in volts at the probe tip, sample k at time t0 + k*dt relative to the trigger.
 #[derive(Clone)]

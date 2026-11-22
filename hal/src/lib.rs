@@ -84,3 +84,59 @@ pub fn crc32(data: &[u8]) -> u32 {
     }
     !rest.iter().fold(c, |c, &b| t[0][((c ^ b as u32) & 0xff) as usize] ^ (c >> 8))
 }
+
+/// xorshift64 (13, 7, 17): the same sequence for the same seed, for the demo signals (the pictures and tests depend on
+/// it) and the start of the mDNS probes. Not for secrets.
+pub struct Rng(u64);
+
+impl Rng {
+    /// `seed` with its lowest bit set: never the all-zero state.
+    pub fn new(seed: u64) -> Rng {
+        Rng(seed | 1)
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    /// In [0, 1): the top 53 bits of `next_u64`.
+    pub fn uniform(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Approximate standard normal (sum of 4 uniforms).
+    pub fn gauss(&mut self) -> f32 {
+        let s = self.uniform() + self.uniform() + self.uniform() + self.uniform();
+        ((s - 2.0) * 1.7320508) as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Rng;
+
+    // Break it catches: another shift, seed or scaling in the one generator, which would change the demo pictures
+    // and the mDNS probe times. The generator it replaced (wave::Rng, mdns Responder::rand) is written out here.
+    #[test]
+    fn rng_gives_the_sequence_of_the_generators_it_replaced() {
+        let mut r = Rng::new(0x9e37_79b9_7f4a_7c15);
+        assert_eq!(
+            [r.next_u64(), r.next_u64(), r.next_u64()],
+            [0xdc1b_77ae_0bf3_4dad, 0x64f0_eeb9_026e_6076, 0x7b07_ce91_e590_6136]
+        );
+        for seed in [0, 1, 2, 17, u64::MAX] {
+            let (mut old, mut a, mut b) = (seed | 1, Rng::new(seed), Rng::new(seed));
+            for _ in 0..10_000 {
+                old ^= old << 13;
+                old ^= old >> 7;
+                old ^= old << 17;
+                assert_eq!((a.next_u64(), b.uniform()), (old, (old >> 11) as f64 / (1u64 << 53) as f64), "{:#x}", seed);
+            }
+        }
+    }
+}
