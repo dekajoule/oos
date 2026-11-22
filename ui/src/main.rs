@@ -7,6 +7,8 @@
 //!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
+//!   oos-ui --fpga-live --snapshot FILE --pre "<preamble>"   MHO900 only, by hand (oos-mho-live, docs/mho.md "First
+//!                                  acquisition"): frames armed and read from the board `oos-fpgad mho-start` set up
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
 //!   --model NAME                   act as this model (DHO802 .. DHO924S), instead of /rigol/data/vendor.bin
 //!   --limits FILE                  experimental limits (default /oos/limits.conf, docs/models.md)
@@ -142,9 +144,14 @@ fn main() {
     let drives = p.drives_hardware();
     oos_hal::model::init(p);
     // another board (docs/porting.md), or a build for a board without acquisition code (the MHO900, docs/mho.md): no
-    // hardware source, the demo signal instead
+    // hardware source, the demo signal instead; on a board that takes it by hand, `--fpga-live` stays
+    let by_hand = foreign.is_none() && <board::Active as board::Board>::LIVE_BY_HAND;
     let args: Vec<String> = match drives {
-        false => args.iter().filter(|a| !matches!(a.as_str(), "--hw" | "--fpga-live" | "--afe")).cloned().collect(),
+        false => args
+            .iter()
+            .filter(|a| !matches!(a.as_str(), "--hw" | "--afe") && (a.as_str() != "--fpga-live" || by_hand))
+            .cloned()
+            .collect(),
         true => args,
     };
     // on the unit the frame loop and the acquisition thread (started with the source) keep the two A72 for themselves

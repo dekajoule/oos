@@ -90,6 +90,9 @@ pub trait Board: Sync + 'static {
     const MAX_CHANNELS: usize;
     /// built-in generators of the largest model of the board (the unit's own: `model::gen_count`)
     const MAX_GENERATORS: usize;
+    /// `--fpga-live` is taken where `Platform::drives_hardware` is false: started by hand only (the MHO900's first
+    /// acquisition, docs/mho.md "First acquisition")
+    const LIVE_BY_HAND: bool = false;
 
     /// board family, for logs
     fn name(&self) -> &'static str;

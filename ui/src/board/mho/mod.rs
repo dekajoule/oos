@@ -7,6 +7,9 @@
 //! `Platform::drives_hardware` is false for this build).
 //! What remains are the UI's terms of the board: channels, scales, couplings, depths, and the SoC's temperatures.
 
+#[cfg(target_os = "linux")]
+mod live;
+
 use super::{Board, PanelCmd, Slow, Zone};
 use crate::model::{AcqMode, Coupling, GenCh, Model, TrigMode};
 use oos_hal::panelframe as panel;
@@ -24,6 +27,7 @@ static ARB: Mutex<Vec<f32>> = Mutex::new(Vec::new());
 impl Board for Mho {
     const MAX_CHANNELS: usize = 4;
     const MAX_GENERATORS: usize = 1;
+    const LIVE_BY_HAND: bool = true;
 
     /// nothing is applied to the hardware
     type Want = ();
@@ -70,8 +74,12 @@ impl Board for Mho {
     }
 
     #[cfg(target_os = "linux")]
-    fn live(&self, _: &[String]) -> Option<super::LiveShared> {
-        None
+    fn live(&self, args: &[String]) -> Option<super::LiveShared> {
+        // the first acquisition, by hand (oos-mho-live, docs/mho.md "First acquisition"): only with a snapshot
+        let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned());
+        let file = arg("--snapshot")?;
+        let n = arg("--n").and_then(|v| v.parse().ok()).unwrap_or(4000);
+        Some(live::spawn(file, n, arg("--period-ms").and_then(|v| v.parse().ok()).unwrap_or(30)))
     }
 
     fn dry(&self) {
