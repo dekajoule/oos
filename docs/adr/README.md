@@ -95,6 +95,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0072](process/0072-the-tests-inside-the-hardware-paths-need-no-run-on-a-unit.md) | process | The tests inside the hardware paths need no run on a unit | accepted |
 | [0073](process/0073-a-refactoring-the-live-run-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring the live run found equal needs no run on a unit for the board code it reaches | accepted |
 | [0074](code/0074-the-board-names-no-signal-code-its-policy-is-its-own-and-the-draw-pipeline-is-handed-to-it.md) | code | The board names no signal code: what its thread decides by is its own, and the draw pipeline is handed to it | proposed |
+| [0075](ui-ux/0075-an-on-off-setting-is-one-switch.md) | ui-ux | A setting that is only off or on is one switch in the menus | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents

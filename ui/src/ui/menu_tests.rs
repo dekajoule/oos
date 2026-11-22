@@ -422,6 +422,29 @@ fn a_channel_switched_off_in_its_menu_gives_the_knobs_to_one_still_on() {
     assert_eq!(ui.m.ch[1].vscale, ch2, "CH2, off, stays");
 }
 
+/// A setting whose options are just Off and On is one switch (#55, ADR 0075): a tap anywhere on it switches, both
+/// ways; a choice of other options stays a row of buttons.
+#[test]
+fn an_on_off_setting_is_a_switch_a_tap_switches() {
+    use super::*;
+    let mut ui = crate::ui::testkit::demo_ui();
+    ui.step(0.033);
+    ui.open_menu(MenuId::Channel(0));
+    let row = |ui: &Ui, it: Item| {
+        let d = ui.dlg_layout().expect("the channel menu is open");
+        let r = d.rows.iter().find(|r| r.it == it).expect("the row is in the menu");
+        (r.ctrl, matches!(r.ctl, Ctl::Switch(_)), matches!(r.ctl, Ctl::Switch(true)))
+    };
+    let (c, switch, on) = row(&ui, Item::ChInvert(0));
+    assert!(switch && !on && !ui.m.ch[0].invert, "Invert is a switch, off");
+    // the left end, where the On button of the pair was not
+    ui.tap(c.x + 4, c.y + c.h / 2);
+    assert!(ui.m.ch[0].invert && row(&ui, Item::ChInvert(0)).2, "a tap switched it on");
+    ui.tap(c.x + c.w - 4, c.y + c.h / 2);
+    assert!(!ui.m.ch[0].invert, "a tap switched it off again");
+    assert!(!row(&ui, Item::ChCoupling(0)).1, "coupling (DC, AC, GND) stays a row of buttons");
+}
+
 /// A channel key held on the front panel: AC/DC, nothing else; a short press does what the key does, when it is
 /// let go.
 #[test]

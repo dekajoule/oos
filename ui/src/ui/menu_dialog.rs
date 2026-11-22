@@ -256,6 +256,9 @@ impl Ui {
                 let opts = self.options(it);
                 let n = opts.len() as i32;
                 let f = self.fonts();
+                if k == Kind::Choice && Self::on_off_options(&opts) {
+                    return Ctl::Switch(self.value(it) == "On");
+                }
                 if n == 0 {
                     Ctl::Value
                 } else if k == Kind::Choice && opts.iter().all(|o| f.mb.width(o) + 12 <= (w - (n - 1) * 4) / n) {
@@ -603,6 +606,35 @@ impl Ui {
     }
 
     /// Value control parts: minus, value, plus.
+    /// Options that are just Off and On: such a row is a switch (ADR 0075).
+    fn on_off_options(opts: &[String]) -> bool {
+        opts.len() == 2 && opts.iter().any(|o| o == "On") && opts.iter().any(|o| o == "Off")
+    }
+
+    /// The parts of a switch whose control is `c`: the room of its state text on the left, the track on the right.
+    pub(super) fn switch_parts(c: Rect) -> (Rect, Rect) {
+        let th = (c.h - 16).clamp(16, 26);
+        let tw = th * 2 - 4;
+        let track = Rect::new(c.x + c.w - 12 - tw, c.y + (c.h - th) / 2, tw, th);
+        (Rect::new(c.x + 14, c.y, track.x - c.x - 22, c.h), track)
+    }
+
+    /// A switch in its control `c`: one field, the state on the left, the switch on the right; on, the track is the
+    /// accent and the knob stands right.
+    fn draw_switch(&self, cv: &mut Canvas, c: Rect, on: bool) {
+        btn(cv, c, BTN, BTN_BORDER);
+        let (txt, track) = Self::switch_parts(c);
+        cv.text_in(&self.fonts().mb, txt, 0, if on { "On" } else { "Off" }, if on { TEXT } else { DIM });
+        let r = track.h / 2;
+        if on {
+            cv.round(track, r, ACCENT, 255);
+            cv.circle(track.x + track.w - r, track.y + r, r - 3, DARK_TEXT);
+        } else {
+            cv.round(track, r, BTN_BORDER, 255);
+            cv.circle(track.x + r, track.y + r, r - 3, DIM);
+        }
+    }
+
     pub(super) fn value_parts(c: Rect) -> (Rect, Rect, Rect) {
         (Rect::new(c.x, c.y, 44, c.h), Rect::new(c.x + 48, c.y, c.w - 96, c.h), Rect::new(c.x + c.w - 44, c.y, 44, c.h))
     }
@@ -681,6 +713,7 @@ impl Ui {
                         }
                     }
                 }
+                Ctl::Switch(on) => self.draw_switch(cv, c, *on),
                 Ctl::Text => {
                     let v = self.value(row.it);
                     cv.text_in(self.text_row_font(c.w, &v), c, 1, &v, TEXT)
@@ -742,7 +775,7 @@ impl Ui {
                 }
             }
             if focus {
-                if let Ctl::Seg(..) = row.ctl {
+                if let Ctl::Seg(..) | Ctl::Switch(_) = row.ctl {
                     cv.round_outline(Rect::new(c.x - 3, c.y - 3, c.w + 6, c.h + 6), 7, ACCENT);
                 }
             }
@@ -813,6 +846,7 @@ impl Ui {
                     let k = ((x - row.ctrl.x) * n / row.ctrl.w).clamp(0, n - 1) as usize;
                     self.select_option(row.it, &opts[k]);
                 }
+                Ctl::Switch(on) => self.select_option(row.it, if *on { "Off" } else { "On" }),
                 Ctl::Value | Ctl::Pick => {
                     let (mi, _, pl) = Self::value_parts(row.ctrl);
                     if mi.contains(x, y) {
