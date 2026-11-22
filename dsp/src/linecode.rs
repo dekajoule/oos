@@ -273,10 +273,11 @@ fn bits_to_bytes(bits: &[(f64, bool)]) -> Vec<(f64, f64, u8)> {
 const ETHERNET_MIN: usize = 64;
 
 /// The frame check of an Ethernet frame, from its `bytes` (the frame starts behind the delimiter at `first`): the last
-/// four bytes of the frame, with `ok` where the CRC-32 over the rest is that check. The frame ends at the first pause
-/// of more than 1.5 `bit` times between two bytes, or with the bytes where the record is quiet for 4 bit times behind
-/// them; a frame the record cuts off has no check, and nor has one shorter than a frame can be. `bit`: the bit time in
-/// samples, `len`: the samples of the record.
+/// four bytes of the frame, with `ok` where the CRC-32 over the rest is that check. A byte's times are the middle edges
+/// of its first and last bit, so two bytes back to back are one bit time apart: the frame ends where two bytes are more
+/// than 1.5 `bit` times apart (a pause of more than half a bit on the line), or with the bytes where the record goes on
+/// for 4 bit times behind the middle of the last bit. A frame the record cuts off has no check, and nor has one shorter
+/// than a frame can be. `bit`: the bit time in samples, `len`: the samples of the record.
 fn ethernet_check(bytes: &[(f64, f64, u8)], first: usize, bit: f64, len: usize) -> Option<Packet> {
     let frame = &bytes[first..];
     let n = frame.windows(2).position(|w| w[1].0 - w[0].1 > 1.5 * bit).map_or(frame.len(), |k| k + 1);
