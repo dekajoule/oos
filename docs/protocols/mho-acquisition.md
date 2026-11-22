@@ -460,10 +460,19 @@ records that set-up (section 7).
 **Recipes.** With the capture (`/oos/mho-capture.txt`) or a recipe (`/oos/mho-recipe.txt`) on the unit,
 `mho-start` runs a recipe after the bring-up instead of the steps above: one line per item, the steps in the form
 `wr OFFSET VALUE`, `wait MS`, `adc N REG DATA`, `adcread N REG`, `afe CH REG DATA`, `select NAME LEVEL`, and
-`plan PHASE` (a phase of the snapshot's start), `capture` (the capture's steps), `acquire [MASK]` (one acquisition,
+`plan PHASE` (a phase of the snapshot's start), `capture` (the capture's steps), `adc-sync` (every ADC register
+that reads otherwise than in the snapshot written with the snapshot's value), `acquire [MASK]` (one acquisition,
 reported), `status` (the front ends' status reads), `afe-power-cycle` and `label TEXT`
 (hal/src/mho/recipe.rs lists them). Without a recipe but with a capture it runs the capture, then the snapshot's
-link, configuration and channel, and one acquisition. The read-back and the diagnostics follow either way. A recipe
+link, configuration and channel, `adc-sync`, and one acquisition.
+
+**Verified on the unit** (hp197's MHO98, mho-dev-15, issue #4, 2026-11-22): with the front ends on the bus of
+section 8, the capture of the stock cold start, the snapshot's link, configuration and CH2 front end, and then the
+ADC registers brought to the snapshot's values, the acquisition held the probe compensation signal: 0.000 V and
+0.312 V, mean 0.156 V, as the stock system measured it (0 to 0.32 V, mean 0.156 V). All four front ends' status read
+0x0440 as under the stock system, and the input relays clicked. Without the ADC step the frame was flat: the cold
+start leaves the ADCs' input selection 0x54/0x55 (0x9460/0x0004 against the snapshot's 0x1803/0x0005) and the lanes'
+trims (0x04, 0x05, 0x14, 0x15 ... of each eight-register block) as the program's start had them. The read-back and the diagnostics follow either way. A recipe
 changes what is tried without a new build.
 
 The verdict: the words decoded at the snapshot's scale (section 5) hold a square wave when two levels at least half a

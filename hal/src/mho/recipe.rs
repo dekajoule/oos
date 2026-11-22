@@ -18,6 +18,7 @@
 //! | `select NAME LEVEL` | a front-end select line (`afe_sel_c_ch2`, or the snapshot's `c131`) |
 //! | `plan PHASE` | a phase of the snapshot's start: `adc`, `link`, `fpga`, `afe-init`, `afe` |
 //! | `capture` | the steps of the capture, in its order |
+//! | `adc-sync` | every ADC register that reads otherwise than in the snapshot written with the snapshot's value |
 //! | `acquire [MASK]` | one acquisition, its levels reported (the snapshot's channel mask if none) |
 //! | `status` | the four front ends' status read, reported |
 //! | `afe-power-cycle` | the front ends' supply off for 100 ms and on again |
@@ -35,6 +36,7 @@ pub enum Item {
     Step(Step),
     Plan(String),
     Capture,
+    AdcSync,
     Acquire(Option<u32>),
     Status,
     AfePowerCycle,
@@ -123,6 +125,7 @@ pub fn parse(text: &str) -> Result<Vec<Item>, String> {
             },
             ["plan", p] if PHASES.contains(p) => Item::Plan(p.to_string()),
             ["capture"] => Item::Capture,
+            ["adc-sync"] => Item::AdcSync,
             ["acquire"] => Item::Acquire(None),
             ["acquire", m] => Item::Acquire(Some(n(m)? & 0xf)),
             ["status"] => Item::Status,
@@ -172,12 +175,16 @@ pub fn parse_capture(text: &str) -> Result<Vec<Step>, String> {
 }
 
 /// The recipe `mho-start` runs when the unit's capture is there and no recipe is given: the stock program's cold
-/// start in its order, then the snapshot's link, configuration and channel, one acquisition and the status read.
+/// start in its order, then the snapshot's link, configuration and channel, the ADC registers brought to the
+/// snapshot's values, one acquisition and the status read. **Verified on the unit** (hp197's MHO98, mho-dev-15, issue
+/// #4): in this order the probe compensation signal came back; without the ADC registers it did not (the cold start
+/// leaves the ADCs' input selection 0x54/0x55 and the lanes' trims as the program's start had them).
 pub const WITH_CAPTURE: &str = "label the stock program's cold start (capture), then the snapshot
 capture
 plan link
 plan fpga
 plan afe
+adc-sync
 acquire
 status
 ";
@@ -192,7 +199,7 @@ mod tests {
     fn every_kind_of_line_is_read_and_wrong_ones_are_named() {
         let r = parse(
             "# a comment\nwr 0x2003c 1\nwait 5\nadc 0 0x0a 0x8078\nadcread 1 9\nafe 2 0x07 0xc440 # dc\n\
-             select c131 1\nselect afe_sel_a_ch1 0\nselect vsel46 1\nplan fpga\ncapture\nacquire\nacquire 0xf\n\
+             select c131 1\nselect afe_sel_a_ch1 0\nselect vsel46 1\nplan fpga\ncapture\nadc-sync\nacquire\nacquire 0xf\n\
              status\nafe-power-cycle\nlabel try two\n",
         )
         .unwrap();
@@ -208,6 +215,7 @@ mod tests {
                 Item::Step(Step::Select("afe_sel_a_ch1".into(), false)),
                 Item::Plan("fpga".into()),
                 Item::Capture,
+                Item::AdcSync,
                 Item::Acquire(None),
                 Item::Acquire(Some(0xf)),
                 Item::Status,

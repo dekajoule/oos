@@ -28,6 +28,9 @@ const DEFAULT_CAPTURE: &str = "/oos/mho-capture.txt";
 const DEFAULT_RECIPE: &str = "/oos/mho-recipe.txt";
 /// Where the frame goes, one line per point: index, word, volts.
 const CSV: &str = "/tmp/mho-frame.csv";
+/// The revision of this command, the first line of its report: says which `oos-fpgad` made a report (the mho-dev
+/// release it came with).
+const REVISION: &str = "mho-dev-16";
 /// Acquisitions tried, and how long each may take to complete.
 const TRIES: u32 = 3;
 const DONE_MS: u64 = 2000;
@@ -39,6 +42,11 @@ fn opt<'a>(args: &'a [String], k: &str) -> Option<&'a str> {
 }
 
 pub(super) fn run(args: &[String]) -> i32 {
+    println!(
+        "mho-start: {} ({})",
+        REVISION,
+        std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default()
+    );
     let file = opt(args, "--snapshot").unwrap_or(DEFAULT_FILE);
     let s =
         match std::fs::read_to_string(file).map_err(|e| format!("{}: {}", file, e)).and_then(|t| Snapshot::parse(&t)) {
@@ -285,6 +293,7 @@ fn run_recipe(bar: &mut Bar1, afe: &Afe, c: &Ctx, items: &[Item]) -> Option<Stri
             },
             Item::Capture if capture.is_empty() => println!("mho-start: capture: none (/oos/mho-capture.txt)"),
             Item::Capture => run_steps(bar, afe, "capture", capture),
+            Item::AdcSync => adc_sync(bar, s, "recipe"),
             Item::Acquire(m) => {
                 let mask = m.unwrap_or_else(|| s.fsm_mask());
                 match one(bar, s, n, mask) {
@@ -512,6 +521,19 @@ fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, plan: &[(&str, Vec<Step>)],
             note("0x1004 written again".into(), sq);
         }
     }
+    adc_sync(bar, s, "diag");
+    if let Ok(w) = one(bar, s, n, s.fsm_mask()) {
+        let (t, sq) = levels_line(&w, s.scale);
+        println!("diag: after the ADC registers again: {}", t);
+        note("ADC registers written again".into(), sq);
+    }
+    found
+}
+
+/// Every ADC register that reads otherwise than in the snapshot written with the snapshot's value, then read at
+/// once; reported under `tag`. After the stock program's cold start this brings the ADCs' input selection (0x54,
+/// 0x55) and the lanes' trims to the snapshot's setting (hp197's MHO98, mho-dev-15).
+fn adc_sync(bar: &mut Bar1, s: &Snapshot, tag: &str) {
     for a in 0..2u32 {
         let mut out = Vec::new();
         for (&r, &v) in &s.adc[a as usize] {
@@ -525,14 +547,8 @@ fn diagnose(bar: &mut Bar1, afe: &Afe, s: &Snapshot, plan: &[(&str, Vec<Step>)],
             let now = adc_read(bar, a, r);
             out.push(format!("{:02x}:{}", r, now.map_or("-".into(), |x| format!("{:04x}", x))));
         }
-        println!("diag: ADC {} written again where it differed, then read: {}", a, out.join(" "));
+        println!("{}: ADC {} written again where it differed, then read: {}", tag, a, out.join(" "));
     }
-    if let Ok(w) = one(bar, s, n, s.fsm_mask()) {
-        let (t, sq) = levels_line(&w, s.scale);
-        println!("diag: after the ADC registers again: {}", t);
-        note("ADC registers written again".into(), sq);
-    }
-    found
 }
 
 /// One read of the read-out stream, given up after `READ_S` (the driver's own timeout may be longer).
