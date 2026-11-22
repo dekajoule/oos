@@ -20,6 +20,16 @@ use std::sync::Mutex;
 /// The Rigol MHO900.
 pub struct Mho;
 
+/// What the screen asks of the board: the channel (1 to 4, None: none on), its scale at the BNC in V/div, the time
+/// base in s/div and the probe's ratio (the frames are volts at the probe tip).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Want {
+    pub ch: Option<usize>,
+    pub scale: f64,
+    pub tdiv: f64,
+    pub probe: f64,
+}
+
 /// Time base from which the screen rolls (as on the DHO800/DHO900 and stock: 200 ms/div).
 const ROLL_TDIV: f64 = 0.2;
 
@@ -31,8 +41,8 @@ impl Board for Mho {
     const MAX_GENERATORS: usize = 1;
     const LIVE_BY_HAND: bool = true;
 
-    /// nothing is applied to the hardware
-    type Want = ();
+    /// the channel the board measures and its setting (`hw::Want`): applied by hand only (`oos-mho-live`)
+    type Want = Want;
     /// (on, Hz, Vpp, V): for the demo source only
     type Gen = (bool, f64, f64, f64);
 
@@ -40,7 +50,17 @@ impl Board for Mho {
         "MHO900"
     }
 
-    fn want(&self, _: &Model) -> Self::Want {}
+    fn want(&self, m: &Model) -> Self::Want {
+        // the first channel on: the board measures one channel at a time for now (docs/mho.md)
+        let ch = (0..4).find(|&c| m.ch[c].on);
+        let c = ch.unwrap_or(0);
+        Want {
+            ch: ch.map(|c| c + 1),
+            scale: (crate::model::VSCALES[m.ch[c].vscale] * m.ch[c].vfine) as f64,
+            tdiv: m.hw_time_per_div() as f64,
+            probe: m.ch[c].probe as f64,
+        }
+    }
 
     fn slow_mode(&self, m: &Model) -> Slow {
         // the stock rule of the DHO800/DHO900: Auto Roll on -> roll, off -> scan from 200 ms/div unless averaging

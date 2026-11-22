@@ -11,8 +11,10 @@
 #   oos-mho-live off      oos-ui with the demo signal again (the board stays set until power-off)
 #
 # mho-start also takes, when they are in /oos, the capture of the stock system's cold start (mho-capture.txt), the
-# front ends' set-up (mho-afe-init.txt) and a recipe (mho-recipe.txt). A newer oos-fpgad in /oos/bin is used instead of
-# the image's: an owner can try a new one with one scp, without installing (it stays until it is removed).
+# front ends' set-up (mho-afe-init.txt) and a recipe (mho-recipe.txt); oos-ui the unit's recorded settings
+# (mho-settings.txt, mho-settings.py), with which the screen's keys set the board. A newer oos-fpgad in /oos/bin is
+# used instead of the image's: an owner can try a new one with one scp, without installing (it stays until it is
+# removed).
 REPORT=/oos/mho-start.txt
 FPGAD=/bin/oos-fpgad
 [ -x /oos/bin/oos-fpgad ] && FPGAD=/oos/bin/oos-fpgad

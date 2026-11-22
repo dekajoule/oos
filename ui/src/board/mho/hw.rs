@@ -3,26 +3,34 @@
 
 //! The MHO900's acquisition behind the screen (`oos-ui --hw`, started by `oos-mho-live` after `oos-fpgad mho-start`
 //! set the board up from the unit's own snapshot; docs/mho.md "First acquisition"). One acquisition after the other is
-//! armed and read whole with the sequences of the DHO800/DHO900 (`snapshot::acquire`), decoded to volts at the
-//! snapshot's scale (docs/protocols/mho-acquisition.md, section 5) and handed to the screen as frames of the
-//! snapshot's channel, so the trace sits on its own channel in volts. The board measures at the snapshot's setting
-//! only: the screen's scale, time base and trigger keys do not set it yet. **Verified on the unit** that the board
-//! measures there (two MHO98, issues #4 and #491); this thread not yet.
+//! armed and read whole with the sequences of the DHO800/DHO900 (`snapshot::acquire`), decoded to volts and handed to
+//! the screen as frames of the channel measured.
+//!
+//! With the unit's recording of the stock settings (`/oos/mho-settings.txt`, `tools/mho-settings.py`) the screen's
+//! keys set the board: the first channel on, its scale and the time base go to the nearest recorded setting
+//! (`settings::Settings::plan`): the FPGA's words, the ADCs' registers, the front end's words and select lines.
+//! Without it the board stays at the snapshot's setting. One channel at a time. **Verified on the unit** that the
+//! board measures at the snapshot's setting (three units, issues #4, #248, #491); the keys not yet.
 
 use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
-use oos_hal::mho::bus::{Bar1, DmaBuf};
+use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
+use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
+use oos_hal::mho::settings::{Plan, Settings};
 use oos_hal::mho::{acq, snapshot};
 use std::time::Duration;
 
-/// The unit's snapshot, as `oos-mho-live` leaves it.
+/// The unit's snapshot and its recording of the stock settings, as `oos-mho-live` leaves them.
 const SNAPSHOT: &str = "/oos/mho-snapshot.txt";
-/// How long one acquisition may take to complete, the frames dropped after the start while the board settles (the
+const SETTINGS: &str = "/oos/mho-settings.txt";
+/// How long one acquisition may take to complete, the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
 const DONE_MS: u64 = 1000;
-const SETTLE: u64 = 2;
+const SETTLE: u32 = 2;
 const PERIOD_MS: u64 = 20;
 /// Frames the queue holds at most: the screen takes the newest.
 const QUEUE_MAX: usize = 4;
+/// Points read of a record at most (a deeper record is read from its middle, around the trigger).
+const POINTS_MAX: u32 = 100_000;
 
 /// Starts the thread; its state is the board's `Shared`, as the DHO800/DHO900's thread keeps it.
 pub(super) fn spawn() -> HwShared {
@@ -31,6 +39,17 @@ pub(super) fn spawn() -> HwShared {
     let shared = out.clone();
     std::thread::spawn(move || run(&shared));
     out
+}
+
+/// What the thread measures now: the channel (1 to 4), the hardware's scale in V/div, the sample interval, the
+/// points read and the samples before the trigger in them, the FSM's channel mask.
+struct Now {
+    ch: usize,
+    scale: f64,
+    dt: f64,
+    n: u32,
+    pre: u32,
+    mask: u32,
 }
 
 fn run(out: &HwShared) {
@@ -45,6 +64,15 @@ fn run(out: &HwShared) {
         Ok(s) => s,
         Err(e) => return status(format!("{}: {} (oos-mho-live)", SNAPSHOT, e)),
     };
+    let settings = std::fs::read_to_string(SETTINGS).ok().map(|t| Settings::parse(&t));
+    let settings = match settings {
+        Some(Ok(st)) => Some(st),
+        Some(Err(e)) => {
+            status(format!("{}: {}; the board stays at the snapshot's setting", SETTINGS, e));
+            None
+        }
+        None => None,
+    };
     let mut bar = match Bar1::open_len(acq::WINDOW_USED) {
         Ok(b) => b,
         Err(e) => return status(format!("{}: {} (oos-fpgad mho-start first)", acq::BAR_DEVICE, e)),
@@ -53,19 +81,66 @@ fn run(out: &HwShared) {
         Ok(f) => f,
         Err(e) => return status(format!("{}: {}", acq::C2H_DEVICE, e)),
     };
-    // the whole record: the window from its first point, the trigger in its middle at zero delay
+    let mut afe = settings.as_ref().and_then(|_| GpioAfe::open().ok());
     let depth = s.fpga.get(&snapshot::DEPTH).copied().unwrap_or(4000);
-    let (mut sh, win) = (s.shadows(), s.window(depth));
-    let dt = 10.0 * s.timebase / win.n as f64;
-    let ch = s.channel - 1;
-    status(format!("MHO900: CH{} at {} V/div, {} points of {:.3e} s", s.channel, s.scale_text, win.n, dt));
+    let mut now = Now {
+        ch: s.channel,
+        scale: s.scale,
+        dt: 10.0 * s.timebase / depth as f64,
+        n: depth,
+        pre: depth / 2,
+        mask: s.fsm_mask(),
+    };
+    let mut sh = s.shadows();
+    let mut applied: Option<super::Want> = None;
+    status(format!(
+        "MHO900: CH{} at {} V/div (snapshot){}",
+        now.ch,
+        s.scale_text,
+        if settings.is_some() { "; the keys set the board" } else { "; no settings file: the keys don't" }
+    ));
     let mut buf = DmaBuf::new();
-    let mut seq = 0u64;
+    let (mut seq, mut settle) = (0u64, SETTLE);
     loop {
-        if lock(out).hold {
+        let (hold, want) = {
+            let g = lock(out);
+            (g.hold, g.want.clone())
+        };
+        if hold {
             std::thread::sleep(Duration::from_millis(PERIOD_MS));
             continue;
         }
+        if let (Some(st), Some(w)) = (&settings, want) {
+            if applied.as_ref() != Some(&w) {
+                if let Some(ch) = w.ch {
+                    match st.plan(ch, w.tdiv, w.scale) {
+                        Ok(p) => {
+                            apply(&mut bar, afe.as_mut(), &p);
+                            now = Now {
+                                ch,
+                                scale: p.scale,
+                                dt: 1.0 / p.srate,
+                                n: p.depth.min(POINTS_MAX),
+                                pre: p.pre.min(p.depth),
+                                mask: p.mask,
+                            };
+                            status(format!(
+                                "MHO900: CH{} at {} V/div, {} s/div, {:.3e} Sa/s (recorded settings)",
+                                ch, p.scale, p.tdiv, p.srate
+                            ));
+                            settle = SETTLE;
+                        }
+                        Err(e) => status(format!("MHO900: CH{}: {}", ch, e)),
+                    }
+                }
+                applied = Some(w);
+            }
+        }
+        sh.s4008 = (sh.s4008 & !0xf) | now.mask;
+        let mut win = s.window(now.n);
+        win.n = now.n;
+        win.start = now.pre.saturating_sub(now.n / 2);
+        win.fsm = now.mask;
         let r = snapshot::acquire(&mut bar, &mut sh, &win, DONE_MS, &mut |ms| {
             std::thread::sleep(Duration::from_millis(ms))
         });
@@ -82,10 +157,12 @@ fn run(out: &HwShared) {
             }
         };
         seq += 1;
-        if seq <= SETTLE {
+        if settle > 0 {
+            settle -= 1;
             continue;
         }
-        let mut f = frame(&words, ch, s.scale, dt, win.start, depth);
+        let probe = applied.as_ref().map_or(1.0, |w| w.probe);
+        let mut f = frame(&words, now.ch - 1, now.scale, probe, now.dt, now.pre - win.start);
         f.seq = seq;
         let mut g = lock(out);
         f.stamp = g.stamp;
@@ -101,16 +178,50 @@ fn run(out: &HwShared) {
     }
 }
 
+/// Sets the board to a plan: the ADCs' registers that read otherwise, the FPGA's words, the front end's words and
+/// select lines (the MHO900's channel n on the bus's chip select 4 - n).
+fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan) {
+    let wait = || std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
+    for (n, regs) in p.adc.iter().enumerate() {
+        for (&r, &v) in regs {
+            let read = |bar: &mut Bar1| {
+                for (off, w) in acq::adc_read(n as u32, r as u32).into_iter().flatten() {
+                    bar.wr(off, w);
+                    wait();
+                }
+                let x = bar.rd(acq::ADC_SPI_READ);
+                (x & acq::ADC_SPI_VALID != 0).then_some(x as u16)
+            };
+            if read(bar) != Some(v) {
+                for (off, w) in acq::adc_write(n as u32, r as u32, v).into_iter().flatten() {
+                    bar.wr(off, w);
+                    wait();
+                }
+            }
+        }
+    }
+    for &(a, v) in &p.fpga {
+        bar.wr(a, v);
+    }
+    if let Some(afe) = afe {
+        for &(c, r, d) in &p.afe {
+            afe.write(4 - c, r, d);
+        }
+    }
+    for &(g, v) in &p.select {
+        if let Some(name) = acq::afe::select_name(g) {
+            if let Err(e) = Line::output(&name, v) {
+                eprintln!("oos-ui mho: {}: {}", name, e);
+            }
+        }
+    }
+}
+
 /// A frame of the read-out `words` of channel `ch` (0 to 3) at `scale` V/div: volts as the stock system decodes them
-/// (section 5), the trigger in the record's middle counted from the window's first point.
-fn frame(words: &[u16], ch: usize, scale: f64, dt: f64, start: u32, depth: u32) -> Frame {
-    let v: Vec<f32> = words.iter().map(|&w| acq::volts(w, scale, 0.0) as f32).collect();
-    let mut f = Frame {
-        dt,
-        pre: (depth / 2).saturating_sub(start) as usize,
-        acq: (1.0 / dt, depth as usize),
-        ..Frame::default()
-    };
+/// (section 5) times the probe's ratio, the trigger at sample `pre` of the window.
+fn frame(words: &[u16], ch: usize, scale: f64, probe: f64, dt: f64, pre: u32) -> Frame {
+    let v: Vec<f32> = words.iter().map(|&w| (acq::volts(w, scale, 0.0) * probe) as f32).collect();
+    let mut f = Frame { dt, pre: pre as usize, acq: (1.0 / dt, words.len()), ..Frame::default() };
     f.ch[ch] = v;
     f.basic = std::array::from_fn(|c| BasicStats::of(&f.ch[c]));
     f
@@ -120,16 +231,16 @@ fn frame(words: &[u16], ch: usize, scale: f64, dt: f64, start: u32, depth: u32) 
 mod tests {
     use super::*;
 
-    // Break it catches: the trace on another channel than the snapshot's, volts off by the scale, the trigger point
-    // off the record's middle.
+    // Break it catches: the trace on another channel than the one measured, volts off by the scale or the probe,
+    // the trigger point off.
     #[test]
-    fn a_frame_holds_the_channel_in_volts_with_the_trigger_in_the_middle() {
+    fn a_frame_holds_the_channel_in_volts_at_the_probe_tip() {
         let code = |v: f64| (32768.0 + v / 0.1 * 7500.0) as u16;
         let words: Vec<u16> = (0..10_000).map(|i| code(if i < 5000 { 0.0 } else { 0.3 })).collect();
-        let f = frame(&words, 1, 0.1, 2e-7, 0, 10_000);
+        let f = frame(&words, 1, 0.1, 10.0, 2e-7, 5000);
         assert!(f.ch[0].is_empty() && f.ch[2].is_empty() && f.ch[3].is_empty());
         assert_eq!(f.ch[1].len(), 10_000);
-        assert!((f.ch[1][0] - 0.0).abs() < 1e-4 && (f.ch[1][9999] - 0.3).abs() < 1e-4);
+        assert!((f.ch[1][0] - 0.0).abs() < 1e-3 && (f.ch[1][9999] - 3.0).abs() < 1e-3);
         assert_eq!((f.pre, f.dt, f.acq.1), (5000, 2e-7, 10_000));
     }
 }

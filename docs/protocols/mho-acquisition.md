@@ -490,3 +490,24 @@ changes what is tried without a new build.
 The verdict: the words decoded at the snapshot's scale (section 5) hold a square wave when two levels at least half a
 division apart each hold a tenth of the points or more, within the screen. `oos-mho-live` then shows the frames on the
 screen with oos-ui's live source (`--fpga-live --snapshot FILE`), one acquisition after the other.
+
+## 11. The board set from the unit's recorded settings
+
+**Not yet verified on hardware.** With the unit's recording of `tools/mho-settings.py` on the scope
+(`/oos/mho-settings.txt`), the MHO900's acquisition thread of oos-ui (`oos-ui --hw`, started by `oos-mho-live`) sets
+the board from the screen's keys, one channel at a time: the first channel on, its scale at the BNC and the time base
+go to the nearest recorded step of each (by ratio), and the state is made from two recorded settings
+(`hal/src/mho/settings.rs`):
+
+- the channel's setting at that time base (`CHn tdiv=T`, at 1 V/div): its FPGA words, but for the words of section
+  10 left out, the SCU's mode word (the arm writes it) and the words that hold live values (0x1024, 0x1028, 0x1030,
+  0x1044, 0x1048, 0x1438, 0x40b8, 0x40d0, which read differently from one setting to the next with nothing changed);
+- the scale: the bits its setting (`CHn scale=V`, at 200 us/div) changes against the channel at 1 V/div
+  (`CHn scale=1`), laid over each word by exclusive or;
+- the ADCs' registers of the channel's first time base, written where they read otherwise (their input selection,
+  0x54/0x55, follows the channel; they do not change with the time base: an MHO934's recording, issue #248);
+- the front end: the channel's switch-on set, then the scale's words, and the scale's select lines.
+
+The sample interval is the reciprocal of the sample rate the stock system reported, the trigger at the pre-trigger
+count 0x4050, the points read the record's depth (at most 100 000, around the trigger). The first two acquisitions
+after a change are dropped while the board settles. Frames are volts at the probe tip (the screen's probe ratio).

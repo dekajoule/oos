@@ -14,8 +14,19 @@ pub mod bus {
     pub use crate::dho::bus::Bar1;
     pub use crate::dho::bus::{read_dma, Bus, DmaBuf};
 }
+/// The front ends' bus: the bit-banged bus of the DHO800/DHO900 on the same pins, with the stock timing
+/// (protocols/mho-acquisition.md section 8); the MHO900's channel n is on chip select 4 - n.
+pub mod afe_bus {
+    pub use crate::dho::afe::AfeBus;
+    #[cfg(target_os = "linux")]
+    pub use crate::dho::afe::GpioAfe;
+    /// the select lines are GPIO lines of their own, set by name
+    #[cfg(target_os = "linux")]
+    pub use crate::dho::gpio::Line;
+}
 pub mod board;
 pub mod bringup;
 pub mod recipe;
+pub mod settings;
 pub mod snapshot;
 pub mod target;
