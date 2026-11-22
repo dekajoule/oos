@@ -201,7 +201,8 @@ fn run(rx: std::sync::mpsc::Receiver<Ctl>, only: Option<Vec<String>>) {
     use std::sync::mpsc::TryRecvError;
     let t0 = std::time::Instant::now();
     let now = || t0.elapsed().as_secs_f64();
-    let seed = (crate::clock::unix_now() * 1e9) as u64 ^ std::process::id() as u64;
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64)
+        ^ std::process::id() as u64;
     let mut r = Responder::new(seed);
     let mut sock: Option<net::Net> = None;
     let mut ifs: Vec<Iface> = Vec::new();
