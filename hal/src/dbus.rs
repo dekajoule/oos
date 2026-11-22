@@ -560,7 +560,7 @@ impl Conn {
             &std::fs::metadata("/proc/self").map_err(|e| format!("/proc/self: {}", e))?,
         )
         .to_string();
-        let hex: String = uid.bytes().map(|b| format!("{:02x}", b)).collect();
+        let hex = crate::update::hash::hex(uid.as_bytes());
         c.s.write_all(format!("\0AUTH EXTERNAL {}\r\n", hex).as_bytes()).map_err(|e| e.to_string())?;
         let mut line = Vec::new();
         let mut one = [0u8; 1];
@@ -666,6 +666,15 @@ impl Conn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The user id of SASL EXTERNAL goes out as `hash::hex` writes it, two lower-case digits a byte, as before.
+    #[test]
+    fn the_auth_id_is_hex_as_before() {
+        let all: Vec<u8> = (0..=255).collect();
+        for b in [&b"0"[..], b"1000", b"4294967295", &all] {
+            assert_eq!(crate::update::hash::hex(b), b.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+        }
+    }
 
     #[test]
     fn a_call_encodes_as_the_specification_says() {
