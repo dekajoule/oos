@@ -41,6 +41,8 @@ impl Ui {
             Item::ChScale(c) | Item::ChOffset(c) if c < NCH => Some(m.unit(c)),
             Item::HScale | Item::HDelay => Some("s"),
             Item::TrigLevel if m.trig_src < NCH => Some(m.unit(m.trig_src)),
+            // any amplitude of the sweep, not only the knob's 1-2-5 steps (#52)
+            Item::BodeAmp => Some("Vpp"),
             _ => None,
         }
     }
@@ -99,6 +101,14 @@ impl Ui {
 
     /// Sets row `it` to `v` (in its unit), as SCPI would.
     fn numpad_set(&mut self, it: Item, v: f64) {
+        // the amplitude is kept as f64, not rounded to f32 as the rows below, in the range of the knob's steps
+        if it == Item::BodeAmp {
+            if !(0.01..=20.0).contains(&v) {
+                return self.toast("The amplitude must be 10 mVpp to 20 Vpp");
+            }
+            self.m.bode_amp = v;
+            return self.settings_changed();
+        }
         let m = &mut self.m;
         let v = v as f32;
         match it {
