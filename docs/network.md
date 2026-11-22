@@ -258,7 +258,8 @@ tz = UTC0                     # or dhcp (section 3)
 tz.fallback = UTC0            # with tz = dhcp, while no lease names a valid zone; written when not UTC0
 eth.retry_10m = on
 net.show_addr = off           # System > Network > Show address: the LAN and WLAN boxes show the address
-                              # (off by default: they say "connected"; pictures of the screen are passed on)
+                              # (off by default: they say "connected", or "-" without a link, and are only as
+                              # wide as that; pictures of the screen are passed on)
 remote.web = on
 remote.scpi = on
 remote.vxi11 = on

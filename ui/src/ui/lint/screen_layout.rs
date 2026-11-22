@@ -196,44 +196,68 @@ fn screen_in_order_on(scr: Screen) {
         // the state their `shown` reads, so a box that is not set up here fails the count below
         let sticks: [fn(&mut Ui, bool); 3] =
             [|u, on| u.net.wlan_stick = on, |u, on| u.bt.stick = on, |u, on| u.stick.mounted = on];
-        for k in 0..1usize << sticks.len() {
-            for (i, set) in sticks.iter().enumerate() {
-                set(&mut u, k & 1 << i != 0);
+        // the boxes of two lines are as wide as what they show: a dash without a link, "connected" with the address
+        // hidden, the longest address while System > Network > Show address is on; every mix in each of the three
+        let link = |u: &mut Ui, addr: Option<&str>, shown: bool| {
+            let a = addr.map(String::from);
+            u.net.ifs =
+                a.iter().flat_map(|a| [("eth0".into(), a.clone()), (oos_hal::wlan::IFACE.into(), a.clone())]).collect();
+            u.net.eth_link = addr.is_some();
+            u.sys.show_addr = shown;
+        };
+        for (addr, shown) in [(None, false), (Some("255.255.255.255"), false), (Some("255.255.255.255"), true)] {
+            link(&mut u, addr, shown);
+            for k in 0..1usize << sticks.len() {
+                for (i, set) in sticks.iter().enumerate() {
+                    set(&mut u, k & 1 << i != 0);
+                }
+                let pill = u.run_pill();
+                assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
+                let boxes: Vec<Rect> = u.status_boxes().into_iter().map(|(_, r)| r).collect();
+                assert_eq!(boxes.len(), 1 + k.count_ones() as usize, "a status box without its switch in this lint");
+                for (i, b) in boxes.iter().enumerate() {
+                    assert!(
+                        b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6,
+                        "{:?}: {:?}",
+                        ts,
+                        b
+                    );
+                    assert!(!boxes[i + 1..].iter().any(|o| overlaps(*o, *b)), "{:?}: {:?}", ts, b);
+                }
+                for (_, l, r) in u.top_buttons() {
+                    assert!(r.x > pill.x + pill.w && r.x + r.w <= u.top_right(), "{:?}: {} {:?}", ts, l, r);
+                    assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
+                }
             }
-            let pill = u.run_pill();
-            assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
-            let boxes: Vec<Rect> = u.status_boxes().into_iter().map(|(_, r)| r).collect();
-            assert_eq!(boxes.len(), 1 + k.count_ones() as usize, "a status box without its switch in this lint");
-            for (i, b) in boxes.iter().enumerate() {
+            // every status box of two lines has room for both its lines: for the address while it is shown (issue #23),
+            // for the dash or the state while it is not
+            for set in sticks {
+                set(&mut u, true);
+            }
+            let second = match (addr, shown) {
+                (Some(a), true) => a,
+                (Some(_), false) => "connected",
+                (None, _) => "-",
+            };
+            for (b, r) in u.status_boxes().into_iter().filter(|(b, _)| !b.chip) {
+                let first = if b.label == "LAN" { u.lan_box_lines().0 } else { u.wlan_box_lines().0 };
+                assert_eq!(u.link_line(u.addr_of("eth0")), second, "{:?}", ts);
                 assert!(
-                    b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6,
-                    "{:?}: {:?}",
+                    20 + f.sb.width(second) <= r.w && 20 + f.s.width(first) <= r.w,
+                    "{:?}: {} box too narrow for '{}' / '{}'",
                     ts,
-                    b
+                    b.label,
+                    first,
+                    second
                 );
-                assert!(!boxes[i + 1..].iter().any(|o| overlaps(*o, *b)), "{:?}: {:?}", ts, b);
             }
-            for (_, l, r) in u.top_buttons() {
-                assert!(r.x > pill.x + pill.w && r.x + r.w <= u.top_right(), "{:?}: {} {:?}", ts, l, r);
-                assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
+            for set in sticks {
+                set(&mut u, false);
             }
         }
-        for set in sticks {
-            set(&mut u, false);
-        }
-        // the two lines of the network box: room for an address, the first line's descent above the second's capitals;
-        // every status box of two lines has the room for an address too (issue #23)
+        link(&mut u, None, false);
+        // the two lines of the network box: the first line's descent above the second's capitals
         let n = u.net_box();
-        assert!(20 + f.sb.width("255.255.255.255") <= n.w && 20 + f.sb.width("not connected") <= n.w, "{:?}", ts);
-        for set in sticks {
-            set(&mut u, true);
-        }
-        for (b, r) in u.status_boxes().into_iter().filter(|(b, _)| !b.chip) {
-            assert!(20 + f.sb.width("255.255.255.255") <= r.w, "{:?}: {} box too narrow for an address", ts, b.label);
-        }
-        for set in sticks {
-            set(&mut u, false);
-        }
         assert!(n.y + 5 + cap(&f.s) + f.s.descent <= n.y + n.h - 4 - cap(&f.sb), "{:?}: {:?}", ts, n);
         // a strip row holds its text
         let bh = u.lay().strip_row - 2;
