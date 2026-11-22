@@ -160,31 +160,44 @@ impl Ui {
         cv.text(&self.fonts().sb, r.x + 16, r.y + 20, name, TEXT);
     }
 
-    /// A box of the top bar with a state dot and two lines.
+    /// A box of the top bar with a state dot and two lines; one line, its name beside the green dot, while it has an
+    /// address that is not shown.
     fn draw_link(&self, cv: &mut Canvas, r: Rect, l1: &str, addr: Option<&str>) {
         let f = self.fonts();
+        let line = self.link_line(addr);
+        if line.is_empty() {
+            let y = r.y + r.h / 2;
+            cv.circle(r.x + 11, y, 3, GREEN);
+            cv.text(&f.sb, r.x + 20, y + f.sb.size * 36 / 100, l1, TEXT);
+            return;
+        }
         // first line under the top edge, the second on the bottom edge
         let (cap, y1) = (f.s.size * 72 / 100, r.y + 5 + f.s.size * 72 / 100);
         cv.circle(r.x + 11, y1 - cap / 2 + 1, 3, if addr.is_some() { GREEN } else { DIM });
         cv.text(&f.s, r.x + 20, y1, l1, DIM);
-        cv.text(&f.sb, r.x + 20, r.y + r.h - 4, self.link_line(addr), TEXT);
+        cv.text(&f.sb, r.x + 20, r.y + r.h - 4, line, TEXT);
     }
 
     /// The second line of a link box: the address only where System > Network > Show address is on, since
-    /// pictures and photos of the screen are passed on; else whether the link has one, a dash where it has none.
+    /// pictures and photos of the screen are passed on; else none while the link has one (the green dot says it), a
+    /// dash where it has none.
     pub(super) fn link_line<'a>(&self, addr: Option<&'a str>) -> &'a str {
         match addr {
             Some(a) if self.sys.show_addr => a,
-            Some(_) => "connected",
+            Some(_) => "",
             None => "-",
         }
     }
 
-    /// The width of a link box: as wide as its two lines, so it is narrow without an address shown and as wide as an
+    /// The width of a link box: as wide as its lines, so it is narrow without an address shown and as wide as an
     /// address only while one is (ADR 0063).
     pub(super) fn link_width(&self, l1: &str, addr: Option<&str>) -> i32 {
         let f = self.fonts();
-        20 + f.s.width(l1).max(f.sb.width(self.link_line(addr))) + 8
+        let line = self.link_line(addr);
+        if line.is_empty() {
+            return 20 + f.sb.width(l1) + 8;
+        }
+        20 + f.s.width(l1).max(f.sb.width(line)) + 8
     }
 
     /// The two lines of the LAN box: how the address came, and the address; an address without a cable is only the
@@ -822,7 +835,7 @@ mod tests {
         ui.net.eth_link = true;
         let addr = ui.addr_of("eth0");
         assert!(!ui.sys.show_addr);
-        assert_eq!(ui.link_line(addr), "connected", "no address by default");
+        assert_eq!(ui.link_line(addr), "", "no address and no word by default: the green dot says it");
         let hidden = ui.net_box().w;
         assert!(ui.network_items().contains(&Item::NetShowAddr));
         ui.select_option(Item::NetShowAddr, "On");
