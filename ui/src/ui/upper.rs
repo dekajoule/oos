@@ -8,6 +8,7 @@
 //! are settings of the scope in `/oos/system.conf` (`mem.upper`, `mem.upper.found`), off by default (ADR 0010). System
 //! info shows them ("Optional memory").
 
+use super::menu_text::on_off;
 use super::*;
 use crate::board::{board, Board};
 
@@ -38,7 +39,7 @@ impl Ui {
     }
 
     pub(super) fn upper_value(&self, it: Item) -> Option<String> {
-        (it == Item::UpperUse).then(|| if self.upper_shown_on() { "On" } else { "Off" }.to_string())
+        (it == Item::UpperUse).then(|| on_off(self.upper_shown_on()))
     }
 
     pub(super) fn upper_options(&self, it: Item) -> Option<Vec<String>> {

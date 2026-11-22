@@ -299,7 +299,7 @@ fn persist_index(arg: &str) -> Option<usize> {
     if crate::words::kw(a, "INFinite") {
         return Some(PERSIST.len() - 1);
     }
-    let v = a.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0)?;
+    let v = crate::words::num64(a).filter(|v| *v >= 0.0)?;
     // the f32 seconds of PERSIST in f64 as written (whole milliseconds), so a time half-way picks as before
     let times: Vec<f64> = PERSIST.iter().filter(|p| p.1 >= 0.0).map(|p| (p.1 as f64 * 1e3).round() / 1e3).collect();
     Some(crate::words::nearest_index(&times, v))
