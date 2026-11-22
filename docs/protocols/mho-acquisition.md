@@ -254,6 +254,22 @@ Each step lists the front-end registers that changed. It needs the event in the
 kernel (4.4 has it when tracing is built in; the stock kernel mounts tracefs) and adb root. The report is
 `mho-afe-<model>-<date>.txt`; it ends with the front-end registers per step as a table and the raw events.
 
+`tools/mho-check.py <scope-ip> --snapshot` takes one setting of the stock system whole, for the first acquisition
+under OOS. It switches each channel that is off on and off again: the first switch-on since power-on sends the
+channel's whole set of front-end words (53 frames seen, section 8), which it records with the trace event of `--afe`.
+The first channel that got its whole set is the snapshot's channel: the owner connects the probe compensation output
+to it, and the tool steps it through every scale (28 frames each), then sets it to 1 V/div (0.1 V/div when the signal
+is under 1 V peak to peak, behind a 10:1 probe), 1 MOhm, DC, 200 us/div, edge trigger at the signal's mean, and lets
+the stock system acquire. Then it reads the select lines, the FPGA's configuration registers (the offsets of section
+3 the stock system uses in the SPU, TPU and SCU blocks, the JESD204 receiver, the PWM words and 0x30000; not the DNA),
+the 128 registers of each ADC through the bridge of section 4, twice (a register counts when both reads are valid and
+equal), and the stock system's measurements and trace of the signal as a reference. Everything is set back. The
+report `mho-snapshot-<model>-<date>.txt` ends with a part for OOS, after the line `---- oos snapshot ----`:
+`key value` lines (`format 1`, `model`, `hwcode`, `channel`, `scale`, `timebase`, `trigger-level`), `afe STEP REG
+DATA` in the order the stock system sent them (`on` the whole set, `base`, `scale=V` per scale), `select LINE LEVEL`,
+`fpga OFFSET VALUE` and `adc N REG DATA`, all hex, then `end`. The values in it are the unit's own (section 8); OOS
+reads them from the file on the unit and ships none (ADR 0013).
+
 ## 8. Seen on units (stock system 00.01.00, hardware code 3)
 
 From `mho-check.py` on an MHO954 (twice) and an MHO98 and `--map` on an MHO98 and the MHO954 (issue #4),

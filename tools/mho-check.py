@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check on an MHO900 under its stock system what OOS assumes about its acquisition board.
 
-  mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes] [--map | --afe | --panel] [--fifty]
+  mho-check.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--no-scpi] [--yes]
+               [--map | --afe | --panel | --snapshot] [--fifty]
 
 Every assumption of docs/protocols/mho-acquisition.md that can be seen without writing to the hardware is checked, and
 the result is written to mho-check-<model>-<date>.txt in the current directory, to attach to the GitHub issue.
@@ -12,9 +13,9 @@ What it does on the scope:
 - over adb (network adb on, as for tools/platform-probe.sh; adbd is restarted as root as that tool does) it reads
   files under /sys, /proc and /rigol, lists devices and modules, and reads FPGA registers with the stock tool
   /rigol/tools/pcie2dev. That tool reads one register when it is given exactly one address and writes when it is
-  given two; this script only ever gives it one address, from the fixed list below, and only addresses the stock
-  system itself uses (a read of an address the FPGA does not decode could stop the processor). Nothing is written to
-  a file, a partition or a register.
+  given two; this script gives it one address, from the fixed lists below, and only addresses the stock system itself
+  uses (a read of an address the FPGA does not decode could stop the processor). Nothing is written to a file, a
+  partition or a register, but by --snapshot: read transfers to the ADC bridge (below).
 - over SCPI (port 5555) it changes the scope's settings the way a user would at the front panel (channels on and
   off, time base, memory depth, waveform format, the mask test on and off, Run/Stop) and reads back registers after
   each change. The settings it changes are read first, set back at the end and read again (R16 says whether every one
@@ -39,6 +40,16 @@ while the owner presses each key and turns each knob and types its name on the P
 mho-panel-<model>-<date>.txt with the frames decoded (docs/protocols/frontpanel.md). The scope reacts slower while it
 records. Without strace it records only the ports' byte counters.
 
+With --snapshot it takes one setting of the stock system whole, for the first acquisition under OOS. It switches the
+channels that are off on (the first switch-on since power-on sends a channel's whole set of front-end words) and off
+again, records with the trace event of --afe the words of the first such channel and of every scale of it, then lets
+the stock system acquire the probe compensation signal on that channel (1 V/div, or 0.1 V/div behind a 10:1 probe,
+200 us/div) and reads the FPGA's configuration registers (pcie2dev, one address each, as above), the 128 registers of
+each ADC (read transfers through the FPGA's ADC bridge: pcie2dev writes the two words of a read transfer to 0x3000,
+the only register this script writes, then reads 0x3004; twice, compared), and the stock system's trace and
+measurements of the signal. Then it sets everything back. It writes mho-snapshot-<model>-<date>.txt; its last part is
+what OOS reads on the scope to start the acquisition board as the stock system had it.
+
 What it does not collect: the serial number (left out of *IDN?), the FPGA DNA, MAC addresses, calibration or licence
 files, the content of the clock tables (only their line count and format).
 """
@@ -50,7 +61,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "7"
+VERSION = "8"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -1217,6 +1228,277 @@ def afe_main(a, adb):
     return 0
 
 
+# ---- --snapshot: one setting of the stock system, whole, for the first acquisition under OOS ----
+
+# The format of the machine-readable part (the lines after SNAPSHOT_MARK), which oos-fpgad reads on the scope.
+SNAPSHOT_FORMAT = 1
+SNAPSHOT_MARK = "---- oos snapshot ----"
+# The configuration registers read at the snapshot: the offsets the stock system itself writes or reads in the SPU, TPU
+# and SCU blocks, the JESD204 receiver, the PWM outputs and the multi-channel sync (docs/protocols/mho-acquisition.md,
+# section 3). Not the FPGA DNA (0x4044, 0x4048): it would identify the unit.
+SNAPSHOT_REGS = sorted(
+    [0x1000, 0x1004, 0x1008, 0x1010, 0x1014, 0x1018, 0x101c, 0x1020, 0x1024, 0x1028, 0x102c, 0x1030, 0x1040, 0x1044,
+     0x1048, 0x1058, 0x105c, 0x1080, 0x1084, 0x1098, 0x109c, 0x10a0, 0x10b0, 0x10b4, 0x10d0, 0x10d4, 0x10d8, 0x10dc,
+     0x10e0, 0x10e4, 0x1100, 0x1104, 0x1108, 0x110c, 0x1110, 0x1114, 0x1118, 0x111c, 0x1120, 0x1124, 0x1128, 0x112c,
+     0x1130, 0x1134, 0x1138, 0x1140, 0x1144, 0x1148, 0x1154, 0x1158, 0x115c, 0x1160, 0x1164, 0x1168, 0x1170, 0x1174,
+     0x11d0, 0x11d8, 0x11dc, 0x11e8, 0x11ec, 0x11f0, 0x11f4, 0x11fc, 0x1204, 0x1208, 0x120c, 0x1210, 0x1280, 0x128c,
+     0x1290, 0x1294, 0x1298, 0x129c, 0x12a4, 0x12a8, 0x12ac, 0x12b0, 0x12b4, 0x12b8, 0x12bc, 0x12c0, 0x12c4, 0x12cc,
+     0x12d4, 0x12dc, 0x12e4, 0x131c, 0x1328]
+    + list(range(0x1408, 0x1434, 4)) + [0x1438] + list(range(0x1440, 0x1458, 4))
+    + [0x1470, 0x1474, 0x147c, 0x1484, 0x148c, 0x1494, 0x1498, 0x14a0, 0x14a4, 0x14ac, 0x14b4, 0x14c8, 0x14d0, 0x14d4,
+       0x14dc, 0x14e0, 0x14e8, 0x14ec, 0x14f4]
+    + list(range(0x14f8, 0x151c, 4)) + list(range(0x155c, 0x1578, 4))
+    + list(range(0x2004, 0x2078, 4)) + [0x2080, 0x2084, 0x2088, 0x208c, 0x20b8, 0x20bc, 0x20c0, 0x20c4]
+    + list(range(0x2100, 0x21c0, 4)) + [0x21cc, 0x221c, 0x2264, 0x226c, 0x2270, 0x2274]
+    + [0x4004, 0x4008, 0x400c, 0x4010, 0x4014, 0x4018, 0x401c, 0x4020, 0x4030, 0x4034, 0x404c, 0x4050, 0x4054,
+       0x4058, 0x4060, 0x4064, 0x4068, 0x406c, 0x4080, 0x40b0, 0x40b4, 0x40b8, 0x40c0, 0x40c4, 0x40d0, 0x4100, 0x4104]
+    + [0x10100, 0x10108, 0x10120]
+    + list(range(0x20004, 0x2001c, 4)) + list(range(0x20020, 0x20030, 4)) + [0x2003c]
+    + list(range(0x20400, 0x20410, 4)) + list(range(0x2080c, 0x2081c, 4)) + [0x30000])
+# The ADC registers read through the bridge: every address its 7-bit field can hold.
+SNAPSHOT_ADC_REGS = range(0x80)
+# A channel's first switch-on since power-on sends its whole set to the front end (53 frames seen); a scale change 28.
+FULL_SET_MIN = 40
+ADC_BRIDGE, ADC_BRIDGE_READ = 0x3000, 0x3004
+
+
+def adc_read_words(adc, addr):
+    """The two words of a read transfer of ADC `adc` register `addr` through the bridge: the ADC select in bit 24 or 25,
+    the address in bits 22:16, the read bit 23, the strobe bit 26 in the first word only (as hal::mho::acq::adc_read)."""
+    if adc not in (0, 1) or not isinstance(addr, int) or not 0 <= addr < 0x80:
+        raise ValueError(f"no ADC register: ADC {adc!r} address {addr!r}")
+    w = (1 << 24 if adc == 0 else 1 << 25) | addr << 16 | 1 << 23
+    return w | 1 << 26, w
+
+
+def remote_adc_read_command(adc, addrs):
+    """The shell line that reads ADC registers `addrs` on the scope: for each, pcie2dev writes the two words of a read
+    transfer to the bridge (the only register this script ever writes, and only read transfers), then reads the
+    answer in 0x3004."""
+    parts = []
+    for r in addrs:
+        first, second = adc_read_words(adc, r)
+        parts.append(f"{PCIE2DEV} 0x{ADC_BRIDGE:x} 0x{first:x} >/dev/null; "
+                     f"{PCIE2DEV} 0x{ADC_BRIDGE:x} 0x{second:x} >/dev/null; {PCIE2DEV} 0x{ADC_BRIDGE_READ:x}")
+    return "; ".join(parts)
+
+
+# Registers per shell line: an older adbd takes a command of a few kilobytes only.
+SHELL_CHUNK = 16
+
+
+def adc_pass(adb, n):
+    """One read of every ADC register of ADC n, in order, in shell lines of SHELL_CHUNK registers."""
+    regs = list(SNAPSHOT_ADC_REGS)
+    out = []
+    for i in range(0, len(regs), SHELL_CHUNK):
+        out += parse_bridge_reads(adb.sh(remote_adc_read_command(n, regs[i:i + SHELL_CHUNK]), timeout=120))
+    return out
+
+
+def parse_bridge_reads(text):
+    """The words read from 0x3004, in order."""
+    return [int(v, 16) for a, v in READ_RE.findall(text) if int(a, 0) == ADC_BRIDGE_READ]
+
+
+def adc_values(first, second):
+    """{address: data} of the reads that were valid (bit 16) and the same both times, and the addresses that were not."""
+    good, bad = {}, []
+    for r, (x, y) in enumerate(zip(first, second)):
+        if x == y and x & (1 << 16):
+            good[r] = x & 0xFFFF
+        else:
+            bad.append(r)
+    return good, bad
+
+
+def ascii_samples(text):
+    """The values of an ASCii :WAVeform:DATA? answer (after its #N header)."""
+    m = re.match(r"#(\d)", text)
+    body = text[2 + int(m.group(1)):] if m else text
+    out = []
+    for f in body.split(","):
+        try:
+            out.append(float(f))
+        except ValueError:
+            pass
+    return out
+
+
+def snapshot_restore_list():
+    """--afe's list with 50 ohm, each channel's probe ratio before its scale, and the waveform settings."""
+    out = []
+    for c in map_restore_list(fifty=True):
+        out.append(c)
+        if isinstance(c, tuple) and c[0].endswith(":DISPlay"):
+            out.append(c[0].replace(":DISPlay", ":PROBe"))
+    return out + [":WAVeform:SOURce", ":WAVeform:MODE", ":WAVeform:FORMat"]
+
+
+def snapshot_lines(meta, afe, select, regs, adc):
+    """The machine-readable part: `key value` lines, `afe STEP REG DATA` in the order the stock system sent them,
+    `select LINE LEVEL`, `fpga OFFSET VALUE`, `adc N REG DATA` (hex)."""
+    out = [SNAPSHOT_MARK, f"format {SNAPSHOT_FORMAT}"] + [f"{k} {v}" for k, v in meta]
+    out += [f"afe {step} 0x{r:02x} 0x{d:04x}" for step, frames in afe for r, d in frames]
+    out += [f"select {name} {v}" for name, v in select]
+    out += [f"fpga 0x{a:x} 0x{v:08x}" for a, v in sorted(regs.items())]
+    out += [f"adc {n} 0x{r:02x} 0x{d:04x}" for n, vals in adc for r, d in sorted(vals.items())]
+    return out + ["end"]
+
+
+def snapshot_main(a, adb):
+    if not adb.is_root():
+        return "--snapshot needs adb root (the kernel's trace event); nothing done"
+    tracer = Tracer(adb)
+    why = tracer.available()
+    if why:
+        return f"--snapshot: {why}; nothing done"
+    if not a.yes:
+        ans = input("--snapshot takes one setting of the stock system whole: it switches the channels that are off on "
+                    "and off again, steps one channel through every scale, lets the stock system acquire the probe "
+                    "compensation signal, records the front ends' words (kernel trace event), reads the FPGA's "
+                    "registers and the ADCs' registers (read transfers through the FPGA's ADC bridge), and sets "
+                    "everything back (about 3 minutes). It works best right after a power-on. Go on? [y/N] ")
+        if ans.strip().lower() not in ("y", "yes", "j", "ja"):
+            return "declined; nothing done"
+    scpi = Scpi(a.host, a.scpi_port)
+    idn = idn_without_serial(scpi.query("*IDN?"))
+    code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
+    model = (idn.split(",")[1].strip() if idn.count(",") >= 3 else "MHO900").replace(" ", "")
+    out = [f"mho-check {VERSION} --snapshot (OOS tools/mho-check.py), {datetime.datetime.now():%Y-%m-%d %H:%M}",
+           f"instrument: {idn}", f"hardware code: {code}", f"kernel: {adb.sh('uname -r').strip()}"]
+    on = {n: scpi.query(f":CHANnel{n}:DISPlay?").strip().upper() in ("1", "ON") for n in range(1, 5)}
+    out.append("channels on at the start: " + (", ".join(f"CH{n}" for n in on if on[n]) or "none"))
+    cmds = snapshot_restore_list()
+    keep = {c + "?": scpi.query(c + "?") for c in query_list(cmds) + [":TRIGger:STATus"]}
+    out.append("settings before: " + "; ".join(f"{k} {v}" for k, v in keep.items()))
+    levels = {}
+    for g, line in gpio_lines(adb.sh("cat /sys/kernel/debug/gpio")).items():
+        if g in traced_lines():
+            levels[g] = 1 if line.split()[-1] == "hi" else 0
+    rep = Report()
+    afe, select, regs, adc, meta = [], [], {}, [], [("model", model), ("hwcode", code)]
+    ch = None
+
+    def traced(label, commands, n):
+        """Runs `commands` with the trace on; the frames of channel n's front end, in order, logged under `label`."""
+        def act():
+            for c in commands:
+                scpi.write(c)
+        ev = parse_trace(tracer.record(act))
+        err = scpi.errors()
+        frames = [reg for t, cs, bits, rise, fall, miso in decode_bus(ev, AFE_BUS, levels)
+                  for reg in [afe_register(cs, bits, rise)] if reg]
+        for _, g, op, v in ev:
+            if op == "set":
+                levels[g] = v
+        own = [(r, d) for c, r, d in frames if c == f"CH{n}"]
+        out.extend(["", f"## {label}", "commands: " + "; ".join(commands), f"events: {len(ev)}, frames of CH{n}: "
+                    f"{len(own)}, of other channels: {len(frames) - len(own)}"]
+                   + (["SCPI errors: " + "; ".join(err)] if err else [])
+                   + [f"{c} reg 0x{r:02x} = 0x{d:04x}" for c, r, d in frames])
+        return own
+
+    try:
+        tracer.start()
+        try:
+            full = {}
+            print("channels switched on (their whole front-end set):")
+            for n in (n for n in range(1, 5) if not on[n]):
+                own = traced(f"CH{n} on", [f":CHANnel{n}:DISPlay ON"], n)
+                print(f"  CH{n}: {len(own)} front-end frames")
+                if len(own) >= FULL_SET_MIN:
+                    full[n] = own
+                scpi.write(f":CHANnel{n}:DISPlay OFF")
+            if not full:
+                out += ["", "NO WHOLE SET: no channel that was off got its whole front-end set when switched on. Power "
+                        "the scope off and on with at least one channel off, and run --snapshot again first thing."]
+                print("no channel got its whole front-end set: power the scope off and on with one channel off, then "
+                      "run --snapshot again first thing")
+            else:
+                ch = min(full)
+                afe.append(("on", full[ch]))
+                if not a.yes:
+                    input(f"Connect the probe compensation output (the 1 kHz square wave) to CH{ch}, with a probe at "
+                          "either ratio or a cable, then press Enter: ")
+                others = [f":CHANnel{n}:DISPlay OFF" for n in range(1, 5) if n != ch]
+                base = [f":CHANnel{ch}:DISPlay ON", f":CHANnel{ch}:PROBe 1", f":CHANnel{ch}:IMPedance OMEG",
+                        f":CHANnel{ch}:COUPling DC", f":CHANnel{ch}:BWLimit OFF", f":CHANnel{ch}:SCALe 1",
+                        f":CHANnel{ch}:OFFSet 0", ":TIMebase:MAIN:SCALe 2e-4", ":TRIGger:MODE EDGE",
+                        f":TRIGger:EDGE:SOURce CHANnel{ch}", ":TRIGger:EDGE:LEVel 0", ":RUN"]
+                afe.append(("base", traced(f"CH{ch} base", others + base, ch)))
+                print(f"CH{ch}: every scale")
+                for v in SCALES:
+                    afe.append((f"scale={v}", traced(f"CH{ch} {v} V/div", [f":CHANnel{ch}:SCALe {v}"], ch)))
+                # the scale that shows the signal: 1 V/div for about 3 V (cable or 1:1), 0.1 V/div behind a 10:1 probe
+                traced(f"CH{ch} 1 V/div again", [f":CHANnel{ch}:SCALe 1"], ch)
+                time.sleep(1)
+                vpp = to_float(scpi.query(f":MEASure:ITEM? VPP,CHANnel{ch}"))
+                final = "0.1" if vpp is not None and vpp < 1 else "1"
+                if final != "1":
+                    traced(f"CH{ch} {final} V/div, the snapshot's setting", [f":CHANnel{ch}:SCALe {final}"], ch)
+                avg = to_float(scpi.query(f":MEASure:ITEM? VAVG,CHANnel{ch}"))
+                level = f"{avg:.3g}" if avg is not None and abs(avg) < 4 * float(final) else "0"
+                scpi.write(f":TRIGger:EDGE:LEVel {level}")
+                time.sleep(2)
+                meta += [("channel", ch), ("scale", final), ("timebase", "2e-4"), ("trigger-level", level)]
+        finally:
+            left = tracer.stop()
+            out.append("trace settings: " + ("as before" if not left else "NOT ALL SET BACK: " + "; ".join(left)))
+        if ch:
+            print("registers, ADCs and the stock trace:")
+            for g, line in sorted(gpio_lines(adb.sh("cat /sys/kernel/debug/gpio")).items()):
+                if g in SELECT_LINES:
+                    select.append((SELECT_LINES[g].replace(" ", ""), 1 if line.split()[-1] == "hi" else 0))
+            for i in range(0, len(SNAPSHOT_REGS), SHELL_CHUNK * 4):
+                regs.update(adb.regs(SNAPSHOT_REGS[i:i + SHELL_CHUNK * 4]))
+            out += ["", f"## FPGA registers: {len(regs)} of {len(SNAPSHOT_REGS)} read"]
+            for n in (0, 1):
+                first, second = adc_pass(adb, n), adc_pass(adb, n)
+                good, bad = adc_values(first, second)
+                adc.append((n, good))
+                out.append(f"ADC {n}: {len(good)} of {len(SNAPSHOT_ADC_REGS)} registers read the same twice and valid"
+                           + (f"; not: {' '.join(f'{r:02x}' for r in bad)}" if bad else ""))
+                print(f"  ADC {n}: {len(good)} registers")
+            ref = stock_reference(scpi, ch)
+            out += ["", "## the stock system's trace of the signal (reference)"] + ref
+    finally:
+        restore(scpi, rep, keep, cmds)
+        out += ["", "## set back"] + [f"{s} {k} {t}: {d}" for k, t, s, d in rep.results]
+    if ch:
+        out += ["", "The part below is for OOS (oos-fpgad reads it on the scope); please leave it as it is.",
+                *snapshot_lines(meta, afe, select, regs, adc)]
+    name = f"mho-snapshot-{model}-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
+    with open(name, "w") as f:
+        f.write("\n".join(out) + "\n")
+    print(f"written: {name} - please attach it to the GitHub issue")
+    return 0 if ch else 1
+
+
+def to_float(s):
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        return None
+    return v if abs(v) < 1e30 else None
+
+
+def stock_reference(scpi, ch):
+    """What the stock system shows of the signal: two measurements and its screen trace, as a short list."""
+    out = [f"{m}: {scpi.query(f':MEASure:ITEM? {m},CHANnel{ch}')}" for m in ("VPP", "VAVG", "FREQuency")]
+    scpi.write(f":WAVeform:SOURce CHANnel{ch}")
+    scpi.write(":WAVeform:MODE NORMal")
+    scpi.write(":WAVeform:FORMat ASCii")
+    out.append("preamble: " + scpi.query(":WAVeform:PREamble?"))
+    v = ascii_samples(scpi.query(":WAVeform:DATA?"))
+    if v:
+        out.append(f"{len(v)} points, min {min(v):.4g} V, max {max(v):.4g} V; every {max(1, len(v) // 50)}th:")
+        out.append(" ".join(f"{x:.3g}" for x in v[::max(1, len(v) // 50)]))
+    else:
+        out.append("no trace data")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("host")
@@ -1233,6 +1515,10 @@ def main():
     ap.add_argument("--panel", action="store_true",
                     help="instead of the checks: record the stock system's front-panel traffic while you press each "
                          "key and type its name (follows the stock program with strace; changes nothing)")
+    ap.add_argument("--snapshot", action="store_true",
+                    help="instead of the checks: take one setting of the stock system whole (front-end words, FPGA and "
+                         "ADC registers) for the first acquisition under OOS; the probe compensation signal on the "
+                         "channel it names (about 3 minutes; best right after a power-on)")
     ap.add_argument("--fifty", action="store_true",
                     help="with --map or --afe: each channel at 50 ohm too (the inputs must be unconnected)")
     a = ap.parse_args()
@@ -1249,6 +1535,8 @@ def main():
     if "pcie2dev" not in adb.sh(f"ls {PCIE2DEV}"):
         sys.exit(f"{PCIE2DEV} is missing; nothing done")
 
+    if a.snapshot:
+        sys.exit(snapshot_main(a, adb))
     if a.afe:
         sys.exit(afe_main(a, adb))
     if a.map:

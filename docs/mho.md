@@ -112,6 +112,11 @@ install still changes the card. What keeps it small:
   same install runs without it (`oos-update gel-install ... --any-model`, docs/install-usb.md).
 - What to look for: the panel lights up and shows OOS, touch works, Ethernet gets an address, the fan runs, and
   `dmesg` from a shell (SSH) says what did not come up.
+- One setting of the stock system whole, for the first acquisition under OOS: `tools/mho-check.py <scope-ip> --snapshot`
+  right after a power-on, with the probe compensation signal on the channel it names (protocols/mho-acquisition.md,
+  section 7).
+- The card route writes OOS into `recovery` but does not select it: `boot/switch.py oos` (wiki/Installation.md,
+  step 4) or `card-install.py ... --arm` does. The ADB route (`gel-install ... --execute`) selects it itself.
 - The front panel under the stock system, without installing: `tools/mho-check.py <scope-ip> --panel` records the
   stock program's traffic on `ttyS0` in both directions while the owner presses each key and names it.
 - The front panel: press keys and turn knobs, then `oos-panel log` over SSH. Frames there with the DHO's codes mean

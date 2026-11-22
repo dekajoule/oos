@@ -261,5 +261,54 @@ class Panel(unittest.TestCase):
                                  "---- end"])
 
 
+class Snapshot(unittest.TestCase):
+    def test_the_adc_reads_write_only_read_transfers_to_the_bridge(self):
+        cmd = mc.remote_adc_read_command(1, [0x00, 0x0a])
+        writes = [line.split()[1:3] for line in cmd.split("; ") if line.count(" 0x") == 2]
+        reads = [line.split()[1] for line in cmd.split("; ") if line.count(" 0x") == 1]
+        self.assertEqual(reads, ["0x3004", "0x3004"])
+        self.assertEqual(len(writes), 4)
+        for addr, word in writes:
+            self.assertEqual(addr, "0x3000")
+            self.assertTrue(int(word, 16) & 1 << 23, "every word is a read transfer")
+        self.assertEqual(writes[2:], [["0x3000", "0x68a0000"], ["0x3000", "0x28a0000"]])
+        self.assertEqual(mc.adc_read_words(0, 0x7f), (0x05ff0000, 0x01ff0000))
+        for adc, addr in ((2, 0), (0, 0x80), (0, -1), (0, "1")):
+            with self.assertRaises(ValueError):
+                mc.adc_read_words(adc, addr)
+
+    def test_the_register_list_is_aligned_and_leaves_out_the_dna(self):
+        mc.remote_read_command(mc.SNAPSHOT_REGS)
+        self.assertEqual(len(set(mc.SNAPSHOT_REGS)), len(mc.SNAPSHOT_REGS))
+        for never in (0x4044, 0x4048, 0x3000, 0x3004, 0x4000):
+            self.assertNotIn(never, mc.SNAPSHOT_REGS)
+        for needed in (0x1004, 0x10d0, 0x10e4, 0x1210, 0x14c8, 0x155c, 0x4008, 0x20004, 0x2003c, 0x20818):
+            self.assertIn(needed, mc.SNAPSHOT_REGS)
+
+    def test_bridge_answers_valid_and_the_same_twice(self):
+        text = "Read(0x3004) = #0x10080#\nRead(0x3004) = #0x10700#\nRead(0x3004) = #0x5#\n"
+        first = mc.parse_bridge_reads(text)
+        self.assertEqual(first, [0x10080, 0x10700, 0x5])
+        good, bad = mc.adc_values(first, [0x10080, 0x10701, 0x5])
+        self.assertEqual((good, bad), ({0: 0x80}, [1, 2]))
+
+    def test_ascii_trace(self):
+        self.assertEqual(mc.ascii_samples("#9000000017-1.0e-01,2.5,x,3"), [-0.1, 2.5, 3.0])
+        self.assertEqual(mc.ascii_samples("1,2"), [1.0, 2.0])
+
+    def test_restore_list_sets_the_probe_before_the_scale(self):
+        cmds = mc.snapshot_restore_list()
+        ch2 = [c if isinstance(c, str) else c[0] + " " + c[1] for c in cmds if "CHANnel2" in str(c)]
+        self.assertEqual(ch2[:3], [":CHANnel2:DISPlay ON", ":CHANnel2:PROBe", ":CHANnel2:IMPedance"])
+        self.assertLess(ch2.index(":CHANnel2:PROBe"), ch2.index(":CHANnel2:SCALe"))
+
+    def test_machine_lines(self):
+        lines = mc.snapshot_lines([("channel", 2), ("scale", "1")], [("on", [(0x07, 0xc440)]), ("scale=1", [(0x29,
+                                  0x0280)])], [("a149", 0)], {0x1004: 0x04004a50}, [(0, {0x0a: 0x8080})])
+        self.assertEqual(lines, [mc.SNAPSHOT_MARK, "format 1", "channel 2", "scale 1", "afe on 0x07 0xc440",
+                                 "afe scale=1 0x29 0x0280", "select a149 0", "fpga 0x1004 0x04004a50",
+                                 "adc 0 0x0a 0x8080", "end"])
+
+
 if __name__ == "__main__":
     unittest.main()
