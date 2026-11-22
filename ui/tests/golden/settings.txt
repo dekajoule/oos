@@ -3169,7 +3169,7 @@ setup dec_la "0 8 1e9 - -" -> 0 8 10 - -; error: line 2: dec_la: dec_la: "0 8 1e
 setup dec_la "0 8 x - -" -> 0 8 10 - -; error: line 2: dec_la: dec_la: "0 8 x - -"
 setup dec_la "0 x 10 - -" -> 0 8 10 - -; error: line 2: dec_la: dec_la: "0 x 10 - -"
 setup dec_la "1 0 15 16 -" -> 1 0 15 15 -
-setup dec_la "1 a - - -" -> 1 8 10 - -; error: line 2: dec_la: dec_la: "1 a - - -"
+setup dec_la "1 a - - -" -> 0 8 10 - -; error: line 2: dec_la: dec_la: "1 a - - -"
 setup dec_la "1e9 8 10 - -" -> 0 8 10 - -
 setup dec_la "1e9" -> 0 8 10 - -; error: line 2: dec_la: dec_la: "1e9"
 setup dec_la "2 1 2 3 4" -> 0 1 2 3 4
@@ -3822,7 +3822,7 @@ setup inverter "Dq0 1 2 3 Off 1 4 x off off off 1 1 0 false 0 1 off 1024 false 0
 setup inverter "Dq0 1 2 3 Off 1 x true off off off 1 1 0 false 0 1 off 1024 false 0 1 2" -> Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2; error: line 2: inverter: not a source: x
 setup inverter "Dq0 1 2 3 Off 1e9 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2" -> Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2; error: line 2: inverter: not an integer: 1e9
 setup inverter "Dq0 1 2 3 Off x 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2" -> Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2; error: line 2: inverter: not an integer: x
-setup inverter "Dq0 1 2 3 Phase 33 4 true off off off 1 1 0 false 0 1 16 0 false 0 1 2" -> Dq0 1 2 3 Phase 32 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2; error: line 2: inverter: logic line 16 out of range
+setup inverter "Dq0 1 2 3 Phase 33 4 true off off off 1 1 0 false 0 1 16 0 false 0 1 2" -> Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2; error: line 2: inverter: logic line 16 out of range
 setup inverter "Dq0 1 2 3 Quad 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2" -> Dq0 1 2 3 Quad 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2
 setup inverter "Dq0 1 2 3 x 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2" -> Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2; error: line 2: inverter: unknown value: x
 setup inverter "Dq0 1 2 x Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2" -> Dq0 1 2 3 Off 1 4 true off off off 1 1 0 false 0 1 off 1024 false 0 1 2; error: line 2: inverter: not a source: x
@@ -4073,7 +4073,7 @@ setup magnetic "1 2 x 0 0 0 IPsi 0" -> 1 2 1 0 0 0 IPsi 0; error: line 2: magnet
 setup magnetic "1 x 1 0 0 0 IPsi 0" -> 1 2 1 0 0 0 IPsi 0; error: line 2: magnetic: not a source: x
 setup magnetic "1e9 2 1 0 0 0 IPsi 0" -> 1 2 1 0 0 0 IPsi 0; error: line 2: magnetic: not a source: 1e9
 setup magnetic "1e9" -> 1 2 1 0 0 0 IPsi 0; error: line 2: magnetic: magnetic: want 8 values
-setup magnetic "R1 R2 5 1 1 1 Bh 0" -> R1 R2 5 1 1 1 IPsi 0; error: line 2: magnetic: unknown value: Bh
+setup magnetic "R1 R2 5 1 1 1 Bh 0" -> 1 2 1 0 0 0 IPsi 0; error: line 2: magnetic: unknown value: Bh
 setup magnetic "x 2 1 0 0 0 IPsi 0" -> 1 2 1 0 0 0 IPsi 0; error: line 2: magnetic: not a source: x
 setup magnetic "x" -> 1 2 1 0 0 0 IPsi 0; error: line 2: magnetic: magnetic: want 8 values
 setup magnetic default -> 1 2 1 0 0 0 IPsi 0
@@ -4849,7 +4849,7 @@ setup sim "" -> 3 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 
 setup sim "-1 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0" -> 3 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0; error: line 2: sim: not an index: -1
 setup sim "-1" -> 3 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0; error: line 2: sim: sim: preset slot
 setup sim "0 0" -> 0 0 2500000000 31 0.5 -0.5 0.00000000012 0.00415625 2000000000 0 1 0.0000000000012 0.000000000004 8000000 0
-setup sim "0 10" -> 0 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0; error: line 2: sim: 10 out of range (< 10)
+setup sim "0 10" -> 3 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0; error: line 2: sim: 10 out of range (< 10)
 setup sim "11 9" -> 11 9 10312500000 31 0.425 -0.425 0.00000000003 0.005 7500000000 3.5 0 0.0000000000012 0 0 0
 setup sim "12 0" -> 3 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0; error: line 2: sim: 12 out of range (< 12)
 setup sim "1e9 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0" -> 3 0 16000000000 31 0.5 -0.5 0.00000000002 0.005 12000000000 4.5 1 0.0000000000012 0.000000000004 8000000 0; error: line 2: sim: not an index: 1e9
@@ -4965,7 +4965,7 @@ setup spec "1 0 0 0 Blackman 0 1e9 false false" -> 1 0 0 0 Blackman 0 1000000000
 setup spec "1 0 0 0 Blackman 0 x false false" -> 1 0 0 0 Blackman 0 10 false false; error: line 2: spec: not a number: x
 setup spec "1 0 0 0 Blackman 1e9 10 false false" -> 1 0 0 0 Blackman 0 10 false false; error: line 2: spec: not an index: 1e9
 setup spec "1 0 0 0 Blackman x 10 false false" -> 1 0 0 0 Blackman 0 10 false false; error: line 2: spec: not an index: x
-setup spec "1 0 0 0 Hann 4 0 false false" -> 1 0 0 0 Hann 0 10 false false; error: line 2: spec: 4 out of range (< 4)
+setup spec "1 0 0 0 Hann 4 0 false false" -> 1 0 0 0 Blackman 0 10 false false; error: line 2: spec: 4 out of range (< 4)
 setup spec "1 0 0 0 x 0 10 false false" -> 1 0 0 0 Blackman 0 10 false false; error: line 2: spec: unknown value: x
 setup spec "1 0 0 1e9 Blackman 0 10 false false" -> 1 0 0 1000000000 Blackman 0 10 false false
 setup spec "1 0 0 x Blackman 0 10 false false" -> 1 0 0 0 Blackman 0 10 false false; error: line 2: spec: invalid float literal
@@ -5491,10 +5491,10 @@ setup zone1 "false 1" -> false 1 true; error: line 2: zone1: zone: want on src i
 setup zone1 "false 1e9 true" -> false 1 true; error: line 2: zone1: not an index: 1e9
 setup zone1 "false x true" -> false 1 true; error: line 2: zone1: not an index: x
 setup zone1 "true 0 true" -> true 1 true
-setup zone1 "true 1 true 0.1" -> true 1 true; error: line 2: zone1: zone point: want t:v
+setup zone1 "true 1 true 0.1" -> false 1 true; error: line 2: zone1: zone point: want t:v
 setup zone1 "true 2 false 0.1:0.5 0.2:0.6" -> true 2 false 0.1:0.5 0.2:0.6
-setup zone1 "true 4 true x:1" -> true 4 true; error: line 2: zone1: invalid float literal
-setup zone1 "true 5 true" -> true 1 true; error: line 2: zone1: 5 out of range (< 5)
+setup zone1 "true 4 true x:1" -> false 1 true; error: line 2: zone1: invalid float literal
+setup zone1 "true 5 true" -> false 1 true; error: line 2: zone1: 5 out of range (< 5)
 setup zone1 "x 1 true" -> false 1 true; error: line 2: zone1: not a boolean: x
 setup zone1 "x" -> false 1 true; error: line 2: zone1: zone: want on src inside points
 setup zone1 default -> false 1 true

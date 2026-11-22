@@ -78,8 +78,20 @@ fn p_list<T>(v: &str, n: usize, f: impl Fn(&str) -> Result<T, String>) -> Result
 type SetGroup<'a> = &'a dyn Fn(&mut Model, &str, &str) -> Result<bool, String>;
 
 /// Takes one `key = value` line of a setup into the model: each group of keys below is asked in turn, the first
-/// that knows the key reads the value. A key no group knows (one of a newer version) is ignored.
+/// that knows the key reads the value. A key no group knows (one of a newer version) is ignored. A line it refuses
+/// leaves the model as it was: the fields of a line read before the one that fails are not kept (#120).
 pub fn set(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<(), String> {
+    // a Model is settings only (a few kB, a handful of short strings and lists), and a setup has a few hundred lines
+    let before = m.clone();
+    let taken = set_fields(m, k, v, r);
+    if taken.is_err() {
+        *m = before;
+    }
+    taken
+}
+
+/// `set` without putting the model back on a refused line.
+fn set_fields(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<(), String> {
     let groups: [SetGroup; 9] = [
         &|m, k, v| set_numbered(m, k, v, r),
         &set_table,
@@ -120,7 +132,7 @@ fn set_numbered(m: &mut Model, k: &str, v: &str, r: &dyn Registries) -> Result<b
         if let Ok(n) = n.parse::<usize>() {
             let n = n.checked_sub(1).filter(|&n| n < DECODERS).ok_or("unknown decoder")?;
             let mut t = m.dec_view(n);
-            set(&mut t, field, v, r)?;
+            set_fields(&mut t, field, v, r)?;
             m.dec_store(n, t.dec_cfg());
             return Ok(true);
         }
