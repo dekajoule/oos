@@ -442,8 +442,6 @@ pub enum MenuId {
     Acquire,
     Measure,
     MeasAdd,
-    /// short menu from a press-and-hold on Measure; Add meas is its shortcut
-    MeasHold,
     /// delay and phase between two channels
     MeasPair,
     /// digital voltmeter and counter (ui/tools.rs)
@@ -621,10 +619,6 @@ struct TouchState {
     y0: i32,
     x: i32,
     y: i32,
-    /// `Ui::now` when the finger went down
-    t0: f64,
-    /// a press-and-hold already opened its menu; the lift is not a tap
-    held: bool,
     drag: Drag,
     start_offset: f32,
     start_delay: f32,

@@ -29,9 +29,9 @@ pub struct Asks {
 
 /// What the input keeps between two events (ADR 0062).
 pub(super) struct State {
-    /// a channel key held on the front panel: channel, since when, and whether it was long enough for AC/DC already
-    /// (`panel_key`)
-    pub ch: Option<(usize, f64, bool)>,
+    /// a key held on the front panel that has a long press (a channel key, Measure): the key, since when, and whether
+    /// it was held long enough for its long press already (`panel_key`)
+    pub held: Option<(u8, f64, bool)>,
     /// a finger on the card of a channel that is on, since when (a long touch: AC/DC, as the key)
     pub card: Option<(usize, f64)>,
     /// when each knob turned last, for its acceleration (`knob_accel`)
@@ -45,7 +45,7 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> State {
         State {
-            ch: None,
+            held: None,
             card: None,
             knob_t: [0.0; 16],
             zone_path: Vec::new(),
@@ -144,34 +144,35 @@ impl Ui {
     }
 
     /// A key of the front panel (the panel sends a key's code when it is pressed and 0 when it is let go): as `key`,
-    /// but a channel key acts when it is let go, and held for `LONG_PRESS` it switches the channel between AC and DC
-    /// coupling instead (at once, while still held). Scripts, the control FIFO and the web remote press keys through
-    /// `key`, as before.
+    /// but a key with a long press acts when it is let go, and held for `LONG_PRESS` it does its long press instead (at
+    /// once, while still held): a channel key switches the channel between AC and DC coupling, Measure adds the next
+    /// usual measurement. Scripts, the control FIFO and the web remote press keys through `key`, as before.
     pub fn panel_key(&mut self, k: u8) {
         let c = k.wrapping_sub(key::CH1) as usize;
-        if c < 4 && c < n_ch() {
-            // a second channel key while one is held: the held one counts as a short press
-            self.ch_release();
-            self.input.ch = Some((c, self.now, false));
+        if (c < 4 && c < n_ch()) || k == key::MEASURE {
+            // a second such key while one is held: the held one counts as a short press
+            self.held_release();
+            self.input.held = Some((k, self.now, false));
             return;
         }
-        if k == 0 || self.input.ch.is_some() {
-            self.ch_release();
+        if k == 0 || self.input.held.is_some() {
+            self.held_release();
         }
         self.key(k);
     }
 
-    /// A held channel key let go: its own action, unless it was held long enough for AC/DC.
-    fn ch_release(&mut self) {
-        if let Some((c, _, long)) = self.input.ch.take() {
+    /// A held key let go: its own action, unless it was held long enough for its long press.
+    fn held_release(&mut self) {
+        if let Some((k, _, long)) = self.input.held.take() {
             if !long {
-                self.key(key::CH1 + c as u8);
+                self.key(k);
             }
         }
     }
 
-    /// A channel key held for `LONG_PRESS`: AC/DC once; letting it go then does nothing more. The same for a finger
-    /// held on a channel's card: then the finger's lift is no tap.
+    /// A key held for `LONG_PRESS`: its long press once (AC/DC for a channel key, a measurement for Measure); letting
+    /// it go then does nothing more. A finger held on a channel's card: AC/DC as well, and the finger's lift is no
+    /// tap.
     pub(super) fn ch_hold_poll(&mut self) {
         if let Some((c, t)) = self.input.card {
             let still = self.touch.down
@@ -185,10 +186,14 @@ impl Ui {
                 self.toggle_ac_dc(c);
             }
         }
-        if let Some((c, t, false)) = self.input.ch {
+        if let Some((k, t, false)) = self.input.held {
             if self.now - t >= LONG_PRESS {
-                self.input.ch = Some((c, t, true));
-                self.toggle_ac_dc(c);
+                self.input.held = Some((k, t, true));
+                if k == key::MEASURE {
+                    self.add_usual_meas();
+                } else {
+                    self.toggle_ac_dc(k.wrapping_sub(key::CH1) as usize);
+                }
             }
         }
     }
@@ -709,8 +714,6 @@ impl Ui {
             y0: y,
             x,
             y,
-            t0: self.now,
-            held: false,
             drag: Drag::None,
             start_offset: 0.0,
             start_delay: sd,
@@ -1033,16 +1036,10 @@ impl Ui {
     /// A lift: it ends the drag, finishes a zone or a zoom box, or is a tap.
     fn touch_up(&mut self, x: i32, y: i32) {
         let t = &mut self.touch;
-        let was = (t.down, t.drag, t.x0, t.y0, t.held);
+        let was = (t.down, t.drag, t.x0, t.y0);
         t.down = false;
         t.drag = Drag::None;
-        t.held = false;
         if !was.0 {
-            return;
-        }
-        // the short menu is already open; this lift runs its shortcut instead of a tap
-        if was.4 {
-            self.meas_hold_up(x, y);
             return;
         }
         if let Drag::Zone(k) = was.1 {
@@ -1360,8 +1357,6 @@ impl Ui {
         for (b, _, r) in self.top_buttons() {
             if self.top_hit(r).contains(x, y) {
                 return match b {
-                    // a tap opens the measurement list; a press-and-hold opens the short menu (meas_hold_tick)
-                    TopBtn::Menu(MenuId::Measure) => self.open_meas_list(),
                     TopBtn::Menu(id) => self.toggle_menu(id),
                     TopBtn::Live => self.return_to_live(),
                 };

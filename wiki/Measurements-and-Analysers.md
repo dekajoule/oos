@@ -19,7 +19,8 @@ the values come in exponent form.
 
 ### Adding a measurement
 
-1. Tap **Measure** in the top bar (or Menu > Measure; on a USB keyboard the key M). The measurement page opens.
+1. Press the **Measure** key (or Menu > Measure; on a USB keyboard the key M). The measurement page opens. Held, the
+   Measure key adds the next usual measurement at once: Vpp, Freq, Period, Vrms, Vavg, Rise, then the rest.
 2. On the left pick the category: **Basic**, **Two sources**, **Serial & PAM**, **Jitter & eye**, **Power**,
    **Motor drive**, **Power rails** or **Double pulse**.
 3. At the top pick the **Source**: a channel or a reference. Categories that compare signals have two to four sources

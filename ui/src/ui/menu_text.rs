@@ -142,7 +142,6 @@ impl Ui {
             | Item::HZero
             | Item::Trig50
             | Item::MeasAdd(_)
-            | Item::AddMeas
             | Item::MeasCfg(_)
             | Item::MeasRemove(_)
             | Item::MeasClear
@@ -185,7 +184,6 @@ impl Ui {
             Item::Open(MenuId::Horizontal) => "Horizontal",
             Item::Open(MenuId::ChMore(_)) => "More",
             Item::Open(MenuId::Measure) => "Measure",
-            Item::AddMeas => "Add meas",
             Item::Open(MenuId::Cursor) => "Cursor",
             Item::Open(MenuId::Display) => "Display",
             Item::Open(MenuId::Utility) => "System",

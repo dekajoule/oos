@@ -15,7 +15,8 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(!u.menu_open);
     // The bar keeps what is used most. System and SIM are in the start menu (System first in its group), Load file is a
     // row of the Reference menu.
-    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Measure", "Cursor", "Display", "Storage"]);
+    // Measure and Cursor are front-panel keys and in the start menu (ADR 0076)
+    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Display", "Storage"]);
     let system = u.main_groups().into_iter().find(|g| g.0 == "System").unwrap().1;
     assert_eq!(system[0], Item::Open(MenuId::Utility));
     assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Sim))));
@@ -36,10 +37,12 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert_eq!(u.waveform_destination(), Some(2));
     assert_eq!(u.ref_slot(), 0, "destination selection is separate from the current reference");
     u.open_wave_request = false;
-    // Measurement choices remain one tap away, without going through acquisition or another menu.
-    let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
-    u.tap(r.x + 5, r.y + 5);
+    // the measurement list: the Measure key, or the start menu
+    u.key(key::MEASURE);
     assert!(u.menu_open && u.menu == MenuId::MeasAdd);
+    u.close_menu();
+    assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Measure))));
+    assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Cursor))));
 }
 
 /// Reference > Load file on the scope: the file comes from storage and lands in the Slot row's reference.

@@ -81,8 +81,6 @@ impl Ui {
                 y0: 0,
                 x: 0,
                 y: 0,
-                t0: 0.0,
-                held: false,
                 drag: Drag::None,
                 start_offset: 0.0,
                 start_delay: 0.0,

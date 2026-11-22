@@ -75,12 +75,7 @@ impl Ui {
     /// is a row of the Reference menu.
     pub(super) fn top_buttons(&self) -> Vec<(TopBtn, &'static str, Rect)> {
         let f = self.fonts();
-        let mut all = vec![
-            (TopBtn::Menu(MenuId::Measure), "Measure"),
-            (TopBtn::Menu(MenuId::Cursor), "Cursor"),
-            (TopBtn::Menu(MenuId::Display), "Display"),
-            (TopBtn::Menu(MenuId::Storage), "Storage"),
-        ];
+        let mut all = vec![(TopBtn::Menu(MenuId::Display), "Display"), (TopBtn::Menu(MenuId::Storage), "Storage")];
         all.retain(|(b, _)| match b {
             TopBtn::Menu(m) => !self.menu_left_out(*m),
             _ => true,
@@ -98,11 +93,7 @@ impl Ui {
         if !fits(&all, padding) {
             padding = 20;
         }
-        for (button, short) in [
-            (TopBtn::Menu(MenuId::Storage), "Store"),
-            (TopBtn::Menu(MenuId::Display), "Disp"),
-            (TopBtn::Menu(MenuId::Measure), "Meas"),
-        ] {
+        for (button, short) in [(TopBtn::Menu(MenuId::Storage), "Store"), (TopBtn::Menu(MenuId::Display), "Disp")] {
             if fits(&all, padding) {
                 break;
             }
@@ -367,7 +358,7 @@ impl Ui {
             (MenuId::Pick, Some(p)) => p.menu,
             (m, _) => m,
         };
-        if matches!(m, MenuId::MeasAdd | MenuId::MeasHold | MenuId::MeasSelected) {
+        if matches!(m, MenuId::MeasAdd | MenuId::MeasSelected) {
             MenuId::Measure
         } else if m == MenuId::SimAdvanced {
             MenuId::Sim

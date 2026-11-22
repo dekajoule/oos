@@ -1350,7 +1350,6 @@ impl Ui {
     pub fn cancel_pointer(&mut self) {
         self.workspace.gesture = None;
         self.touch.down = false;
-        self.touch.held = false;
         self.touch.drag = Drag::None;
         self.input.pinch.active = false;
     }

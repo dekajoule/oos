@@ -861,11 +861,6 @@ impl Ui {
     /// `activate` of an action: the measurements, math, references. True when `it` is one of them.
     fn activate_measure(&mut self, it: Item) -> bool {
         match it {
-            Item::AddMeas => {
-                if let Some(k) = self.next_usual_meas() {
-                    self.activate(Item::MeasAdd(k));
-                }
-            }
             Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
             Item::MeasAdd(k) => {
                 let e = (k, self.sources.a);
