@@ -571,6 +571,11 @@ fn segment_counts_follow_the_limit_of_the_set_up() {
     ui.m.seg_hw = true;
     ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
     assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
+    // 100 M points: no segment of that size fits below 256 MiB, so the software history records them (no hardware
+    // recording of zero frames)
+    ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-3).abs() < 1e-9).unwrap();
+    ui.m.mdepth = mdepths().iter().position(|d| d.1 == 100_000_000).unwrap();
+    assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
 }
 
 #[test]

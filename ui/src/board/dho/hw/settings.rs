@@ -294,13 +294,14 @@ fn hw_segments_ok(m: &Model) -> bool {
 }
 
 /// Most hardware segments for the model's set-up (`Board::seg_max`): the whole-memory limit of its segment size.
+/// None where no segment of that size fits (100 M and 125 M points): the software history records them.
 pub fn seg_max(m: &Model) -> Option<usize> {
     if !hw_segments_ok(m) {
         return None;
     }
     let s = settings(m, false);
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-    Some(hz::max_record_frames(p.seg) as usize)
+    Some(hz::max_record_frames(p.seg) as usize).filter(|&n| n > 0)
 }
 
 /// Settings for reading hardware segments back: the live batch plan (compression above 1 M points) with the header
