@@ -230,20 +230,21 @@ fn screen_in_order_on(scr: Screen) {
                 }
             }
             // every status box of two lines has room for both its lines: for the address while it is shown (issue #23),
-            // for the dash or the state while it is not
+            // for the dash while there is no link; with a link and no address shown it is one line, its name in bold
             for set in sticks {
                 set(&mut u, true);
             }
             let second = match (addr, shown) {
                 (Some(a), true) => a,
-                (Some(_), false) => "connected",
+                (Some(_), false) => "",
                 (None, _) => "-",
             };
             for (b, r) in u.status_boxes().into_iter().filter(|(b, _)| !b.chip) {
                 let first = if b.label == "LAN" { u.lan_box_lines().0 } else { u.wlan_box_lines().0 };
                 assert_eq!(u.link_line(u.addr_of("eth0")), second, "{:?}", ts);
+                let first_w = if second.is_empty() { f.sb.width(first) } else { f.s.width(first) };
                 assert!(
-                    20 + f.sb.width(second) <= r.w && 20 + f.s.width(first) <= r.w,
+                    20 + f.sb.width(second) <= r.w && 20 + first_w <= r.w,
                     "{:?}: {} box too narrow for '{}' / '{}'",
                     ts,
                     b.label,
