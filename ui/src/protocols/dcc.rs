@@ -12,8 +12,7 @@
 
 use super::*;
 use oos_dsp::dcc_yard::{functions_text, TrackStatus, Yard};
-use oos_dsp::decode;
-use oos_dsp::decode::{hex, Kind};
+use oos_dsp::decode::{self, hex, Kind};
 
 pub struct Dcc;
 
