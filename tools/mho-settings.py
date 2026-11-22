@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 dekajoule
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Record what the stock MHO900 system sets for each setting, for OOS to set the same (docs/protocols/mho-acquisition.md,
-section 7).
+"""Record what the stock MHO900 system sets for each setting, for OOS to set the same
+(docs/protocols/mho-acquisition.md, section 7).
 
   mho-settings.py <scope-ip> [--adb-port 55555] [--scpi-port 5555] [--yes] [--quick]
 
@@ -110,7 +110,8 @@ def main():
     adb = MC.Adb(f"{a.host}:{a.adb_port}")
     adb.connect()
     if "sparrow3_" not in adb.sh("ls /rigol/FPGA"):
-        sys.exit("this is not an MHO900 under its stock system; nothing done")
+        sys.exit("this is not an MHO900 under its stock system. Under OOS? Power the scope off and on: OOS starts "
+                 "once after an install, the next start is the stock system. Nothing done")
     if not adb.is_root():
         sys.exit("mho-settings.py needs adb root; nothing done")
     if "pcie2dev" not in adb.sh(f"ls {MC.PCIE2DEV}"):
@@ -137,7 +138,8 @@ def main():
     for g, line in MC.gpio_lines(adb.sh("cat /sys/kernel/debug/gpio")).items():
         if g in MC.traced_lines():
             levels[g] = 1 if line.split()[-1] == "hi" else 0
-    out = [f"mho-settings (OOS tools/mho-settings.py, mho-check {MC.VERSION}), {datetime.datetime.now():%Y-%m-%d %H:%M}",
+    now = f"{datetime.datetime.now():%Y-%m-%d %H:%M}"
+    out = [f"mho-settings (OOS tools/mho-settings.py, mho-check {MC.VERSION}), {now}",
            f"instrument: {idn}", f"hardware code: {code}", f"settings before: {len(keep)} kept"]
     part = [SETTINGS_MARK, "format 1", f"model {model}", f"hwcode {code}"]
     rep = MC.Report()
@@ -170,7 +172,8 @@ def main():
                         adc.append((n, good))
                 selects = [(MC.SELECT_LINES[g].replace(" ", ""), levels.get(g, 0)) for g in sorted(MC.SELECT_LINES)]
                 out.append(f"{name}: {len(frames)} front-end frames, {len(regs)} FPGA words, "
-                           f"{sum(len(v) for _, v in adc)} ADC registers" + (f"; SCPI: {'; '.join(err)}" if err else ""))
+                           f"{sum(len(v) for _, v in adc)} ADC registers"
+                           + (f"; SCPI: {'; '.join(err)}" if err else ""))
                 part += setting_lines(name, commands, state, regs, adc, frames, selects)
         finally:
             left = tracer.stop()
@@ -179,8 +182,8 @@ def main():
         MC.restore(scpi, rep, keep, cmds)
         out += [f"{s} {k} {t}: {d}" for k, t, s, d in rep.results]
     out.append(f"took {time.time() - t_start:.0f} s")
-    out += ["", "The part below is for OOS (copy the file to the scope as /oos/mho-settings.txt); please leave it as it "
-            "is.", *part, "end"]
+    out += ["", "The part below is for OOS (copy the file to the scope as /oos/mho-settings.txt); please leave it "
+            "as it is.", *part, "end"]
     fname = f"mho-settings-{model}-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
     with open(fname, "w") as f:
         f.write("\n".join(out) + "\n")

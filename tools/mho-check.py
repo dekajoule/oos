@@ -1279,7 +1279,8 @@ ADC_BRIDGE, ADC_BRIDGE_READ = 0x3000, 0x3004
 
 def adc_read_words(adc, addr):
     """The two words of a read transfer of ADC `adc` register `addr` through the bridge: the ADC select in bit 24 or 25,
-    the address in bits 22:16, the read bit 23, the strobe bit 26 in the first word only (as hal::mho::acq::adc_read)."""
+    the address in bits 22:16, the read bit 23, the strobe bit 26 in the first word only (as
+    hal::mho::acq::adc_read)."""
     if adc not in (0, 1) or not isinstance(addr, int) or not 0 <= addr < 0x80:
         raise ValueError(f"no ADC register: ADC {adc!r} address {addr!r}")
     w = (1 << 24 if adc == 0 else 1 << 25) | addr << 16 | 1 << 23
@@ -1317,7 +1318,8 @@ def parse_bridge_reads(text):
 
 
 def adc_values(first, second):
-    """{address: data} of the reads that were valid (bit 16) and the same both times, and the addresses that were not."""
+    """{address: data} of the reads that were valid (bit 16) and the same both times, and the addresses that were
+    not."""
     good, bad = {}, []
     for r, (x, y) in enumerate(zip(first, second)):
         if x == y and x & (1 << 16):
@@ -1426,9 +1428,11 @@ def snapshot_main(a, adb):
                     full[n] = own
                 scpi.write(f":CHANnel{n}:DISPlay OFF")
             if not full:
-                out += ["", f"NO SET: no channel that was off sent {FULL_SET_MIN} front-end frames or more when switched "
+                out += ["", f"NO SET: no channel that was off sent {FULL_SET_MIN} front-end frames or more when "
+                        "switched "
                         "on. Switch at least one channel off, power the scope off and on, and run --snapshot again."]
-                print(f"no channel sent its front-end set (at least {FULL_SET_MIN} frames) when switched on: switch one "
+                print(f"no channel sent its front-end set (at least {FULL_SET_MIN} frames) when switched on: "
+                      "switch one "
                       "channel off, power the scope off and on, and run --snapshot again")
             else:
                 ch = min(full)
@@ -1687,13 +1691,16 @@ def capture_main(a, adb):
     here = os.path.dirname(os.path.abspath(__file__))
     poll = a.poll or os.path.join(here, "mho-poll")
     if not os.path.exists(poll):
-        return f"--capture-all needs mho-poll (from the release, next to this script, or --poll PATH): {poll} is missing"
+        return (f"--capture-all needs mho-poll (from the release, next to this script, or --poll PATH): {poll} is "
+                "missing")
     app = scope_program(adb)
     if not app:
-        return "--capture-all: no process holds /dev/xdma0_bypass open (is the stock scope program running?); nothing done"
+        return ("--capture-all: no process holds /dev/xdma0_bypass open (is the stock scope program running?); "
+                "nothing done")
     code = adb.sh("cat /sys/class/hdcode/hdcode_dev/hdcode_value").strip()
     # the stock start script's FPGA step for this hardware code (docs/protocols/mho-acquisition.md, section 1)
-    load = ("/rigol/tools/spi2fpga_V00_01 -f /rigol/FPGA/sparrow3_K160T.bit" if code == "1" else "/rigol/tools/spi2fpga")
+    load = ("/rigol/tools/spi2fpga_V00_01 -f /rigol/FPGA/sparrow3_K160T.bit" if code == "1"
+            else "/rigol/tools/spi2fpga")
     if not a.yes:
         ans = input(f"--capture-all starts the acquisition board again the way the stock system starts it at power-on: "
                     f"it stops the stock scope program, reloads the FPGA with the stock tool ({load.split()[0]}) and "
@@ -1730,7 +1737,8 @@ def capture_main(a, adb):
         else:
             # the FPGA must not be loaded again behind a bound PCIe endpoint: only the program restarts then
             out.append("FPGA: NOT loaded again (the drivers are still loaded); the program restarts only")
-        out.append("PCIe: " + adb.sh("/rigol/shell/load_pcie.sh 2>&1 | tail -2", timeout=120).strip().replace("\n", " | "))
+        pcie = adb.sh("/rigol/shell/load_pcie.sh 2>&1 | tail -2", timeout=120)
+        out.append("PCIe: " + pcie.strip().replace("\n", " | "))
         # the watcher only now, when xdma is back: it must not hold the device while the drivers are unloaded
         adb.sh(f"nohup {POLL_REMOTE} --seconds 45 --wait 10 {POLL_LOG} > /dev/null 2>&1 &")
         time.sleep(1)
@@ -1810,7 +1818,8 @@ def main():
                          "channel it names (about 3 minutes; best right after a power-on)")
     ap.add_argument("--capture-all", action="store_true",
                     help="instead of the checks: record the stock system's cold start of the acquisition board (FPGA "
-                         "reloaded, program restarted; the board's lines traced, the ADC bridge watched with mho-poll), "
+                         "reloaded, program restarted; the board's lines traced, the ADC bridge watched with "
+                         "mho-poll), "
                          "then take the snapshot (about 5 minutes)")
     ap.add_argument("--poll", help="with --capture-all: the mho-poll program (default: next to this script)")
     ap.add_argument("--afe-init", action="store_true",
@@ -1826,7 +1835,9 @@ def main():
     except FileNotFoundError:
         sys.exit("adb not found (Android platform tools)")
     if "sparrow3_" not in adb.sh("ls /rigol/FPGA"):
-        sys.exit("this is not an MHO900 under its stock system (no sparrow3 image in /rigol/FPGA); nothing done")
+        sys.exit("this is not an MHO900 under its stock system (no sparrow3 image in /rigol/FPGA). Under OOS? Power "
+                 "the scope off and on: OOS starts once after an install, the next start is the stock system. Nothing "
+                 "done")
     if a.panel:
         sys.exit(panel_main(a, adb))
     if "pcie2dev" not in adb.sh(f"ls {PCIE2DEV}"):
