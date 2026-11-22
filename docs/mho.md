@@ -3,7 +3,7 @@
 An OOS build for the Rigol MHO900 (MHO934, MHO954, MHO984, MHO98): the screen, touch, network, the web remote, SCPI,
 storage and updates of OOS on the MHO900's main board, with the **demo signal** in place of an acquisition. OOS has no
 code for the MHO900's acquisition board, and this build touches none of it: no FPGA, no front end, no clock, no
-generator. The front panel is only listened to. The decision is
+generator. Of the front panel it reads the keys and sets the LEDs. The decision is
 [ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md); how a port is built in general is in
 [porting.md](porting.md).
 
@@ -59,10 +59,12 @@ From the probe (reported by one unit, not checked on hardware by us):
   `--hw`.
 - **oos-ui**: `ui/src/board/mho` behind `Board`. It starts no acquisition thread, applies nothing and drives no
   generator. Touch is the input, and a USB mouse or keyboard where the build has them. The **front panel** is listened
-  to on UART0 at 1.5 Mbaud with the DHO's frames (`FA cmd data crc7 AF`, protocols/frontpanel.md): the stock MHO900
-  system opens `ttyS0` at the same address and sends on it (platform probe, MHO98), so the same MCU protocol is
-  **assumed**, not yet verified on hardware. Every frame and every byte that starts none goes to `/tmp/oos-panel.log`;
-  keys with the DHO's codes act as keys. oos-ui writes nothing to the MCU: no LEDs, no power commands.
+  read on UART0 at 1.5 Mbaud with the DHO's frames (`FA cmd data crc7 AF`, protocols/frontpanel.md). **Verified on
+  the unit** (an MHO934, GitHub issue #248, from mho-dev-4 on): every key and knob sends the DHO's codes (the seven
+  knobs the DHO's pairs 0x8a/0x8b to 0xea/0xeb), and the DHO's LED frames switch all LEDs on and off. Every frame and
+  every byte that starts none goes to `/tmp/oos-panel.log`; keys act as keys, and oos-ui sets the LEDs as on the DHO
+  (which bit lights which LED on the MHO900 is not yet verified on hardware). No power or other command goes to the
+  MCU.
   `oos-panel` (on the image) shows the log and sends, only when the owner asks, the DHO's version query, "UI loaded"
   or all LEDs on/off. Scales 1 mV/div to 10 V/div (the stock system takes 500 uV/div as 1 mV/div:
   verified on the unit), couplings DC, AC, GND and 50 ohm, depths to 100 M: from the data sheet, **assumed**; they only
@@ -82,8 +84,8 @@ From the probe (reported by one unit, not checked on hardware by us):
   and its Bluetooth firmware from linux-firmware); `oos-wlan` picks it by the stick's USB id (docs/wlan.md). Not yet
   verified on hardware.
 
-Not in it: power off from the front panel (the panel MCU is not spoken to; switch off at the power key or the
-mains), the beeper, the FPGA temperature.
+Not in it: power off from the front panel (no power command goes to the panel MCU; switch off at the power key or
+the mains), the beeper, the FPGA temperature.
 
 ## Build
 
@@ -124,7 +126,9 @@ by itself, and nothing of it outlasts a power-off. **Verified on the unit** (hp1
 GitHub issue #4) up to `pcie`: the clock chip reads TI's vendor ID before and after its 136 words, the FPGA takes the
 unit's image in 3.0 s and raises DONE, the PCIe link trains at 5.0 GT/s on four lanes (the DHO800/DHO900: two), xdma
 binds the endpoint 10ee:7024 with a 64 KiB and a 16 MiB BAR, and the FPGA version reads 0x20260110, the value
-mho-check.py reads under the stock system. The `adc` step is **not yet verified on hardware**.
+mho-check.py reads under the stock system. The `adc` step is verified on that MHO98 and on an MHO934 (issue #248),
+where every step ran the same: both ADCs answer all 32 reads, and the ADC clock count reads 49999
+(protocols/mho-acquisition.md, section 4).
 
 | step | what it does | what it reads back |
 |---|---|---|

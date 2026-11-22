@@ -142,8 +142,15 @@ wait 100 us
 (read: bit 23 set in addr and data 0; after a further 100 us the 16 data bits are in 0x3004)
 ```
 
-Assumed: a read's 16 bits are valid only when bit 16 of 0x3004 is set; the bring-up's `adc` step reads registers 0x00
-to 0x0f of both ADCs this way and reports the bit (docs/mho.md). Not yet verified on hardware.
+A read's 16 bits are valid when bit 16 of 0x3004 is set. **Verified on the unit** (an MHO98 and an MHO934, GitHub
+issues #4 and #248, the bring-up's `adc` step of docs/mho.md under OOS, after the clock table and the FPGA image): all
+32 reads of registers 0x00 to 0x0f of both ADCs came back valid, so both ADCs answer behind the bridge. Before any ADC
+register is written the raw words differ from ADC to ADC and from unit to unit; 0x09 (0x0700, once 0x0d00), 0x0a
+(0x8080), 0x0b (0) and 0x0e (0x0080) read the same on all four ADCs.
+
+The ADC clock count 0x1210 read **49999** on both units under OOS (the DHO800/DHO900 reads 62500 at its 1.25 GHz, and
+the same count goes as the clock: docs/models.md). Whether the stock system reads the same on the MHO900 is not yet
+known; `tools/mho-check.py` reads it from version 7.
 
 The stock system XORs the data with a fixed mask per register before it writes it, as it does for the DHO's ADC
 (adc-spu-init.md); the masks are not known yet.

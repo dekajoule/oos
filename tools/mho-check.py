@@ -50,7 +50,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "6"
+VERSION = "7"
 PCIE2DEV = "/rigol/tools/pcie2dev"
 
 # Registers read once: (address, name). Only addresses the stock MHO900 system reads or writes itself.
@@ -70,6 +70,7 @@ STATIC_REGS = [
     (0x30000, "multi-channel sync"),
     (0x11E8, "TX state"),
     (0x1208, "recorded range"),
+    (0x1210, "ADC clock count (DHO800/DHO900: 62500; OOS read 49999 on two MHO900)"),
 ]
 
 # Registers read after each change of the settings.
