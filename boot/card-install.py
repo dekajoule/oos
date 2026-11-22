@@ -117,7 +117,8 @@ def main():
     for p in plan:
         print("plan:", p)
     if not a.execute:
-        print("dry run: add --execute to write")
+        print("dry run: add --execute to write" + ("" if a.arm else "; OOS is selected afterwards with boot/switch.py "
+                                                    "oos (or here with --arm)"))
         return
 
     bdir = a.backup_dir
@@ -148,6 +149,11 @@ def main():
     if a.arm:
         sys.stdout.flush()
         subprocess.run([sys.executable, "-I", os.path.join(HERE, "bcb.py"), "set", a.target, "recovery", "--execute"])
+    else:
+        # written is not selected: without this step the scope starts the stock system as before
+        print(f"OOS is not selected yet: the scope still starts the stock system. Select it with\n"
+              f"  sudo python3 boot/switch.py oos {a.target} --execute\n"
+              f"or start it once with --arm (wiki/Installation.md, step 4)")
 
 
 if __name__ == "__main__":
