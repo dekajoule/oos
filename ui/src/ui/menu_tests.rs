@@ -402,6 +402,26 @@ fn a_channel_key_first_selects_when_several_are_on() {
     assert!(ui.m.active == 1 && !ui.menu_open, "CH1's menu closes when CH2 is selected");
 }
 
+/// A channel switched off with its menu's On, not with its key, gives the vertical knobs to a channel still on
+/// (#523): CH1 on, CH2 on with its key, CH2 off in its menu, menu closed; V/div then turns CH1's scale.
+#[test]
+fn a_channel_switched_off_in_its_menu_gives_the_knobs_to_one_still_on() {
+    use super::*;
+    let mut ui = crate::ui::testkit::demo_ui();
+    ui.step(0.033);
+    assert!(ui.m.ch[0].on && ui.m.n_on() == 1 && ui.m.active == 0);
+    ui.key(key::CH1 + 1);
+    assert!(ui.m.ch[1].on && ui.m.active == 1 && ui.menu == MenuId::Channel(1));
+    ui.adjust(Item::ChOn(1), 1);
+    assert!(!ui.m.ch[1].on, "the menu's On switched CH2 off");
+    assert_eq!(ui.m.active, 0, "CH1, the channel still on, is selected");
+    ui.close_menu();
+    let (ch1, ch2) = (ui.m.ch[0].vscale, ui.m.ch[1].vscale);
+    ui.knob_turn(key::VSCALE_CW, 1);
+    assert_ne!(ui.m.ch[0].vscale, ch1, "V/div turns CH1");
+    assert_eq!(ui.m.ch[1].vscale, ch2, "CH2, off, stays");
+}
+
 /// A channel key held on the front panel: AC/DC, nothing else; a short press does what the key does, when it is
 /// let go.
 #[test]

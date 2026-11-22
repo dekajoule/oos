@@ -184,6 +184,7 @@ impl Ui {
                 if self.m.ch[c].on && self.m.run == RunState::Run {
                     self.m.floor_live_tdiv();
                 }
+                self.select_a_channel_that_is_on(c);
             }
             // only a model with the LA port switches it on
             Item::LaOn => self.m.la.on &= crate::ui::la::available(),
