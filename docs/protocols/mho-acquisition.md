@@ -592,7 +592,13 @@ every start: a phase that settles at random at the start would do that. The DHO8
 phase with the ADC sync (0x1000 bit 1, cold-boot.md `spu_adc_sync`), which the MHO900's start never pulsed. From
 mho-dev-29 on the acquisition thread pulses it after every setting (**assumed** to fix that phase; a file
 `/oos/mho-no-adc-sync` leaves it out), and 0x1000 bit 7 is cleared again as on the DHO800/DHO900 (kept with a file
-`/oos/mho-s1000-stock`). The trigger: the stock system's level words hold a window around the level (0x2004
+`/oos/mho-s1000-stock`).
+
+**Verified on the unit** (skluehspies' MHO98, mho-dev-29, issue #491): in three starts of the board one after the
+other, the edge lay at the trigger point at every time base tried (100 ns, 500 ns, 1, 2, 5, 10, 20 and 200 us/div):
+the median of every block of 50 frames within 3 samples of it, nearly every frame with the edge. So the ADC sync after
+a setting fixes the phase. Single frames still lie off (in about half the blocks at least one); the record's first
+part missing at the slower rates (the trigger before the points before it) is the likely cause, not yet checked. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.
