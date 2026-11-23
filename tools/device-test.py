@@ -1586,7 +1586,7 @@ def hardware_segments_hold_their_own_samples(s, o):
         assert not flat, f"{row}: segments without the signal or short: {flat}"
         same = [(a, b) for a in range(n) for b in range(a + 1, n) if seen[a] == seen[b]]
         assert not same, f"{row}: segments that read back the same samples: {same[:6]}"
-        return f"{row}, each window of {win} samples its own, times {times[1] * 1e3:.1f} to {times[-1]:.2f} s"
+        return f"{row}, each window of {win} samples its own, the second {times[1] * 1e3:.1f} ms after the first, the last {times[-1]:.2f} s"
     finally:
         s.w(":ACQ:SEGM OFF")
         s.w(":ACQ:SEGM:HARD OFF")
