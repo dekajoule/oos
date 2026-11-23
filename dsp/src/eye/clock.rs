@@ -197,6 +197,12 @@ pub fn recover_clock_pll(
 ) -> Option<Clock> {
     let c = recover_clock(v, dt, thr, hyst, nominal_rate)?;
     let end = v.len() as f64 * dt;
+    // a tick per unit interval over the whole record, the period up to 10 % shorter: no more ticks than the record
+    // has samples. A clock of about a sample a bit is none of the record, and the measurements call this directly,
+    // without the eye page's two samples a bit: at half a sample a bit a deep record would take gigabytes of ticks
+    if end / (0.9 * c.period) + 2.0 > v.len() as f64 {
+        return None;
+    }
     let (first, last) = (c.edges[0], c.edges[c.edges.len() - 1]);
     let uis = ((last - first) / c.period).round().max(1.0);
     let density = (c.edges.len() as f64 / uis).clamp(0.01, 1.0);

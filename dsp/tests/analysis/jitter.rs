@@ -554,3 +554,24 @@ fn a_bit_rate_above_the_sample_rate_is_no_clock_of_the_record() {
     let tie = eye::tie(&clock.edges, &clock);
     assert!(eye::tie_trend(&clock.edges, &tie, &clock).is_empty());
 }
+
+/// The PLL clock has a tick a unit interval over the whole record, and the measurements ask for it without the eye
+/// page's check of two samples a bit: a clock of about a sample a bit is refused before its ticks are made (at half
+/// a sample a bit a deep record took gigabytes). One of two samples a bit still has its PLL.
+#[test]
+fn a_pll_clock_has_no_more_ticks_than_the_record_has_samples() {
+    let dt = 1e-3;
+    // an edge every 100 samples, read at 1.05 samples a bit and at 2 samples a bit
+    let v: Vec<f32> = (0..20_000).map(|i| if (i / 100) % 2 == 0 { 0.0 } else { 1.0 }).collect();
+    assert!(eye::recover_clock(&v, dt, 0.5, 0.1, Some(1.0 / (1.05 * dt))).is_some(), "the constant clock is there");
+    assert!(eye::recover_clock_pll(&v, dt, 0.5, 0.1, Some(1.0 / (1.05 * dt)), 0.0, true).is_none());
+    let two = eye::recover_clock_pll(&v, dt, 0.5, 0.1, Some(1.0 / (2.0 * dt)), 0.0, true).expect("two samples a bit");
+    assert!(two.ticks.len() <= v.len());
+    // the same through the measurements: a burst that changes at every sample between a long low and a long high
+    let mut burst = vec![0.0f32; 50_000];
+    burst.extend((0..40).map(|i| (i % 2) as f32));
+    burst.extend(vec![1.0f32; 50_000]);
+    let a = oos_dsp::measure::analyze_refs(&burst, dt, 0.05, 0.1, 0.9);
+    assert!(a.est_ui.is_finite() && a.est_ui < 1.5 * dt, "a bit of about a sample: {}", a.est_ui);
+    assert!(a.pll_ui.is_nan(), "no PLL clock of a sample a bit: {}", a.pll_ui);
+}

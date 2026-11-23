@@ -753,3 +753,27 @@ fn a_rate_the_record_cannot_hold_is_found_again_or_said() {
         }
     }
 }
+
+/// A rate found from a faster record is dropped at the first record of a slower one, and the eye made from that
+/// record is of the rate in force: the next record adds to it instead of starting it again.
+#[test]
+fn an_eye_after_a_dropped_rate_is_kept_by_the_next_record() {
+    let mut ui = crate::ui::testkit::demo_ui();
+    ui.step(0.05);
+    ui.m.run = RunState::Stop;
+    ui.m.view = AView::Eye;
+    ui.relayout();
+    ui.azr.eye = None;
+    ui.azr.page = Page::default();
+    (ui.m.eye_from_record, ui.m.eye_rate) = (true, 2e9);
+    let mut n = Noise(0x2545_f491_4f6c_dd1d);
+    let mut records = Vec::new();
+    for _ in 0..2 {
+        ui.last[0] = Some(record(CLEAN, &mut n));
+        ui.measure_last();
+        ui.analyzer_update();
+        ui.now += REFRESH;
+        records.push(ui.azr.eye.as_ref().map_or(0, |e| e.records));
+    }
+    assert_eq!(records, [1, 2], "the second record adds to the eye of the first");
+}
