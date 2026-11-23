@@ -256,17 +256,20 @@ fn parse_slot(s: &str) -> Option<usize> {
 
 use crate::model::nearest_step as nearest;
 
+/// What `:WAVeform` reads when nothing chose otherwise, and again after `*RST`: CH1, BYTE, NORMal, the whole page.
+const WAV_DEFAULT: (WaveId, u8, u8, u64, u64) = (WaveId::Ch(0), 0, 0, 1, 0);
+
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
         Scpi {
             l: Self::bind(port),
             clients: Vec::new(),
             send_limits: Default::default(),
-            wav_src: WaveId::Ch(0),
-            wav_fmt: 0,
-            wav_mode: 0,
-            wav_start: 1,
-            wav_stop: 0,
+            wav_src: WAV_DEFAULT.0,
+            wav_fmt: WAV_DEFAULT.1,
+            wav_mode: WAV_DEFAULT.2,
+            wav_start: WAV_DEFAULT.3,
+            wav_stop: WAV_DEFAULT.4,
             err: Vec::new(),
             event_status: 0,
             error_serial: 0,

@@ -34,7 +34,7 @@ Waveform names are `CHAN1` through `CHAN4` as available on the model, and `R1` t
 | Command | Meaning |
 | --- | --- |
 | `*IDN?` | `OOS,<model>,<serial>,oos-ui <version>`. On a computer the serial can be `0`. |
-| `*RST` | Restore the app's default configuration. This changes the acquisition workspace. |
+| `*RST` | Restore the app's default configuration. This changes the acquisition workspace. The waveform transfer starts again too: `:WAV:SOURce CHAN1`, `:MODE NORMal`, `:FORMat BYTE`, `:STARt 1`, `:STOP` through the last point. |
 | `*CLS` | Clear the SCPI error/status state and pending operation-complete event registrations. Does not clear waveform memory. |
 | `*OPC?` | Wait for the defined finite operations below, then return `1`. |
 | `*OPC` | Register completion of those finite operations in standard-event bit 0. |
