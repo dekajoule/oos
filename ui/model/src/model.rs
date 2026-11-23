@@ -22,6 +22,7 @@ pub mod la;
 mod limits;
 mod math;
 mod trigger;
+mod trigger_kept;
 
 pub use acquisition::*;
 pub use analysers::*;
@@ -32,6 +33,7 @@ pub use generator::*;
 pub use limits::*;
 pub use math::*;
 pub use trigger::*;
+pub use trigger_kept::*;
 
 /// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`). The board
 /// of the build has as many (`platform.rs` holds it to that at compile time).
@@ -302,6 +304,8 @@ pub struct Model {
     pub nth_n: u32,
     pub setup: f32,
     pub hold: f32,
+    /// what each trigger type and each channel as the source kept while another was chosen (#49); not part of a setup
+    pub trig_kept: TrigKept,
     pub run: RunState,
     pub status: TrigStatus,
     pub acq: AcqMode,
