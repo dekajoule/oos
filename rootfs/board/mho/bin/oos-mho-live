@@ -33,6 +33,12 @@ fi
 SNAP=${1:-/oos/mho-snapshot.txt}
 [ -r "$SNAP" ] || { echo "oos-mho-live: no snapshot $SNAP (tools/mho-check.py --snapshot, then scp it here)" >&2; exit 2; }
 echo "oos-mho-live: $FPGAD; in /oos: $(cd /oos && ls mho-*.txt 2>/dev/null | tr '\n' ' ')"
+# a screen on the board must let go of it first: loading the FPGA while it reads the board locks the scope up (an
+# MHO98, mho-dev-26, issue #491). The demo's arguments, oos-ui ended, and the time for rcS to start it again.
+if grep -q -- '--hw' /tmp/oos-ui.args 2>/dev/null; then
+	ui_with "$(/bin/oos-board ui-args)"
+	sleep 4
+fi
 "$FPGAD" mho-start --snapshot "$SNAP" --yes 2>&1 | tee "$REPORT"
 echo "oos-mho-live: the report is in $REPORT"
 grep -q '^RESULT: IT MEASURES\|^RESULT: a frame was read' "$REPORT" || {
