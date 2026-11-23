@@ -143,6 +143,8 @@ impl Ui {
         match (self.m.run, self.m.status) {
             _ if self.cal_running() => ("CAL", ACCENT),
             (RunState::Stop, _) | (_, TrigStatus::Stop) => ("STOP", RED),
+            // roll mode streams without a trigger: no TRIG'D there
+            _ if board().slow_mode(&self.m) == crate::board::Slow::Roll => ("ROLL", GREEN),
             (_, TrigStatus::Triggered) => ("TRIG'D", GREEN),
             (_, TrigStatus::Auto) => ("AUTO", GREEN),
             (_, TrigStatus::Wait) => ("WAIT", AMBER),
@@ -262,6 +264,20 @@ mod tests {
 
     fn ui() -> Ui {
         crate::ui::testkit::demo_ui()
+    }
+
+    #[test]
+    fn roll_mode_says_roll_not_trigd() {
+        let mut u = ui();
+        u.m.tscale = tscales().iter().position(|&t| t as f64 >= board().roll_tdiv() * 0.999).unwrap();
+        (u.m.tfine, u.m.run, u.m.status) = (1.0, RunState::Run, TrigStatus::Triggered);
+        u.m.auto_roll = true;
+        assert_eq!(u.run_caption().0, "ROLL");
+        assert!(u.hdmi_header().contains("ROLL"));
+        u.m.auto_roll = false;
+        assert_eq!(u.run_caption().0, "TRIG'D");
+        u.m.run = RunState::Stop;
+        assert_eq!(u.run_caption().0, "STOP");
     }
 
     #[test]

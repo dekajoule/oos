@@ -19,7 +19,7 @@
 //! :HISTogram:ENABle|TYPE|SOURce, :HISTogram:STATistics:RESult?,
 //! :MATH<n>:DISPlay|OPERator|SOURce1|SOURce2|SCALe|OFFSet|EXPRession, :MATH<n>:FFT:SOURce|WINDow|SCALe, :MATH<n>:FILTer:TYPE|W1|W2,
 //! :BUS<n>:MODE|DISPlay|FORMat|EVENt|THReshold|DATA?, :BUS<n>:RS232:TX|RX|BAUD|PARity|DBITs, :BUS<n>:IIC:SCLK:SOURce|SDA:SOURce, :BUS<n>:SPI:SCLK:SOURce|MOSI:SOURce|SS:SOURce|DBITs,
-//! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
+//! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance, :BODE:UNIT DB|RATio, :BODE:AMPLitude <Vpp>,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
 //! :DISPlay:DATA? [BMP|PNG], :DISPlay:TYPE|GRADing:TIME|WBRightness|GBRightness|GRID|RULers|COLor,
@@ -256,17 +256,20 @@ fn parse_slot(s: &str) -> Option<usize> {
 
 use crate::model::nearest_step as nearest;
 
+/// What `:WAVeform` reads until a command sets another, and again after `*RST`: CH1, BYTE, NORMal, the whole page.
+const WAV_DEFAULT: (WaveId, u8, u8, u64, u64) = (WaveId::Ch(0), 0, 0, 1, 0);
+
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
         Scpi {
             l: Self::bind(port),
             clients: Vec::new(),
             send_limits: Default::default(),
-            wav_src: WaveId::Ch(0),
-            wav_fmt: 0,
-            wav_mode: 0,
-            wav_start: 1,
-            wav_stop: 0,
+            wav_src: WAV_DEFAULT.0,
+            wav_fmt: WAV_DEFAULT.1,
+            wav_mode: WAV_DEFAULT.2,
+            wav_start: WAV_DEFAULT.3,
+            wav_stop: WAV_DEFAULT.4,
             err: Vec::new(),
             event_status: 0,
             error_serial: 0,
@@ -320,6 +323,29 @@ impl Scpi {
             None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
         }
         None
+    }
+
+    /// The commands every meter has (`:COUNter`, `:DVM`, `:MASK`): the rows of its table (`slices`) and `SOURce`,
+    /// the channel `src` of the model. None when `n` names neither.
+    fn meter_cmd(
+        &mut self,
+        ui: &mut Ui,
+        slices: &[&'static [crate::settings::Setting]],
+        n: &[&str],
+        query: bool,
+        arg: &str,
+        src: fn(&mut Model) -> &mut usize,
+    ) -> Option<Option<Vec<u8>>> {
+        if let Some(row) = crate::settings::command(slices, n) {
+            return Some(self.setting_cmd(ui, row, query, arg));
+        }
+        if n.len() != 1 || !kw(n[0], "SOURce") {
+            return None;
+        }
+        if query {
+            return Some(t(&format!("CHAN{}", (*src(&mut ui.m)).min(n_ch() - 1) + 1)));
+        }
+        Some(self.set_arg(ui, arg, parse_ch(arg), |ui, c| *src(&mut ui.m) = c))
     }
 
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,

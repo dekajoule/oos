@@ -33,12 +33,14 @@ fn timebase_measure_and_system_roots_answer_as_before() {
     line(&mut s, &mut ui, &cv, ":TIM:OFFS 2e-4");
     assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:POS?"), "2.000000E-04");
     assert!(err(&mut s, &mut ui).starts_with("0,"));
-    for bad in [":TIM:SCAL abc", ":TIM:FOO 1", ":TIM", ":MEAS:FOO 1", ":MEAS:SET:FOO?", ":SYST:DEB:FOO?", ":SYST:FOO 1"]
-    {
+    for bad in [":TIM:FOO 1", ":TIM", ":MEAS:FOO 1", ":MEAS:SET:FOO?", ":SYST:DEB:FOO?", ":SYST:FOO 1"] {
         line(&mut s, &mut ui, &cv, bad);
         let got = err(&mut s, &mut ui);
         assert!(got.starts_with("-113,"), "{}: {}", bad, got);
     }
+    // a known header with a bad number is a bad value, not an unknown header
+    line(&mut s, &mut ui, &cv, ":TIM:SCAL abc");
+    assert_eq!(err(&mut s, &mut ui), "-224,\"Illegal parameter value\" abc");
     assert_eq!(line(&mut s, &mut ui, &cv, ":TIM:SCAL?"), "1.000000E-03");
     line(&mut s, &mut ui, &cv, ":MEAS:BURS:IDLE 2e-3");
     assert_eq!(line(&mut s, &mut ui, &cv, ":MEAS:BURS:IDLE?"), "2.000000E-03");
@@ -698,6 +700,18 @@ fn write_only_actions_without_query_suffix_still_execute() {
     assert_eq!(ui.m.trig_level, Model::default().trig_level);
     assert_eq!(ui.m.trig_mode, Model::default().trig_mode);
     assert!(s.err.is_empty());
+}
+
+/// `*RST` puts the waveform transfer back as well: source, mode, format and page.
+#[test]
+fn reset_restores_the_waveform_transfer() {
+    let (mut s, mut ui, cv) = reference_session();
+    let ask = "*IDN?;:WAV:SOUR?;:WAV:MODE?;:WAV:FORM?;:WAV:STAR?;:WAV:STOP?";
+    let before = line(&mut s, &mut ui, &cv, ask);
+    line(&mut s, &mut ui, &cv, ":WAV:SOUR CHAN2;:WAV:MODE RAW;:WAV:FORM WORD;:WAV:STAR 1000;:WAV:STOP 2000");
+    assert_ne!(line(&mut s, &mut ui, &cv, ask), before);
+    line(&mut s, &mut ui, &cv, "*RST");
+    assert_eq!(line(&mut s, &mut ui, &cv, ask), before);
 }
 
 #[test]

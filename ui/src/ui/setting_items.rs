@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 87] = [
+const ITEMS: [(Item, &str); 89] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -66,6 +66,8 @@ const ITEMS: [(Item, &str); 87] = [
     (Item::BodeLink, "bode_link"),
     (Item::BodeSwTime, "bode_sweep time"),
     (Item::BodeSwLog, "bode_sweep log"),
+    (Item::BodeUnit, "bode_unit"),
+    (Item::BodeAmpUnit, "bode_amp_unit"),
     (Item::BodeSyncEdge, "bode_sweep edge"),
     (Item::BodeSyncLvl, "bode_sweep level"),
     (Item::BodeRef, "bode_sweep ref"),
@@ -126,6 +128,10 @@ impl Ui {
     }
 
     pub(super) fn setting_value(&self, it: Item) -> Option<String> {
+        // the Bode amplitude is kept in Vpp and shown in the unit its menu has (#52)
+        if it == Item::BodeAmp && self.m.bode_rms {
+            return Some(si_short(self.m.bode_amp / crate::settings::bode::VPP_PER_VRMS, "Vrms"));
+        }
         row(it).map(|(s, n)| s.shown(&self.m, n))
     }
 
@@ -184,6 +190,7 @@ impl Ui {
                 if self.m.ch[c].on && self.m.run == RunState::Run {
                     self.m.floor_live_tdiv();
                 }
+                self.select_a_channel_that_is_on(c);
             }
             // only a model with the LA port switches it on
             Item::LaOn => self.m.la.on &= crate::ui::la::available(),
@@ -252,6 +259,8 @@ impl Ui {
             | Item::BodeLink
             | Item::BodeSwTime
             | Item::BodeSwLog
+            | Item::BodeUnit
+            | Item::BodeAmpUnit
             | Item::BodeSyncEdge
             | Item::BodeSyncLvl
             | Item::BodeRef => return true,

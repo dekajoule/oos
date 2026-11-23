@@ -822,6 +822,14 @@ fn measurement_queries_read_a_channel_or_a_ref() {
     assert_eq!(ask(&mut s, &mut u, ":BODE:MODE?"), "PSRR");
     ask(&mut s, &mut u, ":BODE:MODE IMP");
     assert_eq!(ask(&mut s, &mut u, ":BODE:MODE?"), "IMP");
+    ask(&mut s, &mut u, ":BODE:UNIT RAT");
+    assert_eq!(ask(&mut s, &mut u, ":BODE:UNIT?"), "RAT");
+    ask(&mut s, &mut u, ":BODE:UNIT DB");
+    assert_eq!(ask(&mut s, &mut u, ":BODE:UNIT?"), "DB");
+    ask(&mut s, &mut u, ":BODE:AMPLitude 0.35");
+    assert_eq!(u.m.bode_amp, 0.35);
+    ask(&mut s, &mut u, ":BODE:AMPL 50");
+    assert_eq!(u.m.bode_amp, 0.35, "50 Vpp is refused");
 
     let mut sq = Vec::new();
     for k in 0..8000 {

@@ -1,8 +1,9 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The settings of the Bode page: their rows in the Bode menu (ui/setting_items.rs) and the command of the mode,
-//! `:BODE:MODE` (the `:BODE` branch of scpi/dispatch.rs; a value it does not take is refused with -224). A change in
+//! The settings of the Bode page: their rows in the Bode menu (ui/setting_items.rs) and the commands of the mode, the
+//! gain unit and the amplitude, `:BODE:MODE`, `:BODE:UNIT`, `:BODE:AMPLitude` (the `:BODE` branch of
+//! scpi/dispatch.rs; a value it does not take is refused with -224). A change in
 //! the menu leaves the rest as it is (no `settings_changed`), as before the table; a new mode also clears the points
 //! of the last sweep.
 //!
@@ -10,20 +11,21 @@
 //! <out> <generator> <address>`, `bode_sweep = <time> <log> <sync> <edge> <level> <input> <ref>` for the free sweep),
 //! so the keys of those rows name a field of a line (`bode start`). store.rs writes and reads the lines by hand, its
 //! numbers with `store::p_f64`: a line sets none of its fields after the first that is wrong, the points are kept
-//! within 2..=1000 and the sync channel 0 counts as 1 (quirks kept). `bode_link` and `bode_mode` are keys of their own,
-//! written by their slices where the keys were, so the keys of a setup file keep their order.
+//! within 2..=1000 and the sync channel 0 counts as 1 (quirks kept). `bode_link`, `bode_mode`, `bode_unit` and
+//! `bode_amp_unit` are keys of their own, written by their slices where the keys were, so the keys of a setup file
+//! keep their order.
 //!
 //! Still written out by hand: the input and the output (the menu offers the waves the screen shows, the free sweep's
 //! input the channels or none), the generator (a list of presets in ui/bode.rs), its address and `:BODE:GENerator`
 //! (one word, `usb` or the address, which sets the connection too), and the sync channel (the menu offers the
 //! channels of the unit).
 
-use super::{Arg, Choice, Scpi, Setting, Ty, Unknown, Val};
+use super::{Arg, Choice, Scpi, Setting, Ty, Unknown, Val, NO_COMMAND_YET};
 use crate::model::{decades, ladder_step, si_short, Slope};
 use oos_dsp::bode::Mode;
 
 /// The slices, for the docs table and the SCPI handler.
-pub const SLICES: [&[Setting]; 4] = [&MODE, &SWEEP, &LINK, &FREE];
+pub const SLICES: [&[Setting]; 6] = [&MODE, &UNIT, &AMP_UNIT, &SWEEP, &LINK, &FREE];
 
 /// The modes by their place in the list.
 const MODES: [Mode; 3] = [Mode::Loop, Mode::Psrr, Mode::Z];
@@ -52,16 +54,80 @@ pub const MODE: [Setting; 1] = [Setting {
     put: |m, _, v| m.bode_mode = MODES[v.index()],
 }];
 
-/// The amplitudes the menu steps along, 1-2-5 over the allowed 10 mVpp .. 20 Vpp.
-pub const AMPS: [f64; 11] = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0];
+/// Written after `bode_mode`.
+pub const UNIT: [Setting; 1] = [Setting {
+    key: "bode_unit",
+    scpi: Scpi::Cmd("UNIT"),
+    ty: Ty::Choice(
+        &[Choice { store: "dB", scpi: "DB", label: "dB" }, Choice { store: "V/V", scpi: "RATio", label: "V/V" }],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Gain unit",
+    #[cfg(test)]
+    doc: "How the plot, the cursor and the title show the gain: in dB, 20 log10(Vout/Vin), or as the linear ratio \
+          Vout/Vin (for PSRR Vin/Vout), whatever the mode measures. The CSV file and `:BODE:DATA?` keep what the mode \
+          stores. The menu changes it on an odd step.",
+    accept: None,
+    step: Some(|m, _, d| odd(m.bode_vv, d)),
+    get: |m, _| Val::Index(m.bode_vv as usize),
+    put: |m, _, v| m.bode_vv = v.index() != 0,
+}];
 
-/// Why the rows but the mode have no command.
-#[cfg(test)]
-const NONE: &str = "none yet: the page is set in its menu and by a setup file";
+/// Written after `bode_unit`.
+pub const AMP_UNIT: [Setting; 1] = [Setting {
+    key: "bode_amp_unit",
+    scpi: Scpi::none("a choice of the menu: `:BODE:AMPLitude` is always Vpp"),
+    ty: Ty::Choice(
+        &[Choice { store: "Vpp", scpi: "", label: "Vpp" }, Choice { store: "Vrms", scpi: "", label: "Vrms" }],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Amp unit",
+    #[cfg(test)]
+    doc: "Whether the menu shows and the number pad takes the amplitude peak to peak or as RMS, Vrms = Vpp / \
+          (2 sqrt 2) for the sine of the sweep. The generator gets Vpp either way. The menu changes it on an odd \
+          step.",
+    accept: None,
+    step: Some(|m, _, d| odd(m.bode_rms, d)),
+    get: |m, _| Val::Index(m.bode_rms as usize),
+    put: |m, _, v| m.bode_rms = v.index() != 0,
+}];
+
+/// The amplitudes the generator takes, Vpp.
+pub const AMP_RANGE: (f64, f64) = (0.01, 20.0);
+
+/// Vpp over Vrms of a sine, 2 sqrt 2.
+pub const VPP_PER_VRMS: f64 = 2.0 * std::f64::consts::SQRT_2;
+
+/// The amplitudes the knob steps along, in the unit the menu shows (#52): 10 mV steps from 10 to 100 mV, 50 mV steps
+/// from there to 20 V.
+fn amp_steps() -> Vec<f64> {
+    (1..=10).map(|k| k as f64 / 100.0).chain((3..=400).map(|k| k as f64 / 20.0)).collect()
+}
+
+/// The amplitude `d` knob steps from `vpp`, in Vpp: along `amp_steps` in Vpp or, with the menu in Vrms, in Vrms;
+/// kept within `AMP_RANGE`.
+fn amp_step(vpp: f64, rms: bool, d: i32) -> f64 {
+    let k = if rms { VPP_PER_VRMS } else { 1.0 };
+    (ladder(&amp_steps(), vpp / k, d) * k).clamp(AMP_RANGE.0, AMP_RANGE.1)
+}
 
 /// `d` steps along the ladder `l` from `x`; a value above all starts from the top.
 fn ladder(l: &[f64], x: f64, d: i32) -> f64 {
-    ladder_step(l, x, d, l.len() - 1)
+    let at = |i: i32| l[i.clamp(0, l.len() as i32 - 1) as usize];
+    // on a step (within rounding): `d` steps from it
+    if let Some(k) = l.iter().position(|&v| (v - x).abs() <= v.abs() * 1e-9) {
+        return at(k as i32 + d);
+    }
+    // between two steps (an amplitude typed on the pad, #52): up to the next step above, down to the next below
+    if d > 0 {
+        l.iter().position(|&v| v > x).map_or(at(l.len() as i32 - 1), |i| at(i as i32 + d - 1))
+    } else if d < 0 {
+        l.iter().rposition(|&v| v < x).map_or(at(0), |j| at(j as i32 + d + 1))
+    } else {
+        ladder_step(l, x, d, l.len() - 1)
+    }
 }
 
 /// The frequencies of a sweep: 1-2-5 from 1 Hz to 5 GHz.
@@ -78,10 +144,7 @@ fn odd(on: bool, d: i32) -> Val {
 pub const SWEEP: [Setting; 4] = [
     Setting {
         key: "bode start",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         ty: Ty::Real { range: None, shown: |x| si_short(x, "Hz") },
         label: "Start freq",
         #[cfg(test)]
@@ -93,10 +156,7 @@ pub const SWEEP: [Setting; 4] = [
     },
     Setting {
         key: "bode stop",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         ty: Ty::Real { range: None, shown: |x| si_short(x, "Hz") },
         label: "Stop freq",
         #[cfg(test)]
@@ -108,15 +168,12 @@ pub const SWEEP: [Setting; 4] = [
     },
     Setting {
         key: "bode points",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         ty: Ty::U32 { min: 5, max: 200, step: 5, unit: "" },
         label: "Points",
         #[cfg(test)]
-        doc: "The number of frequencies of the sweep, logarithmically spaced. The menu steps by 5 from 5 to 200; a \
-              setup line keeps 2 to 1000.",
+        doc: "The number of frequencies of the sweep, spaced as Sweep sets: logarithmically or linearly. The menu \
+              steps by 5 from 5 to 200; a setup line keeps 2 to 1000.",
         accept: None,
         step: None,
         get: |m, _| Val::U32(m.bode_points as u32),
@@ -124,16 +181,15 @@ pub const SWEEP: [Setting; 4] = [
     },
     Setting {
         key: "bode amp",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::Cmd("AMPLitude"),
         ty: Ty::Real { range: None, shown: |x| si_short(x, "Vpp") },
         label: "Amplitude",
         #[cfg(test)]
-        doc: "The amplitude the generator puts out, peak to peak. The menu steps 1-2-5 from 10 mVpp to 20 Vpp.",
-        accept: None,
-        step: Some(|m, _, d| Val::F64(ladder(&AMPS, m.bode_amp, d))),
+        doc: "The amplitude the generator puts out, peak to peak, 10 mVpp to 20 Vpp. The menu shows it in Vpp or Vrms \
+              (Amp unit) and steps by 10 mV up to 100 mV and by 50 mV above; a tap on the value opens the number pad \
+              for any value in that range. The command takes and answers Vpp.",
+        accept: Some(AMP_RANGE),
+        step: Some(|m, _, d| Val::F64(amp_step(m.bode_amp, m.bode_rms, d))),
         get: |m, _| Val::F64(m.bode_amp),
         put: |m, _, v| m.bode_amp = v.real(),
     },
@@ -142,10 +198,7 @@ pub const SWEEP: [Setting; 4] = [
 /// Written after `bode`.
 pub const LINK: [Setting; 1] = [Setting {
     key: "bode_link",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "set with the address by `:BODE:GENerator`",
-    },
+    scpi: Scpi::none("set with the address by `:BODE:GENerator`"),
     ty: Ty::Choice(
         &[Choice { store: "lan", scpi: "", label: "LAN" }, Choice { store: "usb", scpi: "", label: "USB" }],
         Unknown::Text("not lan or usb:"),
@@ -168,10 +221,7 @@ const EDGES: [Slope; 2] = [Slope::Rise, Slope::Fall];
 pub const FREE: [Setting; 5] = [
     Setting {
         key: "bode_sweep time",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         ty: Ty::Real { range: None, shown: |x| si_short(x, "s") },
         label: "Sweep time",
         #[cfg(test)]
@@ -183,10 +233,7 @@ pub const FREE: [Setting; 5] = [
     },
     Setting {
         key: "bode_sweep log",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         // the line keeps the switch as `true` or `false`
         ty: Ty::Choice(
             &[Choice { store: "false", scpi: "", label: "Lin" }, Choice { store: "true", scpi: "", label: "Log" }],
@@ -195,8 +242,9 @@ pub const FREE: [Setting; 5] = [
         ),
         label: "Sweep",
         #[cfg(test)]
-        doc: "Whether the generator sweeps the frequency linearly or logarithmically over the sweep time. The menu \
-              changes it on an odd step.",
+        doc: "Whether the frequencies of the sweep are spaced linearly (equal steps) or logarithmically (equal \
+              ratio), and the frequency axis of the plot with them; with the free sweep also how the generator \
+              sweeps over the sweep time. The menu changes it on an odd step.",
         accept: None,
         step: Some(|m, _, d| odd(m.bode_sw_log, d)),
         get: |m, _| Val::Index(m.bode_sw_log as usize),
@@ -204,10 +252,7 @@ pub const FREE: [Setting; 5] = [
     },
     Setting {
         key: "bode_sweep edge",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         ty: Ty::Choice(
             &[
                 Choice { store: "Rise", scpi: "", label: "Rising" },
@@ -226,10 +271,7 @@ pub const FREE: [Setting; 5] = [
     },
     Setting {
         key: "bode_sweep level",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         ty: Ty::Real { range: None, shown: |x| si_short(x, "V") },
         label: "Sync level",
         #[cfg(test)]
@@ -243,10 +285,7 @@ pub const FREE: [Setting; 5] = [
     },
     Setting {
         key: "bode_sweep ref",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: NONE,
-        },
+        scpi: Scpi::none(NO_COMMAND_YET),
         ty: Ty::Real { range: None, shown: |x| format!("{:.1} dBV", x) },
         label: "Ref level",
         #[cfg(test)]

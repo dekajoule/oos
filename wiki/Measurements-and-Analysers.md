@@ -10,6 +10,8 @@ delay from one channel to another. The pictures on this page come from a host ru
 
 The values stand in the strip under the plot, one line per source, with the source's name in its colour. A default
 set-up shows six measurements of CH1: Pk-pk, Freq, Mean, RMS, Rise and +Duty. They are measured again on every record.
+A tap on a value opens **Selected** (below) with that measurement in focus, to remove it or open its settings; a tap on
+the strip beside the values opens the same list.
 
 ![Measurement strip](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-strip.png)
 
@@ -19,7 +21,8 @@ the values come in exponent form.
 
 ### Adding a measurement
 
-1. Tap **Measure** in the top bar (or Menu > Measure; on a USB keyboard the key M). The measurement page opens.
+1. Press the **Measure** key (or Menu > Measure; on a USB keyboard the key M). The measurement page opens. Held, the
+   Measure key adds the next usual measurement at once: Vpp, Freq, Period, Vrms, Vavg, Rise, then the rest.
 2. On the left pick the category: **Basic**, **Two sources**, **Serial & PAM**, **Jitter & eye**, **Power**,
    **Motor drive**, **Power rails** or **Double pulse**.
 3. At the top pick the **Source**: a channel or a reference. Categories that compare signals have two to four sources
@@ -145,6 +148,16 @@ at the top right, which lead to **Exit**, **Settings** and what fits the view.
 
 If the source of an analyser is switched off, choose another one in its Settings. From 0.1.1 on it takes the first channel that is on by itself.
 
+The Bode plot shows the gain above and the phase below over the frequency. **Sweep** (Lin or Log) spaces the
+frequencies of the sweep in equal steps or at an equal ratio, and the frequency axis follows it: linear with lines at
+round steps, or logarithmic with a line per decade. **Gain unit** shows the gain in dB or as the linear ratio V/V,
+whatever the mode measures; the phase is always in degrees. An output of 0 has no value in dB and is left out of the
+curve. Both axes carry their values at round steps; the title line of each half names its whole range. Once a
+sweep has points, **Save CSV** in the Bode menu writes them where **Storage > Save to** points, as `bode-....csv`:
+frequency in Hz, gain in dB (or Vout/Vin) and phase in degrees, one line a point. Over SCPI `:BODE:DATA?` returns the
+same points. With the menu closed, the **Multipurpose 2** knob moves the cursor from point to point, so the menu
+does not cover the plot while you read it.
+
 ### Bode with an external generator
 
 In **Analysers > Bode** pick the Generator preset by the commands the generator takes: **APPL** (Rigol DG, `:APPL`),
@@ -157,8 +170,10 @@ Then **Connection**:
   without one the sweep stops with the reason (no USB device, a device that is not USBTMC, no permission). Rigol DG
   and Siglent SDG generators are USBTMC instruments as well. So far this is tested with a simulated device only.
 
-The scope sets channel 1 of the generator to a sine of **Amplitude** (Vpp) without offset, switches its output on and
-steps through the frequencies. Over SCPI, `:BODE:GENerator "usb"` selects USB and
+The scope sets channel 1 of the generator to a sine of **Amplitude** without offset, switches its output on and
+steps through the frequencies. - and + step the amplitude by 10 mV up to 100 mV and by 50 mV above, up to 20 Vpp; a
+tap on the value opens the number pad for any value from 10 mVpp to 20 Vpp. **Amp unit** shows and takes it peak to
+peak (Vpp) or as RMS of the sine (Vrms = Vpp / 2.83); the generator always gets Vpp, as `:BODE:AMPLitude` does. Over SCPI, `:BODE:GENerator "usb"` selects USB and
 `:BODE:GENerator "192.168.1.20:5025"` the LAN again.
 
 The **CHANnel** preset sends `:CHANnel1:MODe CONTINUE`, `:CHANnel1:BASE:WAVe SINe`, `:CHANnel1:AMPLitude:UNIT VPP`,

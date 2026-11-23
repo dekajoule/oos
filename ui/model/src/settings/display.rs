@@ -91,10 +91,7 @@ pub const VIEW: [Setting; 5] = [
 /// Written after `windows`.
 pub const DENSITY: [Setting; 1] = [Setting {
     key: "density",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a choice of the screen's layout, not of the measurement",
-    },
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
     ty: Ty::Choice(
         &[
             Choice { store: "Scope", scpi: "", label: "Scope" },
@@ -119,10 +116,7 @@ pub const DENSITY: [Setting; 1] = [Setting {
 /// Written first of the panes and the views, after the decoders and the bus.
 pub const PANE: [Setting; 1] = [Setting {
     key: "pane",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a choice of the screen's layout, not of the measurement",
-    },
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
     ty: Ty::Custom(&PANE_IO),
     label: "Lower",
     #[cfg(test)]
@@ -162,10 +156,7 @@ pub const DRAW: [Setting; 4] = [
     },
     Setting {
         key: "bar",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: "a choice of the screen's layout, not of the measurement",
-        },
+        scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
         ty: Ty::Choice(
             &[
                 Choice { store: "cards", scpi: "", label: "Cards" },
@@ -184,10 +175,7 @@ pub const DRAW: [Setting; 4] = [
     },
     Setting {
         key: "hdmi",
-        scpi: Scpi::None {
-            #[cfg(test)]
-            why: "a choice of the screen's layout, not of the measurement",
-        },
+        scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
         ty: Ty::Choice(
             &[
                 Choice { store: "Mirror", scpi: "", label: "Mirror" },
@@ -214,10 +202,7 @@ pub const DRAW: [Setting; 4] = [
 /// Written after `quick`.
 pub const TEXT: [Setting; 1] = [Setting {
     key: "text_size",
-    scpi: Scpi::None {
-        #[cfg(test)]
-        why: "a choice of the screen's layout, not of the measurement",
-    },
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
     ty: Ty::Choice(
         &[
             Choice { store: "Normal", scpi: "", label: "Normal" },
@@ -238,15 +223,7 @@ pub const TEXT: [Setting; 1] = [Setting {
 
 const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
 
-const PERSIST_LABELS: [&str; PERSIST.len()] = {
-    let mut a = [""; PERSIST.len()];
-    let mut i = 0;
-    while i < a.len() {
-        a[i] = PERSIST[i].0;
-        i += 1;
-    }
-    a
-};
+const PERSIST_LABELS: [&str; PERSIST.len()] = super::names(&PERSIST);
 
 /// An index into `PERSIST` in a setup; over SCPI `MIN`, `INFinite` or seconds, snapped to the nearest time of the
 /// ladder.
@@ -277,15 +254,7 @@ const DOTS_IO: CustomIo = CustomIo {
     store: |v| (v.index() != 0).to_string(),
     load: |t| crate::words::p_bool(t).map(Val::Bool),
     query: |v| if v.index() != 0 { "DOTS" } else { "VECT" }.to_string(),
-    take: |a| {
-        if crate::words::kw(a, "VECTors") {
-            Some(Val::Bool(false))
-        } else if crate::words::kw(a, "DOTS") {
-            Some(Val::Bool(true))
-        } else {
-            None
-        }
-    },
+    take: |a| super::switch_word(a, "VECTors", "DOTS"),
     labels: &["Off", "On"],
     #[cfg(test)]
     values: "`DOTS`, `VECTors`; the query answers `DOTS` or `VECT`",
@@ -299,7 +268,7 @@ fn persist_index(arg: &str) -> Option<usize> {
     if crate::words::kw(a, "INFinite") {
         return Some(PERSIST.len() - 1);
     }
-    let v = a.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0)?;
+    let v = crate::words::num64(a).filter(|v| *v >= 0.0)?;
     // the f32 seconds of PERSIST in f64 as written (whole milliseconds), so a time half-way picks as before
     let times: Vec<f64> = PERSIST.iter().filter(|p| p.1 >= 0.0).map(|p| (p.1 as f64 * 1e3).round() / 1e3).collect();
     Some(crate::words::nearest_index(&times, v))

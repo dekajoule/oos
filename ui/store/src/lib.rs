@@ -374,6 +374,8 @@ fn analysis_more_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("meas_full_record", m.meas_full_record.to_string());
     kv("spec_acpr", format!("{} {}", m.spec_acpr_w, m.spec_acpr_s));
     crate::settings::write(&crate::settings::bode::MODE, m, 0, kv);
+    crate::settings::write(&crate::settings::bode::UNIT, m, 0, kv);
+    crate::settings::write(&crate::settings::bode::AMP_UNIT, m, 0, kv);
     kv(
         "eye_more",
         format!(
@@ -595,8 +597,8 @@ pub fn parse_ref_looks(text: &str, n: usize) -> Vec<Option<RefLook>> {
         let l = out[i].get_or_insert_with(RefLook::default);
         match key {
             "on" => l.on = v.parse().ok(),
-            "vdiv" => l.vdiv = v.parse().ok().filter(|x: &f32| x.is_finite() && *x > 0.0),
-            "offset" => l.offset = v.parse().ok().filter(|x: &f32| x.is_finite()),
+            "vdiv" => l.vdiv = words::num(v).filter(|x| *x > 0.0),
+            "offset" => l.offset = words::num(v),
             "color" => l.color = v.parse().ok(),
             "name" => l.label = Some(v.to_string()),
             _ => {}

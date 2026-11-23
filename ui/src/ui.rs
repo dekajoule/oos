@@ -76,7 +76,6 @@ mod tables;
 mod tools;
 mod trigger_controls;
 mod update;
-mod upper;
 mod viewmore;
 mod windows;
 mod wlan;
@@ -223,6 +222,8 @@ pub const LAYS: [Lay; 3] = [
 const DLG_HEAD: i32 = 50;
 const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
+/// The field with the entry above the keys of an entry pad (ADR 0077).
+const PAD_ENTRY_H: i32 = 62;
 /// records kept for history playback
 const HISTORY: usize = 200;
 /// Seconds the trigger level line stays after the level changed.
@@ -253,6 +254,8 @@ const LABEL: Rgb = rgb(0xc8, 0xc8, 0xc8);
 const DIM: Rgb = rgb(0x90, 0x90, 0x92);
 const AXIS_TEXT: Rgb = rgb(0xa4, 0xa4, 0xa6);
 const DARK_TEXT: Rgb = rgb(0x0a, 0x0a, 0x0b);
+/// What dims the screen behind a dialog that takes the input (the power dialog, an entry pad).
+const SHADE: Rgb = rgb(0, 0, 0);
 const ACCENT: Rgb = rgb(0xf4, 0xf4, 0xf4);
 const GREEN: Rgb = rgb(0x3f, 0xb9, 0x50);
 const RED: Rgb = rgb(0xf8, 0x51, 0x49);
@@ -290,6 +293,10 @@ pub mod key {
     pub const GI: u8 = 0x03;
     pub const HMENU: u8 = 0x04;
     pub const NAVIGATE: u8 = 0x05;
+    /// History keys: `<` steps back to older records, `>` forward to newer ones, play-stop goes live.
+    pub const NAV_BACK: u8 = 0x06;
+    pub const NAV_PLAY: u8 = 0x07;
+    pub const NAV_FWD: u8 = 0x08;
     pub const CLEAR: u8 = 0x0b;
     pub const SLOPE: u8 = 0x09;
     pub const FORCE: u8 = 0x0a;
@@ -388,9 +395,9 @@ const KEYPAD: [&str; 19] =
 pub const LONG_PRESS: f64 = 0.6;
 
 pub const KEY_NAMES: [(&str, u8); 30] = [
-    ("navfwd", 0x06),
-    ("navplay", 0x07),
-    ("navback", 0x08),
+    ("navback", key::NAV_BACK),
+    ("navplay", key::NAV_PLAY),
+    ("navfwd", key::NAV_FWD),
     ("ref", 0x01),
     ("la", 0x02),
     ("gi", 0x03),
@@ -443,8 +450,6 @@ pub enum MenuId {
     Acquire,
     Measure,
     MeasAdd,
-    /// short menu from a press-and-hold on Measure; Add meas is its shortcut
-    MeasHold,
     /// delay and phase between two channels
     MeasPair,
     /// digital voltmeter and counter (ui/tools.rs)
@@ -622,10 +627,6 @@ struct TouchState {
     y0: i32,
     x: i32,
     y: i32,
-    /// `Ui::now` when the finger went down
-    t0: f64,
-    /// a press-and-hold already opened its menu; the lift is not a tap
-    held: bool,
     drag: Drag,
     start_offset: f32,
     start_delay: f32,
@@ -774,8 +775,6 @@ pub struct Ui {
     dialog: Option<Vec<String>>,
     /// System info page (sysinfo.rs)
     sysinfo: sysinfo::Page,
-    /// System > Probe optional memory: the request to the thread (upper.rs)
-    upper: upper::State,
     touch: TouchState,
     /// what the input keeps between two events: keys and fingers held, knob times, the zone path, the pinch (input.rs)
     input: input::State,
@@ -998,6 +997,8 @@ impl Ui {
 enum Ctl {
     /// segmented buttons: options, selected
     Seg(Vec<String>, Option<usize>),
+    /// an on/off setting: one field with its state and a slide switch, a tap anywhere on it switches (ADR 0075)
+    Switch(bool),
     /// - value +
     Value,
     /// - value +, the value opens the list of all options (MenuId::Pick)

@@ -346,7 +346,7 @@ impl Scpi {
             let pct = if high { ui.m.meas_hpct } else { ui.m.meas_lpct };
             return Some(format!("{}", (pct * 100.0).round() as i32).into_bytes());
         }
-        let Some(pct) = arg.trim().parse::<f64>().ok().filter(|v| (0.0..=100.0).contains(v)) else {
+        let Some(pct) = num64(arg).filter(|v| (0.0..=100.0).contains(v)) else {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         };

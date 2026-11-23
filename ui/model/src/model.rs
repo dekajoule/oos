@@ -22,6 +22,7 @@ pub mod la;
 mod limits;
 mod math;
 mod trigger;
+mod trigger_kept;
 
 pub use acquisition::*;
 pub use analysers::*;
@@ -32,6 +33,7 @@ pub use generator::*;
 pub use limits::*;
 pub use math::*;
 pub use trigger::*;
+pub use trigger_kept::*;
 
 /// Channel slots of the UI state: the largest model of the board (smaller models use the first `n_ch()`). The board
 /// of the build has as many (`platform.rs` holds it to that at compile time).
@@ -302,6 +304,8 @@ pub struct Model {
     pub nth_n: u32,
     pub setup: f32,
     pub hold: f32,
+    /// what each trigger type and each channel as the source kept while another was chosen (#49); not part of a setup
+    pub trig_kept: TrigKept,
     pub run: RunState,
     pub status: TrigStatus,
     pub acq: AcqMode,
@@ -536,6 +540,10 @@ pub struct Model {
     pub bode_addr: String,
     /// loop gain, PSRR, or the linear Vout/Vin ratio
     pub bode_mode: oos_dsp::bode::Mode,
+    /// the gain axis, the cursor and the title in V/V instead of dB (#51); the points keep what the mode measures
+    pub bode_vv: bool,
+    /// the menu shows and the pad takes the amplitude in Vrms instead of Vpp (#52); `bode_amp` stays Vpp
+    pub bode_rms: bool,
     /// burst idle (0 = one period), which side Time Outside counts, and Duration N
     pub meas_idle: f64,
     pub meas_out: oos_dsp::measure::Outside,
@@ -598,7 +606,7 @@ pub struct Model {
     /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
     pub bode_usb: bool,
     /// Bode with a generator that sweeps on its own (`model::bode::FREE`, same start/stop): sweep time (s), logarithmic
-    /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
+    /// (else linear; for every generator also the spacing of the frequencies and the frequency axis, #51), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
     /// `bode_ref` dBV)
     pub bode_sw_time: f64,
     pub bode_sw_log: bool,
@@ -685,24 +693,7 @@ pub fn si(v: f64, unit: &str) -> String {
     si_digits(v, unit, 3)
 }
 
-/// SI prefixes from tera to pico, the largest first.
-pub const SI_PREFIXES: [(f64, &str); 9] = [
-    (1e12, "T"),
-    (1e9, "G"),
-    (1e6, "M"),
-    (1e3, "k"),
-    (1.0, ""),
-    (1e-3, "m"),
-    (1e-6, "\u{b5}"),
-    (1e-9, "n"),
-    (1e-12, "p"),
-];
-
-/// The prefix of `SI_PREFIXES[from..]` for the magnitude `a`: the largest it reaches (half a per mille short counts),
-/// pico below them all.
-pub fn si_prefix(a: f64, from: usize) -> (f64, &'static str) {
-    SI_PREFIXES[from..].iter().copied().find(|(m, _)| a >= *m * 0.9995).unwrap_or((1e-12, "p"))
-}
+pub use oos_dsp::{si_prefix, SI_PREFIXES};
 
 pub fn si_digits(v: f64, unit: &str, digits: usize) -> String {
     if !v.is_finite() {
@@ -733,10 +724,8 @@ pub fn si_short(v: f64, unit: &str) -> String {
 pub fn si_trimmed(v: f64, unit: &str, digits: usize) -> String {
     let s = si_digits(v, unit, digits);
     match s.split_once(' ') {
-        Some((num, rest)) if num.contains('.') => {
-            format!("{} {}", num.trim_end_matches('0').trim_end_matches('.'), rest)
-        }
-        _ => s,
+        Some((num, rest)) => format!("{} {}", oos_dsp::trim_zeros(num), rest),
+        None => s,
     }
 }
 

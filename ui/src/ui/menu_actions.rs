@@ -141,8 +141,23 @@ impl Ui {
         self.dirty_map = true;
     }
 
-    /// Switches the trigger type and sets starting values that trigger on the demo signals.
+    /// Switches the trigger type. The type left keeps its values, a type chosen again gets them back (#49,
+    /// `Model::keep_trig_type`); on a scope and a record the source stays. The demo is the exception: there a type
+    /// starts on the channel that shows its signal, with values that trigger on it (`switch_trig_type`), and its own
+    /// kept values go over them.
     pub(super) fn set_trig_type(&mut self, t: TrigType) {
+        self.m.keep_trig_type();
+        self.switch_trig_type(t);
+        if self.m.take_kept_trig_type() {
+            // a reference kept as the second source that is no longer loaded: the channel instead
+            if self.m.trig_ref2.is_some_and(|i| i >= NREF || self.refs[i].is_none()) {
+                self.m.trig_ref2 = None;
+            }
+            self.dirty_map = true;
+        }
+    }
+
+    fn switch_trig_type(&mut self, t: TrigType) {
         let was_bus = self.m.trig_type == TrigType::Bus;
         // leaving Bus: off again what entering it switched on (the decoder kept the live picture raw, its demo sources
         // stayed on); a type set elsewhere since leaves nothing to undo
@@ -308,12 +323,10 @@ impl Ui {
 
     pub(super) fn adjust(&mut self, it: Item, d: i32) {
         if matches!(it, Item::CatSourceC | Item::CatSourceD) {
-            let current = if it == Item::CatSourceC { self.cat.c } else { self.cat.d };
-            let next = self.step_wave(current, d);
             if it == Item::CatSourceC {
-                self.cat.c = next;
+                self.cat.c = self.step_wave(self.cat.c, d);
             } else {
-                self.cat.d = next;
+                self.cat.d = self.step_wave(self.cat.d, d);
             }
             return;
         }
@@ -483,14 +496,8 @@ impl Ui {
         let m = &mut self.m;
         match it {
             Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
-            Item::MeasSrc => {
-                let cur = self.sources.a;
-                self.sources.a = self.step_wave(cur, d);
-            }
-            Item::MeasSrcB => {
-                let cur = self.sources.b;
-                self.sources.b = self.step_wave(cur, d);
-            }
+            Item::MeasSrc => self.sources.a = self.step_wave(self.sources.a, d),
+            Item::MeasSrcB => self.sources.b = self.step_wave(self.sources.b, d),
             // Track cursor B on its own source (follows cursor A's until set)
             Item::CurSrcB => {
                 let cur = self.cursor_b_source();
@@ -792,8 +799,8 @@ impl Ui {
             }
             Item::SlopeAct => self.key(key::SLOPE),
             Item::NavHist => self.key(key::NAVIGATE),
-            Item::NavBack => self.key(0x08),
-            Item::NavFwd => self.key(0x06),
+            Item::NavBack => self.key(key::NAV_BACK),
+            Item::NavFwd => self.key(key::NAV_FWD),
             Item::QuickRun => {
                 self.close_menu();
                 self.quick();
@@ -869,11 +876,6 @@ impl Ui {
     /// `activate` of an action: the measurements, math, references. True when `it` is one of them.
     fn activate_measure(&mut self, it: Item) -> bool {
         match it {
-            Item::AddMeas => {
-                if let Some(k) = self.next_usual_meas() {
-                    self.activate(Item::MeasAdd(k));
-                }
-            }
             Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
             Item::MeasAdd(k) => {
                 let e = (k, self.sources.a);

@@ -26,76 +26,25 @@ impl Ui {
         self.menu_history = history;
     }
 
-    /// How long a finger stays down on Measure before the short menu opens. A shorter press is a tap.
-    const MEAS_HOLD_S: f64 = 0.45;
-
-    /// Usual measurements, in the order the Add meas shortcut offers them. Anything left follows `ALL_MEAS`.
+    /// Usual measurements, in the order a long press of Measure adds them. Anything left follows `ALL_MEAS`.
     const USUAL_MEAS: [Meas; 6] = [Meas::Vpp, Meas::Freq, Meas::Period, Meas::Vrms, Meas::Vavg, Meas::Rise];
 
-    /// The next usual measurement that is not already on the measure source.
-    pub(super) fn next_usual_meas(&self) -> Option<Meas> {
+    /// A long press of the Measure key: the next usual measurement that is not already on the measure source.
+    pub(super) fn add_usual_meas(&mut self) {
         let src = self.sources.a;
         let on = |k: Meas| self.m.meas.iter().any(|e| e.0 == k && e.1 == src);
-        Self::USUAL_MEAS.into_iter().chain(ALL_MEAS).find(|k| !on(*k))
+        if let Some(k) = Self::USUAL_MEAS.into_iter().chain(ALL_MEAS).find(|k| !on(*k)) {
+            self.activate(Item::MeasAdd(k));
+        }
     }
 
-    /// Rectangle of the Measure button on the top bar.
-    pub(super) fn measure_btn(&self) -> Option<Rect> {
-        self.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).map(|b| b.2)
-    }
-
-    fn on_measure_btn(&self, x: i32, y: i32) -> bool {
-        self.measure_btn().is_some_and(|r| self.top_hit(r).contains(x, y))
-    }
-
-    /// A tap on Measure opens the measurement list. Press again to close it.
+    /// The Measure key opens the measurement list. Press again to close it.
     pub(super) fn open_meas_list(&mut self) {
         self.ensure_meas_own();
         if self.menu_open && self.menu == MenuId::MeasAdd {
             self.close_menu();
         } else {
             self.open_menu(MenuId::MeasAdd);
-        }
-    }
-
-    /// A finger held on Measure opens the short menu. The lift is handled by `meas_hold_up`, not as a tap.
-    pub(super) fn meas_hold_tick(&mut self) {
-        let t = &self.touch;
-        if !t.down
-            || t.held
-            || self.m.touch_lock
-            || self.full_on()
-            || self.dialog.is_some()
-            || self.power.open
-            || self.wlan.osk.is_some()
-        {
-            return;
-        }
-        if t.drag != Drag::None && t.drag != Drag::Pending {
-            return;
-        }
-        if (t.x - t.x0).abs() > 12 || (t.y - t.y0).abs() > 12 || self.now - t.t0 < Self::MEAS_HOLD_S {
-            return;
-        }
-        if !self.on_measure_btn(t.x0, t.y0) {
-            return;
-        }
-        self.touch.held = true;
-        self.open_menu(MenuId::MeasHold);
-    }
-
-    /// Lift after the short menu opened. On the Measure button, or on Add meas, that shortcut runs.
-    /// A lift anywhere else leaves the menu so the shortcut can still be tapped.
-    pub(super) fn meas_hold_up(&mut self, x: i32, y: i32) {
-        if !(self.menu_open && self.menu == MenuId::MeasHold) {
-            return;
-        }
-        if self.tap_menu(x, y) {
-            return;
-        }
-        if self.on_measure_btn(x, y) {
-            self.activate(Item::AddMeas);
-            self.close_menu();
         }
     }
 
@@ -256,6 +205,9 @@ impl Ui {
                 let opts = self.options(it);
                 let n = opts.len() as i32;
                 let f = self.fonts();
+                if k == Kind::Choice && Self::on_off_options(&opts) {
+                    return Ctl::Switch(self.value(it) == "On");
+                }
                 if n == 0 {
                     Ctl::Value
                 } else if k == Kind::Choice && opts.iter().all(|o| f.mb.width(o) + 12 <= (w - (n - 1) * 4) / n) {
@@ -394,8 +346,11 @@ impl Ui {
         let grid = items.iter().all(|&it| Self::kind(it) == Kind::Action);
         let wide = self.pick.is_some_and(|p| Self::wide_pick(p.it));
         let l = self.lay();
-        let (cols, cw, rh, gap) = if self.menu == MenuId::MeasHold {
-            (1, 220 + l.grid_col - 150, DLG_ROW, 16)
+        // an entry pad: larger keys under a field with the entry, centred on the dimmed screen (ADR 0077)
+        let pad = self.pad_entry().is_some();
+        let (kh, top_extra) = if pad { (DLG_CTRL + 14, PAD_ENTRY_H) } else { (DLG_CTRL, 0) };
+        let (cols, cw, rh, gap) = if pad {
+            (4, l.grid_col + 36, DLG_ROW + 16, 10)
         } else if wide {
             (2, l.dlg_col, DLG_ROW + 2, 8)
         } else if self.menu == MenuId::ViewMore {
@@ -422,15 +377,20 @@ impl Ui {
         let scrolls = shown < nrows;
         let lines_w = cols * cw + (cols - 1) * gap;
         let w = 24 + lines_w + if scrolls { scroll::BAR_W + 4 } else { 0 };
-        let h = DLG_HEAD + shown * rh + 6;
+        let h = DLG_HEAD + top_extra + shown * rh + 6;
         let (ax, top) = self.menu_anchor();
-        let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
-        let y = if top { fr.top.bottom() + 4 } else { (fr.bottom.y - 4 - h).max(fr.top.bottom() + 4) };
+        let (above, below) = (fr.top.bottom() + 4, fr.bottom.y - 4);
+        let (x, y) = if pad {
+            (((self.scr.w - w) / 2).max(METRICS.edge), (above + (below - above - h) / 2).max(above))
+        } else {
+            let x = (ax - w / 2).clamp(METRICS.edge, self.scr.w - METRICS.edge - w);
+            (x, if top { above } else { (below - h).max(above) })
+        };
         let r = Rect::new(x, y, w, h);
         let close = Rect::new(r.x + r.w - 52, r.y + 6, 44, DLG_CTRL);
         let back = self.parent.map(|_| Rect::new(close.x - 88, close.y, 82, DLG_CTRL));
         let bar = scrolls.then(|| {
-            let area = Rect::new(r.x + 12, r.y + DLG_HEAD, lines_w, shown * rh - (rh - DLG_CTRL));
+            let area = Rect::new(r.x + 12, r.y + DLG_HEAD + top_extra, lines_w, shown * rh - (rh - kh));
             let track = Rect::new(area.right() + 4, area.y, scroll::BAR_W, area.h);
             (scroll::Bar { track, total: nrows, shown, pos: first }, area)
         });
@@ -441,7 +401,7 @@ impl Ui {
                 let (col, row) = (i % cols, i / cols);
                 // a line scrolled out of the window has no place: it is neither drawn nor hit
                 let ctrl = if (first..first + shown).contains(&row) {
-                    Rect::new(r.x + 12 + col * (cw + gap), r.y + DLG_HEAD + (row - first) * rh, cw, DLG_CTRL)
+                    Rect::new(r.x + 12 + col * (cw + gap), r.y + DLG_HEAD + top_extra + (row - first) * rh, cw, kh)
                 } else {
                     Rect::new(r.x, r.y, 0, 0)
                 };
@@ -469,7 +429,8 @@ impl Ui {
         let Some(p) = self.pick else { return (lines, 0) };
         let fr = self.frame();
         let room = fr.bottom.y - 4 - (fr.top.bottom() + 4);
-        let fit = ((room - DLG_HEAD - 6) / rh).max(1);
+        let entry = if self.pad_entry().is_some() { PAD_ENTRY_H } else { 0 };
+        let fit = ((room - DLG_HEAD - entry - 6) / rh).max(1);
         if lines <= fit {
             return (lines, 0);
         }
@@ -603,8 +564,61 @@ impl Ui {
     }
 
     /// Value control parts: minus, value, plus.
+    /// Options that are just Off and On: such a row is a switch (ADR 0075).
+    fn on_off_options(opts: &[String]) -> bool {
+        opts.len() == 2 && opts.iter().any(|o| o == "On") && opts.iter().any(|o| o == "Off")
+    }
+
+    /// The parts of a switch whose control is `c`: the room of its state text on the left, the track on the right.
+    pub(super) fn switch_parts(c: Rect) -> (Rect, Rect) {
+        let th = (c.h - 16).clamp(16, 26);
+        let tw = th * 2 - 4;
+        let track = Rect::new(c.x + c.w - 12 - tw, c.y + (c.h - th) / 2, tw, th);
+        (Rect::new(c.x + 14, c.y, track.x - c.x - 22, c.h), track)
+    }
+
+    /// A switch in its control `c`: one field, the state on the left, the switch on the right. On, the field is the
+    /// accent like a chosen segment or an active button, and the switch inverts on it: a dark track, the knob in the
+    /// accent on the right. Off, a dark field, a grey track, the knob on the left.
+    fn draw_switch(&self, cv: &mut Canvas, c: Rect, on: bool) {
+        if on {
+            cv.round(c, 5, ACCENT, 255);
+        } else {
+            btn(cv, c, BTN, BTN_BORDER);
+        }
+        let (txt, track) = Self::switch_parts(c);
+        cv.text_in(&self.fonts().mb, txt, 0, if on { "On" } else { "Off" }, if on { DARK_TEXT } else { DIM });
+        let r = track.h / 2;
+        if on {
+            cv.round(track, r, DARK_TEXT, 255);
+            cv.circle(track.x + track.w - r, track.y + r, r - 3, ACCENT);
+        } else {
+            cv.round(track, r, BTN_BORDER, 255);
+            cv.circle(track.x + r, track.y + r, r - 3, DIM);
+        }
+    }
+
     pub(super) fn value_parts(c: Rect) -> (Rect, Rect, Rect) {
         (Rect::new(c.x, c.y, 44, c.h), Rect::new(c.x + 48, c.y, c.w - 96, c.h), Rect::new(c.x + c.w - 44, c.y, 44, c.h))
+    }
+
+    /// An entry pad (ADR 0077): the dimmed screen, the dialog's frame, and the entry so far large in a field above the
+    /// keys (the row's value dim until something is typed). Any other dialog: its frame.
+    fn draw_pad_entry(&self, cv: &mut Canvas, d: &Dlg) {
+        let entry = self.pad_entry();
+        if entry.is_some() {
+            cv.blend(self.scr.rect(), SHADE, 160);
+        }
+        cv.framed(d.r, 8, 2, ACCENT, 7, DLG_BG);
+        let Some((_, value)) = entry else { return };
+        let field = Rect::new(d.r.x + 12, d.r.y + DLG_HEAD, d.r.w - 24, PAD_ENTRY_H - 10);
+        btn(cv, field, BTN, ACCENT);
+        let inner = Rect::new(field.x + 16, field.y, field.w - 32, field.h);
+        let xl = &self.fonts().xl;
+        match self.pad_now() {
+            Some(now) => cv.text_in(xl, inner, 2, &now, DIM),
+            None => cv.text_in(xl, inner, 2, &value, TEXT),
+        }
     }
 
     pub(super) fn draw_menu(&self, cv: &mut Canvas) {
@@ -617,7 +631,7 @@ impl Ui {
         }
         let Some(d) = self.dlg_layout() else { return };
         let f = self.fonts();
-        cv.framed(d.r, 8, 2, ACCENT, 7, DLG_BG);
+        self.draw_pad_entry(cv, &d);
         let tcol = match self.menu_root() {
             MenuId::Channel(c) => CH_COLORS[c],
             _ => TEXT,
@@ -681,6 +695,7 @@ impl Ui {
                         }
                     }
                 }
+                Ctl::Switch(on) => self.draw_switch(cv, c, *on),
                 Ctl::Text => {
                     let v = self.value(row.it);
                     cv.text_in(self.text_row_font(c.w, &v), c, 1, &v, TEXT)
@@ -742,7 +757,7 @@ impl Ui {
                 }
             }
             if focus {
-                if let Ctl::Seg(..) = row.ctl {
+                if let Ctl::Seg(..) | Ctl::Switch(_) = row.ctl {
                     cv.round_outline(Rect::new(c.x - 3, c.y - 3, c.w + 6, c.h + 6), 7, ACCENT);
                 }
             }
@@ -813,6 +828,7 @@ impl Ui {
                     let k = ((x - row.ctrl.x) * n / row.ctrl.w).clamp(0, n - 1) as usize;
                     self.select_option(row.it, &opts[k]);
                 }
+                Ctl::Switch(on) => self.select_option(row.it, if *on { "Off" } else { "On" }),
                 Ctl::Value | Ctl::Pick => {
                     let (mi, _, pl) = Self::value_parts(row.ctrl);
                     if mi.contains(x, y) {
@@ -853,7 +869,7 @@ impl Ui {
         let f = self.fonts();
         self.draw_osk(cv);
         if self.power.open {
-            cv.blend(self.scr.rect(), rgb(0, 0, 0), 160);
+            cv.blend(self.scr.rect(), SHADE, 160);
             let (r, [off, restart, cancel]) = self.pwr_layout();
             cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
             cv.text_in(&f.lb, Rect::new(r.x, r.y + 18, r.w, 28), 1, "Power", ACCENT);

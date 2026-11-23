@@ -359,3 +359,64 @@ fn a_changed_value_set_over_scpi_reads_back() {
         }
     }
 }
+
+// Break it catches: a known header whose value was bad answered -113 "Undefined header" (#120): its setter answered
+// None for the value as for a header it did not know, and the dispatcher went on to the end of its branches. By IEEE
+// 488.2 -113 is a header that is not known; a bad value of a known one is -224 with the value, and changes nothing
+#[test]
+fn a_bad_value_of_a_known_header_is_224_and_an_unknown_header_113() {
+    let mut bad = vec![
+        (":TRIGger:HOLDoff", "11", ":TRIGger:HOLDoff?"),
+        (":CHANnel1:OFFSet", "1e39", ":CHANnel1:OFFSet?"),
+        (":CHANnel1:PROBe", "0", ":CHANnel1:PROBe?"),
+        (":ACQuire:MDEPth", "200M", ":ACQuire:MDEPth?"),
+        (":ACQuire:MDEPth", "7", ":ACQuire:MDEPth?"),
+        (":TRIGger:EDGE:SOURce", "D0", ":TRIGger:EDGE:SOURce?"),
+        (":CHANnel1:SCALe", "-1", ":CHANnel1:SCALe?"),
+        (":CHANnel1:BWLimit", "x", ":CHANnel1:BWLimit?"),
+        (":CHANnel1:DISPlay", "x", ":CHANnel1:DISPlay?"),
+        (":TRIGger:SWEep", "x", ":TRIGger:SWEep?"),
+        (":TRIGger:EDGE:LEVel", "x", ":TRIGger:EDGE:LEVel?"),
+        (":ACQuire:CORes", "x", ":ACQuire:CORes?"),
+        (":ACQuire:SEGMents", "x", ":ACQuire:SEGMents?"),
+        (":ACQuire:SEGMents:INTerval", "x", ":ACQuire:SEGMents:INTerval?"),
+        (":TIMebase:MAIN:SCALe", "x", ":TIMebase:MAIN:SCALe?"),
+        (":TIMebase:MAIN:OFFSet", "x", ":TIMebase:MAIN:OFFSet?"),
+        (":TRIGger:RS232:WIDTh", "9", ":TRIGger:RS232:WIDTh?"),
+        (":TRIGger:IIC:DBYTes", "6", ":TRIGger:IIC:DBYTes?"),
+    ];
+    // the demo board has no 50 ohm input
+    if !crate::board::Board::couplings(crate::board::board()).contains(&Coupling::Dc50) {
+        bad.push((":CHANnel1:COUPling", "DC50", ":CHANnel1:COUPling?"));
+    }
+    for (header, value, query) in bad {
+        let (mut s, mut ui, cv) = session();
+        let before = line(&mut s, &mut ui, &cv, query);
+        line(&mut s, &mut ui, &cv, &format!("{header} {value}"));
+        let want = format!("-224,\"Illegal parameter value\" {value}");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?"), want, "{header} {value}");
+        assert_eq!(line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?"), "0,\"No error\"", "{header} {value}");
+        assert_eq!(line(&mut s, &mut ui, &cv, query), before, "{header} {value} changed the setting");
+    }
+    // nor is a refused value taken as a change of the settings (that clears the measurement statistics, Copilot on
+    // #516); a good one still is
+    let (mut s, mut ui, cv) = session();
+    ui.m.run = RunState::Run;
+    ui.dirty_map = false;
+    line(&mut s, &mut ui, &cv, ":TRIGger:HOLDoff 11");
+    assert!(!ui.dirty_map, "a refused value marked the settings changed");
+    line(&mut s, &mut ui, &cv, ":TRIGger:HOLDoff 0.001");
+    assert!(ui.dirty_map, "a taken value did not mark the settings changed");
+    // a logic line is a source of :TRIGger:EDGE:SOURce only; the trigger's own source refuses it as any other
+    let (mut s, mut ui, cv) = session();
+    line(&mut s, &mut ui, &cv, ":TRIGger:SOURce D3");
+    assert_eq!(line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?"), "-224,\"Invalid trigger source\"");
+    for unknown in
+        [":TRIGger:HOLDover 1", ":CHANnel1:OFFSit 1", ":CHANnel9:OFFSet 1", ":ACQuire:FOO 7", ":TRIGger:RS232:FOO 1"]
+    {
+        let (mut s, mut ui, cv) = session();
+        line(&mut s, &mut ui, &cv, unknown);
+        let got = line(&mut s, &mut ui, &cv, ":SYSTem:ERRor?");
+        assert!(got.starts_with("-113,\"Undefined header\""), "{unknown}: {got}");
+    }
+}

@@ -161,6 +161,21 @@ pub enum Scpi {
     },
 }
 
+impl Scpi {
+    /// No command, and why: the reason is kept for the docs table and the tests only.
+    pub const fn none(why: &'static str) -> Scpi {
+        #[cfg(not(test))]
+        let _ = why;
+        Scpi::None {
+            #[cfg(test)]
+            why,
+        }
+    }
+}
+
+/// Why the rows of an analyser page have no command.
+const NO_COMMAND_YET: &str = "none yet: the page is set in its menu and by a setup file";
+
 pub struct Setting {
     /// the key in setup files; stored keys never change once released. `<line> <field>` (`dvm mode`) names a field of
     /// a setup line that holds several settings, which store.rs writes and reads by hand (`Setting::line`); `<n>`
@@ -335,12 +350,7 @@ impl Setting {
                     Val::F32(_) => crate::words::num(arg)
                         .filter(|&x| within(x as f64))
                         .map(|x| Val::F32(x.clamp(lo as f32, hi as f32))),
-                    _ => arg
-                        .trim()
-                        .parse::<f64>()
-                        .ok()
-                        .filter(|&x| x.is_finite() && within(x))
-                        .map(|x| Val::F64(x.clamp(lo, hi))),
+                    _ => crate::words::num64(arg).filter(|&x| within(x)).map(|x| Val::F64(x.clamp(lo, hi))),
                 }
             }
             Ty::Custom(io) => (io.take)(arg),
@@ -451,6 +461,22 @@ impl Setting {
 /// The short form of a keyword, as a query answers it (`NEGative`: `NEG`).
 fn short(word: &str) -> String {
     word.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect()
+}
+
+/// The names of a table of named values, as the `labels` of a `CustomIo` (`BWS`, `PERSIST`).
+const fn names<T, const N: usize>(list: &[(&'static str, T); N]) -> [&'static str; N] {
+    let mut l = [""; N];
+    let mut i = 0;
+    while i < N {
+        l[i] = list[i].0;
+        i += 1;
+    }
+    l
+}
+
+/// The `take` of a switch of two keywords (`kw`, any case): `off` is false, `on` true; None for another word.
+fn switch_word(a: &str, off: &str, on: &str) -> Option<Val> {
+    [off, on].iter().position(|w| crate::words::kw(a, w)).map(|i| Val::Bool(i == 1))
 }
 
 /// The rows of `rows` as the Markdown table docs/scpi.md holds between `<!-- settings:<group>:begin -->` and
