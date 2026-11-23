@@ -69,7 +69,7 @@ struct Now {
 }
 
 /// A channel shown: its number (1 to 4), the hardware's scale in V/div at the BNC, the probe's ratio, the offset at the
-/// BNC, GND coupling.
+/// BNC, GND coupling, the read path's digital gain (the trigger level's conversion, `Plan::gain`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Shown {
     ch: usize,
@@ -77,6 +77,7 @@ struct Shown {
     probe: f64,
     offset: f64,
     gnd: bool,
+    gain: f64,
 }
 
 impl Now {
@@ -90,6 +91,7 @@ impl Now {
                 probe: c.probe,
                 offset: c.vertical.offset,
                 gnd: c.gnd,
+                gain: p.gain(c.ch),
             })
             .collect();
         Now { shown, dt: k as f64 / p.srate, n: p.depth.min(POINTS_MAX), pre: p.pre.min(p.depth), mask: p.mask, k }
@@ -181,7 +183,7 @@ fn run(out: &HwShared) {
     let fast = std::path::Path::new(FAST).exists();
     let depth = s.fpga.get(&snapshot::DEPTH).copied().unwrap_or(4000);
     let mut now = Now {
-        shown: vec![Shown { ch: s.channel, scale: s.scale, probe: 1.0, offset: 0.0, gnd: false }],
+        shown: vec![Shown { ch: s.channel, scale: s.scale, probe: 1.0, offset: 0.0, gnd: false, gain: 1.0 }],
         dt: 10.0 * s.timebase / depth as f64,
         n: depth,
         pre: depth / 2,
@@ -465,13 +467,14 @@ fn edge_near(v: &[f32], pre: usize, level: f32, h: f32, slope: tpu::Slope) -> Op
 }
 
 /// The edge trigger on channel `c` at the screen's level (V at the probe tip) for the hardware's scale and offset (at
-/// the BNC): the DHO800/DHO900's sequence (`tpu::edge`), hysteresis by the scale as there, holdoff the shortest. The
-/// auto trigger's timeout stays the stock system's.
+/// the BNC): the DHO800/DHO900's sequence (`tpu::edge`), the level converted with the channel's digital gain as the
+/// stock system does it (with 1.0 the comparator sat 17 mV above a 0.15 V level at 100 mV/div, an MHO98, issue #4),
+/// hysteresis by the scale as there, holdoff the shortest. The auto trigger's timeout stays the stock system's.
 fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, c: Shown, t: super::Trig) {
     let nv = |v: f64| v * 1e9;
     let level = t.level / c.probe;
     let noise = tpu::noise_hysteresis(nv(c.scale), false);
-    for (a, v) in tpu::edge(sh, c.ch as u32, t.slope, nv(level), nv(c.offset), nv(c.scale), 1.0, noise, 8_000_000) {
+    for (a, v) in tpu::edge(sh, c.ch as u32, t.slope, nv(level), nv(c.offset), nv(c.scale), c.gain, noise, 8_000_000) {
         bar.wr(a, v);
     }
     eprintln!("oos-ui mho: trigger: CH{} {:?} at {} V ({} V at the BNC)", c.ch, t.slope, t.level, level);
@@ -516,7 +519,7 @@ mod tests {
             vec![],
             vec![32768; 10_000],
         ];
-        let shown = |ch, gnd| Shown { ch, scale: 0.1, probe: 10.0, offset: -0.2, gnd };
+        let shown = |ch, gnd| Shown { ch, scale: 0.1, probe: 10.0, offset: -0.2, gnd, gain: 1.1 };
         let now = Now { shown: vec![shown(2, false), shown(4, true)], dt: 2e-7, n: 10_000, pre: 5000, mask: 0xb, k: 1 };
         let f = frame(&words, &now);
         assert!(f.ch[0].is_empty() && f.ch[2].is_empty());

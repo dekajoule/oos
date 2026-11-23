@@ -78,6 +78,16 @@ pub struct Plan {
     pub scales: [f64; 4],
 }
 
+impl Plan {
+    /// Channel `ch`'s digital gain (its first slot's Q10 word, afe-settings.md 4.1), 1.0 if the plan has none. The
+    /// stock system converts the trigger level with it: 6720 codes/div at 100 mV/div where the gain is 1.114 (an
+    /// MHO98, issue #4: 7500 / 1.114 = 6731).
+    pub fn gain(&self, ch: usize) -> f64 {
+        let w = slot_words(slots(ch, self.mask)[0])[0];
+        self.fpga.iter().find(|x| x.0 == w).map_or(1.0, |x| x.1 as f64 / 1024.0).max(1e-3)
+    }
+}
+
 /// The read path's digital gain and offset of slot `k` (0 to 3) and of its zoom copy (afe-settings.md 4.1): the
 /// channel of each slot follows the channels recorded (`slots`).
 fn slot_words(k: usize) -> [u32; 4] {
@@ -478,6 +488,10 @@ mod tests {
         assert_eq!(s.plan_many(&[(2, 0.1)], 2e-4), s.plan(2, 2e-4, 0.1));
         assert!(s.plan_many(&[(1, 0.1), (2, 0.1)], 2e-4).unwrap_err().contains("--extended"));
         assert!(s.plan_many(&[], 2e-4).is_err());
+        let p = s.plan(2, 2e-4, 0.1).unwrap();
+        assert_eq!(p.gain(2), 1.0, "no gain word recorded");
+        let p = Plan { fpga: vec![(0x14c8, 0x400), (0x14d4, 0x475)], ..p };
+        assert!((p.gain(2) - 1141.0 / 1024.0).abs() < 1e-12 && p.gain(1) == 1.0);
     }
 
     // Break it catches: a slow setting recorded at its own rate (its trigger lies anywhere), the depth or the points

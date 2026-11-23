@@ -637,7 +637,19 @@ at the trigger point; with the probe on CH1 the other way round. So the DHO800/D
 - The bandwidth limit (20M and 250M) rewrites the front end's 0x2e (bits 10:0 change, the scale's bits 15:11 stay)
   and the FPGA's 0x1004 (bits 23:20: 0xf for CH1, 0xc for CH2 at 20M; none at 250M), and its zero trim (0x28) and gain
   move by a few codes, which OOS leaves out.
-- 50 ohm rewrites most of the front end's words; not done yet. The trigger: the stock system's level words hold a window around the level (0x2004
+- 50 ohm rewrites most of the front end's words; not done yet.
+
+**Verified on the unit** (hp197's MHO98, mho-dev-31, issue #4): the start at boot, the offset (100 mV/div at -0.3 and
++0.3 V, 1 V/div at -2 and +2 V, per channel with all four on), every set of channels tried (CH1+CH2, CH1+CH3, CH2+CH3,
+CH1+CH2+CH3, CH1+CH2+CH4, all four; at 200 us/div and 1 us/div), AC (the square centred on 0 V), GND and the
+bandwidth limit (the noise of an open input at 5 mV/div: 0.87 mVpp without, 0.41 mVpp at 20M, 0.59 mVpp at 250M).
+
+**Seen on the unit** (the same MHO98 under the stock system, issue #4): the trigger's level words have OOS's layout
+for both slopes, but the stock system converts the level with the channel's digital gain: 6720 codes/div at 100 mV/div
+(gain 0x475/1024 = 1.114: 7500/1.114 = 6731), 7253 at 1 V/div (gain 1.023: 7328), 7477 at 10 mV/div (gain 1.001:
+7493). With 1.0 OOS's comparator sat 17 mV above a 0.15 V level at 100 mV/div, so the rising edge lay 42 ns after the
+trigger point and the falling 46 ns before it. From mho-dev-32 on `tpu::edge` gets the channel's gain from its slot
+word (`Plan::gain`): the level codes come within 0.2 % (100 mV/div) and 1 % (1 V/div) of the stock system's. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.
