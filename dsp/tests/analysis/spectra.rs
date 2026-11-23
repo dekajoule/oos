@@ -257,6 +257,32 @@ fn distortion_of_low_pass_noise_is_none_and_a_line_in_it_still_counts() {
     }
 }
 
+// Break it catches: a threshold far from 20 dB, or a gate that rejects the fundamental a caller gives. A line 30 dB
+// above the median of the noise bins around it is a fundamental, one 10 dB above is not; on a long record (BH7) and a
+// short one (six periods, Hann); with the frequency given, the noise's strongest bin there is taken as it is.
+#[test]
+fn distortion_takes_a_line_well_above_the_bins_around_it() {
+    let (dt, m, sigma) = (8e-10, 100_000usize, 0.001);
+    // power of one noise bin (median of an exponential: ln 2 times its mean) for the window's noise bandwidth `enbw`
+    // in bins of the record, and the amplitude of a line `ratio` times above it
+    let n = m.next_power_of_two() as f64;
+    let amp = |ratio: f64, enbw: f64| (ratio * 4.0 * 2f64.ln() * sigma * sigma * enbw * n / m as f64 / n).sqrt();
+    for (f, enbw) in [(40e6, 2.63), (6.0 / (m as f64 * dt), 1.5)] {
+        for seed in 1..6 {
+            let mut g = Gauss(seed);
+            let noise: Vec<f32> = (0..m).map(|_| g.next(sigma) as f32).collect();
+            let with = |ratio: f64| -> Vec<f32> {
+                let a = amp(ratio, enbw);
+                noise.iter().enumerate().map(|(k, &x)| x + (a * (2.0 * PI * f * k as f64 * dt).sin()) as f32).collect()
+            };
+            let d = spectrum::distortion(&with(1000.0), dt, None, 10).expect("a line 30 dB above the noise");
+            assert!(close(d.f1, f, f * 0.01), "f {f} seed {seed}: {}", d.f1);
+            assert!(spectrum::distortion(&with(10.0), dt, None, 10).is_none(), "f {f} seed {seed}: 10 dB found");
+            assert!(spectrum::distortion(&noise, dt, Some(f), 10).is_some(), "f {f} seed {seed}: given, refused");
+        }
+    }
+}
+
 #[test]
 fn distortion_enob_of_an_ideal_quantiser() {
     for bits in [8u32, 12] {

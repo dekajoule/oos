@@ -706,8 +706,9 @@ fn cos_sum(a: &[f64], i: usize, m: usize) -> f64 {
 /// Harmonics are searched at their aliased frequency. The window follows the number of periods in the record (`BH7`):
 /// with the widest one on a record of five periods the lobe of the fundamental held the third harmonic, and a 10 kHz
 /// square read 16.2 kHz (verified on the unit, a DHO924S). Returns `None` for records shorter than 64 samples or without a
-/// fundamental (noise alone, `LINE_OVER_MEDIAN`). A record needs four periods or more: below that the fundamental
-/// lies in the bins left to DC.
+/// fundamental: without `fundamental`, the strongest line must stand out of the bins around it (`LINE_OVER_MEDIAN`),
+/// so noise alone has none; a frequency given is taken as it is. A record needs four periods or more: below that the
+/// fundamental lies in the bins left to DC.
 pub fn distortion(v: &[f32], dt: f64, fundamental: Option<f64>, harmonics: usize) -> Option<Distortion> {
     let x: Vec<f64> = v.iter().filter(|x| x.is_finite()).map(|&x| x as f64).collect();
     if x.len() < 64 || !(dt > 0.0) {
@@ -766,12 +767,15 @@ fn distortion_with(
             let c = (f / df).round() as usize;
             (c.saturating_sub(hw).max(hw + 1)..=(c + hw).min(nb - 1)).max_by(|&a, &b| p[a].total_cmp(&p[b]))?
         }
-        _ => (hw + 1..nb).max_by(|&a, &b| p[a].total_cmp(&p[b]))?,
+        _ => {
+            let k1 = (hw + 1..nb).max_by(|&a, &b| p[a].total_cmp(&p[b]))?;
+            // a fundamental searched for, not given: noise alone has none (`LINE_OVER_MEDIAN`)
+            if !(p[k1] >= LINE_OVER_MEDIAN * median_around(&p, k1, hw)?) {
+                return None;
+            }
+            k1
+        }
     };
-    // noise alone has no fundamental (`LINE_OVER_MEDIAN`)
-    if !(p[k1] >= LINE_OVER_MEDIAN * median_around(&p, k1, hw)?) {
-        return None;
-    }
     let lobe = |c: usize| c.saturating_sub(hw)..=(c + hw).min(nb - 1);
     let (sp, swp) = lobe(k1).fold((0.0, 0.0), |(a, b), k| (a + p[k], b + p[k] * k as f64));
     if !(sp > 0.0) {
