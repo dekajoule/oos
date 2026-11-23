@@ -569,13 +569,18 @@ impl Ui {
     /// A switch in its control `c`: one field, the state on the left, the switch on the right; on, the track is the
     /// accent and the knob stands right.
     fn draw_switch(&self, cv: &mut Canvas, c: Rect, on: bool) {
-        btn(cv, c, BTN, BTN_BORDER);
+        // On fills the field white like a chosen segment or an active button; the switch inverts on it
+        if on {
+            cv.round(c, 5, ACCENT, 255);
+        } else {
+            btn(cv, c, BTN, BTN_BORDER);
+        }
         let (txt, track) = Self::switch_parts(c);
-        cv.text_in(&self.fonts().mb, txt, 0, if on { "On" } else { "Off" }, if on { TEXT } else { DIM });
+        cv.text_in(&self.fonts().mb, txt, 0, if on { "On" } else { "Off" }, if on { DARK_TEXT } else { DIM });
         let r = track.h / 2;
         if on {
-            cv.round(track, r, ACCENT, 255);
-            cv.circle(track.x + track.w - r, track.y + r, r - 3, DARK_TEXT);
+            cv.round(track, r, DARK_TEXT, 255);
+            cv.circle(track.x + track.w - r, track.y + r, r - 3, ACCENT);
         } else {
             cv.round(track, r, BTN_BORDER, 255);
             cv.circle(track.x + r, track.y + r, r - 3, DIM);
