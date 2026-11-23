@@ -255,24 +255,16 @@ impl Ui {
                 for id in self.meas_groups() {
                     order.extend((0..rows.len()).filter(|&k| rows[k].src == id).map(|k| index[k]));
                 }
+                let lines = self.strip_side_lines().len();
                 if paged {
-                    let lines = self.strip_side_lines().len();
                     let (first, end, _) = self.page_bounds(lines, self.measurement_page_size());
                     for (row, k) in (first..end.min(order.len())).enumerate() {
-                        cells.push((Rect::new(col.x + 4, col.y + 44 + row as i32 * 20, col.w - 8, 18), order[k]));
+                        cells.push((Self::paged_side_line(col, row), order[k]));
                     }
                 } else {
-                    let n = self.strip_side_lines().len() as i32;
-                    let strip_row = self.lay().strip_row;
-                    let room = (col.h - 4).max(strip_row);
-                    let pitch = if n * strip_row <= room { strip_row } else { (room / n).max(12) };
-                    for (k, &i) in order.iter().enumerate() {
-                        let y = col.y + 2 + k as i32 * pitch;
-                        if y + 12 > col.y + col.h {
-                            break;
-                        }
-                        cells.push((Rect::new(col.x + 4, y, col.w - 8, (pitch - 2).max(12)), i));
-                    }
+                    cells.extend(
+                        order.iter().enumerate().map_while(|(k, &i)| Some((self.side_line(col, k, lines)?, i))),
+                    );
                 }
                 (cells, Some(col))
             }
@@ -280,25 +272,15 @@ impl Ui {
                 let y0 = self.strip_band_y();
                 if paged {
                     let (first, end, _) = self.page_bounds(rows.len(), self.measurement_page_size());
-                    let pitch = (W - 12) / tools::STRIP_PER_ROW as i32;
-                    for (k, i) in (first..end).enumerate() {
-                        let (row, column) = ((k / tools::STRIP_PER_ROW) as i32, (k % tools::STRIP_PER_ROW) as i32);
-                        cells.push((Rect::new(6 + column * pitch, y0 + row * STRIP_ROW, pitch - 4, 16), index[i]));
-                    }
+                    cells.extend((first..end).enumerate().map(|(k, i)| (Self::paged_band_cell(y0, k), index[i])));
                     return (cells, Some(Rect::new(0, y0, self.scr.w, BAND_ROWS * STRIP_ROW)));
                 }
-                let f = self.fonts();
                 let strip_row = self.lay().strip_row;
-                let pw = 42.max(f.sb.width("CH4").max(f.sb.width("R10")) + 18);
-                let (vx, right) = (8 + pw + 8, self.scr.w - METRICS.edge - 2);
                 let mut y = y0;
                 for id in self.meas_groups() {
                     let mine: Vec<usize> = (0..rows.len()).filter(|&k| rows[k].src == id).map(|k| index[k]).collect();
                     for part in mine.chunks(tools::STRIP_PER_ROW) {
-                        let pitch = (right - vx) / part.len() as i32;
-                        for (k, &i) in part.iter().enumerate() {
-                            cells.push((Rect::new(vx + k as i32 * pitch, y, pitch, strip_row - 2), i));
-                        }
+                        cells.extend(self.band_cells(y, part.len()).zip(part.iter().copied()));
                         y += strip_row;
                     }
                 }
@@ -348,8 +330,9 @@ impl Ui {
                     .find_map(|line| line.pill.as_ref().map(|p| p.0.clone()))
                     .unwrap_or_default();
                 for (row, line) in lines[first..end].iter().enumerate() {
-                    let y = r.y + 44 + row as i32 * 20;
-                    cv.fill(Rect::new(r.x + 4, y, r.w - 8, 18), BAR);
+                    let bar = Self::paged_side_line(r, row);
+                    let y = bar.y;
+                    cv.fill(bar, BAR);
                     if let Some((source, _)) = &line.pill {
                         current_source = source.clone();
                     }
@@ -373,23 +356,20 @@ impl Ui {
                 let rows = self.meas_rows();
                 let (first, end, _) = self.page_bounds(rows.len(), size);
                 let y0 = self.strip_band_y();
-                for (row, part) in rows[first..end].chunks(tools::STRIP_PER_ROW).enumerate() {
-                    let y = y0 + row as i32 * STRIP_ROW;
-                    for (column, item) in part.iter().enumerate() {
-                        let pitch = (W - 12) / tools::STRIP_PER_ROW as i32;
-                        let r = Rect::new(6 + column as i32 * pitch, y, pitch - 4, 16);
-                        cv.fill(r, BAR);
-                        let color = self.wave_color(item.src);
-                        let source = self.wave_name(item.src);
-                        cv.text(&self.fonts().sb, r.x + 3, y + 12, &source, color);
-                        let value = item.text();
-                        let vx = r.x + r.w - 3 - self.fonts().sb.width(&value);
-                        let nx = r.x + 28;
-                        cv.set_clip(Rect::new(nx, y, (vx - nx - 5).max(0), 16));
-                        cv.text(&self.fonts().s, nx, y + 12, &item.name, LABEL);
-                        cv.no_clip();
-                        cv.text(&self.fonts().sb, vx, y + 12, &value, color);
-                    }
+                for (k, item) in rows[first..end].iter().enumerate() {
+                    let r = Self::paged_band_cell(y0, k);
+                    let y = r.y;
+                    cv.fill(r, BAR);
+                    let color = self.wave_color(item.src);
+                    let source = self.wave_name(item.src);
+                    cv.text(&self.fonts().sb, r.x + 3, y + 12, &source, color);
+                    let value = item.text();
+                    let vx = r.x + r.w - 3 - self.fonts().sb.width(&value);
+                    let nx = r.x + 28;
+                    cv.set_clip(Rect::new(nx, y, (vx - nx - 5).max(0), 16));
+                    cv.text(&self.fonts().s, nx, y + 12, &item.name, LABEL);
+                    cv.no_clip();
+                    cv.text(&self.fonts().sb, vx, y + 12, &value, color);
                 }
                 cv.text(
                     &self.fonts().sb,
