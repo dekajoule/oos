@@ -256,7 +256,7 @@ fn parse_slot(s: &str) -> Option<usize> {
 
 use crate::model::nearest_step as nearest;
 
-/// What `:WAVeform` reads when nothing chose otherwise, and again after `*RST`: CH1, BYTE, NORMal, the whole page.
+/// What `:WAVeform` reads until a command sets another, and again after `*RST`: CH1, BYTE, NORMal, the whole page.
 const WAV_DEFAULT: (WaveId, u8, u8, u64, u64) = (WaveId::Ch(0), 0, 0, 1, 0);
 
 impl Scpi {
