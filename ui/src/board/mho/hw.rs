@@ -25,6 +25,9 @@ use std::time::Duration;
 /// The unit's snapshot and its recording of the stock settings, as `oos-mho-live` leaves them.
 const SNAPSHOT: &str = "/oos/mho-snapshot.txt";
 const SETTINGS: &str = "/oos/mho-settings.txt";
+/// With this file there, every time base records at its own rate (`settings::plan`) instead of at 4 GSa/s, thinned
+/// (`settings::plan_fast`): to compare the two on a unit without another build.
+const NATIVE: &str = "/oos/mho-native";
 /// How long one acquisition may take to complete, the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
 const DONE_MS: u64 = 1000;
@@ -117,6 +120,7 @@ fn run(out: &HwShared) {
         Err(e) => return status(format!("{}: {}", acq::C2H_DEVICE, e)),
     };
     let mut afe = settings.as_ref().and_then(|_| GpioAfe::open().ok());
+    let native = std::path::Path::new(NATIVE).exists();
     let depth = s.fpga.get(&snapshot::DEPTH).copied().unwrap_or(4000);
     let mut now = Now {
         ch: s.channel,
@@ -157,9 +161,14 @@ fn run(out: &HwShared) {
         if let (Some(st), Some(w)) = (&settings, want) {
             if applied.as_ref().map(|a| (a.ch, a.scale, a.tdiv, a.probe)) != Some((w.ch, w.scale, w.tdiv, w.probe)) {
                 if let Some(ch) = w.ch {
-                    match st.plan_fast(ch, w.tdiv, w.scale) {
+                    let plan = if native {
+                        st.plan(ch, w.tdiv, w.scale).map(|p| (p, 1))
+                    } else {
+                        st.plan_fast(ch, w.tdiv, w.scale)
+                    };
+                    match plan {
                         Ok((p, k)) => {
-                            apply(&mut bar, afe.as_mut(), &p);
+                            apply(&mut bar, afe.as_mut(), &p, sh.s1000);
                             // the plan wrote the recorded level words (the stock level, 0 V): the screen's again
                             trig_set = None;
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
@@ -230,7 +239,7 @@ fn run(out: &HwShared) {
 
 /// Sets the board to a plan: the ADCs' registers that read otherwise, the FPGA's words, the front end's words and
 /// select lines (the MHO900's channel n on the bus's chip select 4 - n).
-fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan) {
+fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32) {
     let wait = || std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
     for (n, regs) in p.adc.iter().enumerate() {
         for (&r, &v) in regs {
@@ -250,9 +259,18 @@ fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan) {
             }
         }
     }
+    // the pre-processing reset of the DHO800/DHO900's horizontal set-up (0x1000 bit 5, horizontal-config.md section
+    // 4.1 steps 13-14) before the words and again after them: once the board ran at 4 GSa/s, the trigger and the record
+    // of a slower rate no longer met without it (an MHO98, mho-dev-24, issue #491). **Assumed** to be what resyncs them.
+    let reset = |bar: &mut Bar1| {
+        bar.wr(0x1000, s1000 | 0x20);
+        bar.wr(0x1000, s1000 & !0x20);
+    };
+    reset(bar);
     for &(a, v) in &p.fpga {
         bar.wr(a, v);
     }
+    reset(bar);
     if let Some(afe) = afe {
         for &(c, r, d) in &p.afe {
             afe.write(4 - c, r, d);

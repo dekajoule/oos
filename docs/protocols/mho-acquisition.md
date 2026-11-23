@@ -554,7 +554,16 @@ for the slower rates is not known. From mho-dev-25 on a setting below 4 GSa/s by
 before and after the trigger 0x4050/0x4054, the segment 0x10e0), and every k-th point makes the frame
 (`settings::plan_fast`). The segment size is a quarter of the DHO800/DHO900's (`hz::mem_size`): that gives the stock
 system's 0x200 at 10 000 points and 0x8000 at 1 000 000 (assumed between them). Slower settings keep their own rate and
-the screen's software trigger. The trigger: the stock system's level words hold a window around the level (0x2004
+the screen's software trigger.
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-24 again, issue #491): started at 200 us/div and taken step by step
+to 100 ns/div, the edge lay at the trigger point (median 1 to 2 samples) at every rate, 5 MSa/s to 4 GSa/s, with a
+few frames off. In the first run, started at 100 ns/div (4 GSa/s) and taken slower, it lay anywhere below 4 GSa/s.
+So the slower rates meet the trigger until the board has run at 4 GSa/s. The DHO800/DHO900's horizontal set-up
+pulses the pre-processing reset (0x1000 bit 5, horizontal-config.md section 4.1, steps 13 and 14), which the plans
+leave out with the rest of 0x1000. From mho-dev-26 on the acquisition thread pulses it before and after the words of
+every plan (**assumed** to be what resyncs them); with a file `/oos/mho-native` every time base records at its own
+rate instead of at 4 GSa/s, to compare the two. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.
