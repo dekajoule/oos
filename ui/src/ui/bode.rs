@@ -1190,6 +1190,7 @@ mod tests {
             raw: None,
             la: None,
             pairs: false,
+            peak: false,
         });
         ui.m.run = RunState::Stop;
         ui.bode_update();

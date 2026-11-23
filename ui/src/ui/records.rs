@@ -427,6 +427,7 @@ impl Ui {
             raw: None,
             la: None,
             pairs: false,
+            peak: false,
         }
     }
 
@@ -535,7 +536,12 @@ impl Ui {
         if !self.m.trig_channels().iter().enumerate().all(|(c, &u)| !u || !rec.ch[c].is_empty()) {
             return std::sync::Arc::new(Vec::new());
         }
-        let refs: [&[f32]; NCH] = std::array::from_fn(|c| &rec.ch[c][..]);
+        // a protocol trigger decodes the record: points in turn are read by the means of neighbours, as the decoder
+        // reads them (`Record::alternates`)
+        let means: [Option<Vec<f32>>; NCH] = std::array::from_fn(|c| {
+            (self.m.trig_type == TrigType::Bus && rec.alternates()).then(|| crate::trig::pair_means(&rec.ch[c]))
+        });
+        let refs: [&[f32]; NCH] = std::array::from_fn(|c| means[c].as_deref().unwrap_or(&rec.ch[c]));
         let hyst: [f32; NCH] = std::array::from_fn(|c| 0.1 * self.m.ch[c].volts_per_div());
         let inp = oos_dsp::trigger::Input { ch: refs, dt: rec.dt, hyst };
         let t0 = self.source_time_origin(self.m.trigger_wave(), rec.t0);
