@@ -41,7 +41,8 @@ impl Ui {
             Item::ChScale(c) | Item::ChOffset(c) if c < NCH => Some(m.unit(c)),
             Item::HScale | Item::HDelay => Some("s"),
             Item::TrigLevel if m.trig_src < NCH => Some(m.unit(m.trig_src)),
-            // any amplitude of the sweep, not only the knob's 1-2-5 steps (#52)
+            // any amplitude of the sweep, not only the knob's steps, in the unit of the menu (#52)
+            Item::BodeAmp if m.bode_rms => Some("Vrms"),
             Item::BodeAmp => Some("Vpp"),
             _ => None,
         }
@@ -101,13 +102,18 @@ impl Ui {
 
     /// Sets row `it` to `v` (in its unit), as SCPI would.
     fn numpad_set(&mut self, it: Item, v: f64) {
-        // the amplitude is kept as f64, not rounded to f32 as the rows below, in the range of the knob's steps
+        // the amplitude is kept as f64 in Vpp, not rounded to f32 as the rows below, within the generator's range
         if it == Item::BodeAmp {
-            if !(0.01..=20.0).contains(&v) {
-                return self.toast("The amplitude must be 10 mVpp to 20 Vpp");
+            use crate::settings::bode::{AMP_RANGE, VPP_PER_VRMS};
+            let (k, unit) = if self.m.bode_rms { (VPP_PER_VRMS, "Vrms") } else { (1.0, "Vpp") };
+            // within the range; the clamp below only takes up the rounding of Vrms to Vpp at its ends
+            let vpp = v * k;
+            if !(AMP_RANGE.0 * (1.0 - 1e-9)..=AMP_RANGE.1 * (1.0 + 1e-9)).contains(&vpp) {
+                let (lo, hi) = (si_short(AMP_RANGE.0 / k, unit), si_short(AMP_RANGE.1 / k, unit));
+                return self.toast(&format!("The amplitude must be {} to {}", lo, hi));
             }
-            // as - and + of the Bode rows: no settings_changed (setting_items.rs), the statistics and the acquisition stay
-            self.m.bode_amp = v;
+            // as - and + of the Bode rows: no settings_changed (setting_items.rs)
+            self.m.bode_amp = vpp.clamp(AMP_RANGE.0, AMP_RANGE.1);
             return;
         }
         let m = &mut self.m;

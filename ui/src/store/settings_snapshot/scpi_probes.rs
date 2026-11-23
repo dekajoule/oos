@@ -116,6 +116,7 @@ const SETTERS: &[(&str, &[&str])] = &[
     (":VIEW", &["SCOPE", "SPECTRUM", "EYE", "POWER", "BODE", "MAGNETIC", "INVERTER", "DPT"]),
     (":BODE:MODE", &["LOOP", "PSRR", "IMPedance"]),
     (":BODE:UNIT", &["DB", "RATio"]),
+    (":BODE:AMPLitude", &["0.01", "0.35", "1.25", "20", "0.005", "21"]),
     (":BODE:GENerator", &["\"10.1.2.3:5555\"", "10.1.2.3:5555", "\"\""]),
     (":CURSor:MODE", &["OFF", "MANual", "TRACk", "XY"]),
     (":CURSor:MANual:TYPE", &["TIME", "AMPLitude"]),

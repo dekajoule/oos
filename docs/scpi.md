@@ -309,7 +309,7 @@ Additional OOS families accept item names defined by their analysis page/source 
 | Inverter | `:INVerter:ITEM? <item>[,sources...]`: configured inverter result, numeric or text. |
 | Double pulse | `:DPT:ITEM? <item>[,V,I[,G]]`: e.g. `VPEAK`, `IPEAK`, `EON`, `EOFF`, `TDON`, `TR`, `TDOFF`, `TF`, `QRR`. |
 | Bandwidth | `:BANDwidth:ITEM? <item>[,source]`: `RISE`, `BW`, `OVER`. Estimator limits apply. |
-| Bode | `:BODE:MODE[?] LOOP|PSRR|IMPedance`, `:BODE:UNIT[?] DB|RATio`, `:BODE:RUN ON|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"`. RUN can control the configured generator/acquisition. |
+| Bode | `:BODE:MODE[?] LOOP|PSRR|IMPedance`, `:BODE:UNIT[?] DB|RATio`, `:BODE:AMPLitude[?] <Vpp>`, `:BODE:RUN ON|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"`. RUN can control the configured generator/acquisition. |
 
 See [reference analysis](reference-analysis.md) for sampling, model-derived jitter, physical alignment and C-PHY limits. These extensions are not stock Rigol/DPOJET compatibility claims.
 
@@ -324,10 +324,11 @@ input, the output, the generator with its address and `:BODE:GENerator`, and the
 | --- | --- | --- | --- | --- |
 | `:BODE:MODE[?]` | `LOOP`, `PSRR`, `IMPedance` | `bode_mode` | Mode | What a sweep stores in the middle field of each point: the gain of a control loop in dB, the power-supply rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A free sweep always measures the gain. |
 | `:BODE:UNIT[?]` | `DB`, `RATio` | `bode_unit` | Gain unit | How the plot, the cursor and the title show the gain: in dB, 20 log10(Vout/Vin), or as the linear ratio Vout/Vin (for PSRR Vin/Vout), whatever the mode measures. The CSV file and `:BODE:DATA?` keep what the mode stores. The menu changes it on an odd step. |
+| none | a choice of the menu: `:BODE:AMPLitude` is always Vpp | `bode_amp_unit` | Amp unit | Whether the menu shows and the number pad takes the amplitude peak to peak or as RMS, Vrms = Vpp / (2 sqrt 2) for the sine of the sweep. The generator gets Vpp either way. The menu changes it on an odd step. |
 | none | none yet: the page is set in its menu and by a setup file | `bode` (start) | Start freq | The first frequency of the sweep. The menu steps 1-2-5 and keeps it at or below half the stop. |
 | none | none yet: the page is set in its menu and by a setup file | `bode` (stop) | Stop freq | The last frequency of the sweep. The menu steps 1-2-5 and keeps it at or above twice the start. |
 | none | none yet: the page is set in its menu and by a setup file | `bode` (points) | Points | The number of frequencies of the sweep, spaced as Sweep sets: logarithmically or linearly. The menu steps by 5 from 5 to 200; a setup line keeps 2 to 1000. |
-| none | none yet: the page is set in its menu and by a setup file | `bode` (amp) | Amplitude | The amplitude the generator puts out, peak to peak. The menu steps 1-2-5 from 10 mVpp to 20 Vpp; a tap on the value opens the number pad for any value in that range. |
+| `:BODE:AMPLitude[?]` | a number from 0.01 to 20 | `bode` (amp) | Amplitude | The amplitude the generator puts out, peak to peak, 10 mVpp to 20 Vpp. The menu shows it in Vpp or Vrms (Amp unit) and steps by 10 mV up to 100 mV and by 50 mV above; a tap on the value opens the number pad for any value in that range. The command takes and answers Vpp. |
 | none | set with the address by `:BODE:GENerator` | `bode_link` | Connection | How an external generator is reached: on the network at its address, or on the USB-A port. The menu changes it on an odd step. |
 | none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (time) | Sweep time | How long the generator takes for one sweep. The menu steps 1-2-5 from 1 ms to 500 s. |
 | none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (log) | Sweep | Whether the frequencies of the sweep are spaced linearly (equal steps) or logarithmically (equal ratio), and the frequency axis of the plot with them; with the free sweep also how the generator sweeps over the sweep time. The menu changes it on an odd step. |

@@ -315,6 +315,7 @@ pub(super) enum Item {
     BodeSwTime,
     BodeSwLog,
     BodeUnit,
+    BodeAmpUnit,
     BodeSync,
     BodeSyncEdge,
     BodeSyncLvl,
