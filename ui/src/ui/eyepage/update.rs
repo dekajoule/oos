@@ -258,15 +258,16 @@ impl Ui {
         if !rate.is_some_and(|r| 1.0 / r < 2.0 * dt) {
             return Some(rate);
         }
-        if self.m.eye_from_record {
-            self.m.eye_rate = 0.0;
-            return Some(None);
-        }
-        // the eye of the faster time base goes, and the page says why (the old eye stayed, with nothing said)
+        // the eye of the faster time base goes, also when this record has no clock of its own to replace it
         self.azr.eye = None;
         self.azr.eye_res = None;
         self.azr.eye_auto.summary = None;
         self.azr.page = Page::default();
+        if self.m.eye_from_record {
+            self.m.eye_rate = 0.0;
+            return Some(None);
+        }
+        // a rate that was set: the page says why there is no eye (the old eye stayed, with nothing said)
         self.azr.page.status = [
             format!("{} needs a faster time base", si_short(self.m.eye_rate, "b/s")),
             "Under 2 samples a bit in this record".into(),

@@ -777,3 +777,19 @@ fn an_eye_after_a_dropped_rate_is_kept_by_the_next_record() {
     }
     assert_eq!(records, [1, 2], "the second record adds to the eye of the first");
 }
+
+/// A rate found from a faster record is dropped with the eye of that record, also when the new record has no clock to
+/// make another: no eye and no results of the old one stay on the page.
+#[test]
+fn a_dropped_rate_takes_its_eye_along_when_no_clock_follows() {
+    let mut ui = page(CLEAN, 1);
+    assert!(ui.azr.eye.is_some() && ui.azr.eye_res.is_some(), "an eye to start with");
+    (ui.m.eye_from_record, ui.m.eye_rate) = (true, 2e9);
+    let mut flat = record(CLEAN, &mut Noise(7));
+    flat.ch[0].iter_mut().for_each(|x| *x = -1.0);
+    ui.last[0] = Some(flat);
+    ui.measure_last();
+    ui.analyzer_update();
+    assert_eq!(ui.m.eye_rate, 0.0);
+    assert!(ui.azr.eye.is_none() && ui.azr.eye_res.is_none(), "{:?}", ui.azr.page.status);
+}
