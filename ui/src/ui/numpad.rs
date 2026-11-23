@@ -66,10 +66,33 @@ impl Ui {
             .collect()
     }
 
-    /// The title of the pad: the row and the entry so far.
-    pub(super) fn numpad_title(&self) -> String {
-        let row = self.numpad.target.map_or(String::new(), |it| self.item_label(it).to_string());
-        format!("{} \u{b7} {}_", row, self.keypad)
+    /// An entry pad that is open (the number pad, the generator's frequency, a hex value of a bus trigger): its title
+    /// and the entry so far, which shows large above the keys. The pads open centred and larger (ADR 0077).
+    pub(super) fn pad_entry(&self) -> Option<(String, String)> {
+        let p = self.pick.filter(|_| self.menu_open && self.menu == MenuId::Pick)?;
+        if Self::hex_item(p.it) {
+            return Some((self.item_label(p.it).to_string(), format!("0x{}_", self.keypad)));
+        }
+        let title = match p.it {
+            Item::NumEntry => self.numpad.target.map_or(String::new(), |it| self.item_label(it).to_string()),
+            Item::AfgFreqEntry => format!("Frequency (max {})", si_short(self.m.gen_max_hz(), "Hz")),
+            _ => return None,
+        };
+        Some((title, format!("{}_", self.keypad)))
+    }
+
+    /// The value the row of the number pad (or the generator's frequency) has now, shown dim in its field until
+    /// something is typed.
+    pub(super) fn pad_now(&self) -> Option<String> {
+        if !self.keypad.is_empty() || self.pad_entry().is_none() {
+            return None;
+        }
+        let it = match self.pick?.it {
+            Item::NumEntry => self.numpad.target?,
+            Item::AfgFreqEntry => Item::AfgFreq,
+            _ => return None,
+        };
+        Some(self.value(it))
     }
 
     /// Key `k` of the pad was tapped.
@@ -217,13 +240,27 @@ mod tests {
         assert!((u.m.trig_level - 0.3).abs() < 1e-6);
     }
 
+    // Break it catches (ADR 0077): the pad opened small beside its menu, its entry in the title line
+    #[test]
+    fn the_pad_opens_centred_with_large_keys_and_the_entry_above_them() {
+        let u = opened(Item::ChScale(0));
+        let d = u.dlg_layout().expect("the pad is a dialog");
+        let centre = d.r.x + d.r.w / 2;
+        assert!((centre - u.scr.w / 2).abs() <= 1, "centred: {:?} on {}", d.r, u.scr.w);
+        assert!(d.rows.iter().all(|r| r.ctrl.h > DLG_CTRL), "larger keys");
+        assert!(d.rows.iter().all(|r| r.ctrl.y >= d.r.y + DLG_HEAD + PAD_ENTRY_H), "the keys under the entry field");
+        assert_eq!(u.menu_title(MenuId::Pick), u.item_label(Item::ChScale(0)), "the title is the row");
+        assert_eq!(u.pad_now(), Some(u.value(Item::ChScale(0))), "before typing, the field shows the value now");
+    }
+
     #[test]
     fn the_entry_keys_and_cancel() {
         let mut u = opened(Item::ChOffset(0));
         let before = u.m.ch[0].offset;
         press(&mut u, &["1", ".", ".", "2", "-", "Del", "3"]);
         assert_eq!(u.keypad, "1.3", "one point, the sign only first, Del takes the last");
-        assert!(u.numpad_title().ends_with("1.3_"), "{}", u.numpad_title());
+        assert_eq!(u.pad_entry().map(|e| e.1), Some("1.3_".to_string()), "the entry shows above the keys");
+        assert_eq!(u.pad_now(), None, "the value now shows only while nothing is typed");
         press(&mut u, &["Clear", "Cancel"]);
         assert_eq!(u.m.ch[0].offset, before);
         assert!(u.menu != MenuId::Pick && u.numpad.target.is_none());

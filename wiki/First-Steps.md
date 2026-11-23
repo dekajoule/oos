@@ -121,7 +121,8 @@ with the other preferences and across restarts; Default set-up and Recall keep i
 Names of channels and references, math formulas and WLAN passwords are typed on the on-screen keyboard. The arrows either side of Space move the insertion point one character, and a tap into the entry puts it where you tap. Typing and Delete work at the insertion point, so a wrong character in a long password is fixed without typing the rest again. Show / Hide shows the password.
 
 A number is typed on the number pad: tap the value itself (not - or +) of a channel's scale or offset, the time base
-or its position, or the trigger level. Type the digits, a point and a leading minus, then tap the key with the unit
+or its position, or the trigger level. The pad opens large in the middle of the screen; its field shows the value
+now until you type, then what you type. Type the digits, a point and a leading minus, then tap the key with the unit
 you mean (`mV`, `V`, `µs`, `ns` ...), which sets the value and closes the pad. The value lands where a remote command
 would put it: the scale on the nearest step (with Fine on, on the next calibrated step above it). Cancel leaves it as
 it was.
