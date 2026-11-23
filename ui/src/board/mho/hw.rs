@@ -111,6 +111,7 @@ fn run(out: &HwShared) {
     // the TPU's shadows (the MHO900's stock 0x201c is the DHO's) and the trigger last set, with the scale it was for
     let mut tsh = tpu::Shadows::APP;
     let mut trig_set: Option<(super::Trig, usize, f64, f64)> = None;
+    let mut edges = EdgeLog::default();
     // the stock system's upper bits of 0x1154 for the pass-through: the snapshot's, then each plan's
     let mut keep_1154 = s.fpga.get(&0x1154).copied().unwrap_or(0);
     loop {
@@ -196,7 +197,11 @@ fn run(out: &HwShared) {
             continue;
         }
         let probe = applied.as_ref().map_or(1.0, |w| w.probe);
-        publish(out, frame(&words, now.ch - 1, now.scale, probe, now.dt, now.pre - win.start), seq);
+        let mut f = frame(&words, now.ch - 1, now.scale, probe, now.dt, now.pre - win.start);
+        if let Some((t, ..)) = trig_set {
+            edges.align(&mut f, now.ch - 1, t, now.scale * probe, seq);
+        }
+        publish(out, f, seq);
         std::thread::sleep(Duration::from_millis(PERIOD_MS));
     }
 }
@@ -264,6 +269,73 @@ fn publish(out: &HwShared, mut f: Frame, seq: u64) {
     g.frame = f;
 }
 
+/// Where the trigger's edge lies in the frames against the record's trigger point, in the screen's log every 50
+/// frames. From 500 MSa/s on the edge was not at the trigger point although the board's trigger fired (an MHO98,
+/// mho-dev-23, issue #491): until that offset is known, the screen's trigger point is put on the edge nearest to it
+/// (a software trigger on the board's frames; a frame without such an edge keeps the record's trigger point).
+#[derive(Default)]
+struct EdgeLog {
+    offsets: Vec<i64>,
+    missing: u32,
+}
+
+impl EdgeLog {
+    fn align(&mut self, f: &mut Frame, ch: usize, t: super::Trig, scale_tip: f64, seq: u64) {
+        let h = (0.3 * scale_tip) as f32;
+        let e = edge_near(&f.ch[ch], f.pre, t.level as f32, h, t.slope);
+        match e {
+            Some(i) => {
+                self.offsets.push(i as i64 - f.pre as i64);
+                f.pre = i;
+            }
+            None => self.missing += 1,
+        }
+        if seq % 50 == 49 {
+            self.offsets.sort_unstable();
+            let at = |k: usize| self.offsets.get(k).copied().unwrap_or(0);
+            let n = self.offsets.len();
+            eprintln!(
+                "oos-ui mho: edge against the trigger point, last 50 frames: {} found (min {}, median {}, max {} \
+                 samples of {:.3e} s), {} without",
+                n,
+                at(0),
+                at(n / 2),
+                at(n.saturating_sub(1)),
+                f.dt,
+                self.missing
+            );
+            *self = EdgeLog::default();
+        }
+    }
+}
+
+/// The crossing of `level` in the slope's direction nearest to sample `pre`: a crossing counts after the signal was
+/// `h` beyond the level on the other side (the hysteresis of the board's trigger).
+fn edge_near(v: &[f32], pre: usize, level: f32, h: f32, slope: tpu::Slope) -> Option<usize> {
+    let (rise, fall) = match slope {
+        tpu::Slope::Rising => (true, false),
+        tpu::Slope::Falling => (false, true),
+        tpu::Slope::Either => (true, true),
+    };
+    let (mut below, mut above) = (false, false);
+    let mut best: Option<usize> = None;
+    for (i, &x) in v.iter().enumerate() {
+        let hit = (rise && below && x >= level) || (fall && above && x <= level);
+        if hit && best.is_none_or(|b| i.abs_diff(pre) < b.abs_diff(pre)) {
+            best = Some(i);
+        }
+        if x >= level {
+            below = false;
+        }
+        if x <= level {
+            above = false;
+        }
+        below |= x < level - h;
+        above |= x > level + h;
+    }
+    best
+}
+
 /// The edge trigger on channel `ch` at the screen's level (V at the probe tip, `probe` the ratio) for the hardware's
 /// `scale` (V/div at the BNC): the DHO800/DHO900's sequence (`tpu::edge`), hysteresis by the scale as there, holdoff
 /// the shortest. The auto trigger's timeout stays the stock system's.
@@ -302,5 +374,19 @@ mod tests {
         assert_eq!(f.ch[1].len(), 10_000);
         assert!((f.ch[1][0] - 0.0).abs() < 1e-3 && (f.ch[1][9999] - 3.0).abs() < 1e-3);
         assert_eq!((f.pre, f.dt, f.acq.1), (5000, 2e-7, 10_000));
+    }
+
+    // Break it catches: the edge taken in the wrong direction, a noise wiggle around the level taken for an edge, the
+    // crossing farther from the trigger point taken.
+    #[test]
+    fn the_edge_nearest_the_trigger_point_is_found_in_its_direction() {
+        // low 0..100, high 100..300, low 300..500, high 500..; noise around the level on the rising edge at 100
+        let mut v: Vec<f32> = (0..600).map(|i| if (100..300).contains(&i) || i >= 500 { 0.3 } else { 0.0 }).collect();
+        v[100..104].copy_from_slice(&[0.16, 0.14, 0.16, 0.14]);
+        let r = |pre| edge_near(&v, pre, 0.15, 0.03, tpu::Slope::Rising);
+        assert_eq!((r(103), r(450), r(0)), (Some(100), Some(500), Some(100)));
+        assert_eq!(edge_near(&v, 250, 0.15, 0.03, tpu::Slope::Falling), Some(300));
+        assert_eq!(edge_near(&v, 280, 0.15, 0.03, tpu::Slope::Either), Some(300));
+        assert_eq!(edge_near(&[0.3; 50], 25, 0.15, 0.03, tpu::Slope::Rising), None);
     }
 }

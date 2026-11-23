@@ -531,7 +531,19 @@ recorded level words are the stock level, 0 V, the low level of that signal, so 
 timeout. From mho-dev-23 on the acquisition thread sets the edge trigger on the channel measured at the screen's level
 and slope with the DHO800/DHO900's sequence (`tpu::edge`; **assumed** the same TPU: the stock 0x201c is the DHO's
 0x00aa4100, an edge on CH1, and the level words have its layout), and the screen's log lists the status words of every
-50 acquisitions. `mho-start` counts a square with one level at the end of the range as the square wave, clipped. The trigger: the stock system's level words hold a window around the level (0x2004
+50 acquisitions. `mho-start` counts a square with one level at the end of the range as the square wave, clipped.
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-23, issue #491): from 1 GSa/s on the read-out holds the signal (1,
+2 and 4 GSa/s, 0 to 0.3 V), so the filter was it. The board's trigger fires: with the level above the signal the
+acquisitions ended with status 0x4c0031a0, with the level on the signal 0x4c0031e0, so 0x4034 bit 6 is "triggered" as
+on the DHO800/DHO900. At 200 us/div and 20 ms/div the edge of the set slope, rising or falling, is at the trigger
+point; at 200 us/div the record sometimes lacks its first part (the trigger came before the samples before it were
+recorded). From 500 MSa/s on the edge is mostly not at the trigger point and the frames show the signal's high or low
+level; where an edge was in a frame, it was not always the set slope's. Not yet known: where the trigger lies in the
+record at those rates. The stock system's read-out window ends 0x2d1 points past its length (0x1100 = 10 721 for
+10 000 points; the DHO800/DHO900's 0x248). From mho-dev-24 on the screen's log reports, every 50 frames, how far the
+edge of the set slope and level nearest the trigger point lies from it, and the screen puts its trigger point on
+that edge (a software trigger on the board's frames until the offset is known). The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.
