@@ -524,11 +524,32 @@ mod tests {
                 assert!(cells.iter().any(|&(_, i)| i == 2) || many, "{dock:?}: CH2 Vrms is a readout");
             }
         }
-        // with the Results panel the strip holds no measurements: a tap there is not this one
+        // beside the values (the source's pill of the first row): the list opens, its first row in focus
+        ui.m.meas.truncate(3);
         ui.m.strip_dock = StripDock::Under;
-        ui.results.on = true;
         ui.relayout();
-        assert!(ui.strip_readouts().1.is_none());
+        ui.step(0.02);
+        let (cells, area) = ui.strip_readouts();
+        let area = area.unwrap();
+        let (px, py) = (area.x + 12, cells[0].0.y + cells[0].0.h / 2);
+        assert!(
+            area.contains(px, py) && !cells.iter().any(|(r, _)| r.contains(px, py)),
+            "the pill is beside the values"
+        );
+        ui.tap(px, py);
+        assert!(ui.menu_open && ui.menu == MenuId::MeasSelected, "a tap beside the values");
+        assert_eq!((ui.focus, ui.meas_pages.selected), (0, 0));
+        ui.close_menu();
+        // with the Results panel or pane the strip holds no measurements: a tap there is not this one
+        for (panel, pane) in [(true, 0), (false, crate::ui::tables::PANE_RESULTS)] {
+            (ui.results.on, ui.m.pane) = (panel, pane);
+            ui.relayout();
+            ui.step(0.02);
+            assert!(ui.strip_readouts().1.is_none(), "panel {panel} pane {pane}");
+            ui.tap(px, py);
+            assert!(!(ui.menu_open && ui.menu == MenuId::MeasSelected), "panel {panel} pane {pane}: no Selected");
+            ui.close_menu();
+        }
     }
 
     #[test]
