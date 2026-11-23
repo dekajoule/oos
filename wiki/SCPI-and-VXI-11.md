@@ -324,7 +324,7 @@ Values are in base units, phase in degrees, duty and overshoot in percent. `*OPC
 | `:INVerter:ITEM? <item>[,src...]` | the inverter page's results |
 | `:DPT:ITEM? <item>[,V,I[,G]]` | double pulse: `VPEAK`, `IPEAK`, `EON`, `EOFF`, `TDON`, `TR`, `TDOFF`, `TF`, `QRR` |
 | `:BANDwidth:ITEM? <item>[,src]` | `RISE`, `BW`, `OVER` |
-| `:BODE:MODE[?] LOOP\|PSRR\|IMPedance`, `:BODE:UNIT[?] DB\|RATio`, `:BODE:RUN ON\|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"` | Bode plot; RUN drives the generator |
+| `:BODE:MODE[?] LOOP\|PSRR\|IMPedance`, `:BODE:UNIT[?] DB\|RATio`, `:BODE:AMPLitude[?] <Vpp>`, `:BODE:RUN ON\|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"` | Bode plot; RUN drives the generator |
 | `:IDENtify?` | what Identify recognises in the signal |
 
 These are OOS functions, not stock Rigol commands. Their limits are in [reference analysis](https://github.com/dekajoule/oos/blob/main/docs/reference-analysis.md).

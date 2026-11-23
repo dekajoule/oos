@@ -538,6 +538,8 @@ pub struct Model {
     pub bode_mode: oos_dsp::bode::Mode,
     /// the gain axis, the cursor and the title in V/V instead of dB (#51); the points keep what the mode measures
     pub bode_vv: bool,
+    /// the menu shows and the pad takes the amplitude in Vrms instead of Vpp (#52); `bode_amp` stays Vpp
+    pub bode_rms: bool,
     /// burst idle (0 = one period), which side Time Outside counts, and Duration N
     pub meas_idle: f64,
     pub meas_out: oos_dsp::measure::Outside,

@@ -232,6 +232,7 @@ impl Ui {
             Item::BodePoints,
             Item::BodeUnit,
             Item::BodeAmp,
+            Item::BodeAmpUnit,
             Item::BodeIn,
             Item::BodeOut,
             Item::BodeGen,
@@ -1433,10 +1434,10 @@ mod tests {
         assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (1.25, "1.25 Vpp".into()));
         typed(&mut ui, &["5", "0", "Vpp"]);
         assert_eq!(ui.m.bode_amp, 1.25, "50 Vpp is refused");
-        // the knob still steps 1-2-5 from there: up to the next step, down to the one below, whatever lies between
+        // the knob steps from there: up to the next step, down to the one below, whatever lies between
         ui.adjust(Item::BodeAmp, 1);
-        assert_eq!(ui.m.bode_amp, 2.0);
-        for (x, d, want) in [(1.999, 1, 2.0), (1.0005, 1, 2.0), (1.25, -1, 1.0), (1.999, -1, 1.0), (2.0, 1, 5.0)] {
+        assert_eq!(ui.m.bode_amp, 1.3);
+        for (x, d, want) in [(1.999, 1, 2.0), (1.0005, 1, 1.05), (1.26, -1, 1.25), (1.999, -1, 1.95), (2.0, 1, 2.05)] {
             ui.m.bode_amp = x;
             ui.adjust(Item::BodeAmp, d);
             assert_eq!(ui.m.bode_amp, want, "{x} by {d}");
@@ -1469,21 +1470,68 @@ mod tests {
     }
 
     // Break it catches: an amplitude knob that starts its ladder at 1 V and so never goes below it, although
-    // 10 mVpp .. 20 Vpp are allowed.
+    // 10 mVpp .. 20 Vpp are allowed; and one that steps 1-2-5, so 350 mVpp needs the pad (#52).
     #[test]
     fn the_amplitude_knob_covers_10_mv_to_20_v() {
         let mut ui = crate::ui::testkit::demo_ui();
         assert_eq!(ui.m.bode_amp, 1.0);
         ui.adjust(Item::BodeAmp, -1);
-        assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (0.5, "500 mVpp".into()));
-        ui.adjust(Item::BodeAmp, -100);
+        assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (0.95, "950 mVpp".into()));
+        ui.adjust(Item::BodeAmp, -12);
+        assert_eq!((ui.m.bode_amp, ui.value(Item::BodeAmp)), (0.35, "350 mVpp".into()));
+        // 50 mV steps down to 100 mV, then 10 mV steps
+        ui.adjust(Item::BodeAmp, -5);
+        assert_eq!(ui.m.bode_amp, 0.1);
+        ui.adjust(Item::BodeAmp, -1);
+        assert_eq!(ui.m.bode_amp, 0.09);
+        ui.adjust(Item::BodeAmp, -1000);
         assert_eq!(ui.m.bode_amp, 0.01);
         ui.adjust(Item::BodeAmp, 1);
         assert_eq!(ui.m.bode_amp, 0.02);
-        ui.adjust(Item::BodeAmp, 100);
+        ui.adjust(Item::BodeAmp, 9);
+        assert_eq!(ui.m.bode_amp, 0.15);
+        ui.adjust(Item::BodeAmp, 1000);
         assert_eq!(ui.m.bode_amp, 20.0);
         ui.adjust(Item::BodeAmp, -1);
-        assert_eq!(ui.m.bode_amp, 10.0);
+        assert_eq!(ui.m.bode_amp, 19.95);
+    }
+
+    /// Vrms instead of Vpp (#52): the menu shows, the knob steps and the pad takes the amplitude in Vrms of the sine,
+    /// Vpp / (2 sqrt 2); the generator still gets Vpp.
+    #[test]
+    fn the_amplitude_in_vrms() {
+        use crate::settings::bode::VPP_PER_VRMS;
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.m.view = AView::Bode;
+        ui.open_menu(MenuId::Bode);
+        assert!(ui.bode_items().contains(&Item::BodeAmpUnit));
+        assert_eq!((ui.value(Item::BodeAmpUnit), ui.value(Item::BodeAmp)), ("Vpp".into(), "1 Vpp".into()));
+        ui.adjust(Item::BodeAmpUnit, 1);
+        assert!(ui.m.bode_rms && ui.m.bode_amp == 1.0, "only how it is shown changes");
+        assert_eq!(ui.value(Item::BodeAmp), "354 mVrms");
+        // 353.6 mVrms lies between steps: up to 400 mVrms, then 50 mV steps
+        ui.adjust(Item::BodeAmp, 1);
+        assert!((ui.m.bode_amp - 0.4 * VPP_PER_VRMS).abs() < 1e-12 && ui.value(Item::BodeAmp) == "400 mVrms");
+        ui.adjust(Item::BodeAmp, 1);
+        assert_eq!(ui.value(Item::BodeAmp), "450 mVrms");
+        // the pad in Vrms: 1 Vrms is 2.83 Vpp; 10 Vrms is above 20 Vpp and refused, with the range in Vrms
+        assert_eq!(ui.numpad_unit(Item::BodeAmp), Some("Vrms"));
+        ui.open_numpad(Item::BodeAmp);
+        for k in ["1", "Vrms"] {
+            let i = ui.numpad_keys().iter().position(|x| x == k).unwrap_or_else(|| panic!("no key {k}"));
+            ui.numpad_key(i);
+        }
+        assert!((ui.m.bode_amp - VPP_PER_VRMS).abs() < 1e-12 && ui.value(Item::BodeAmp) == "1 Vrms");
+        ui.open_numpad(Item::BodeAmp);
+        for k in ["1", "0", "Vrms"] {
+            let i = ui.numpad_keys().iter().position(|x| x == k).unwrap();
+            ui.numpad_key(i);
+        }
+        assert!((ui.m.bode_amp - VPP_PER_VRMS).abs() < 1e-12);
+        assert!(ui.toast.as_ref().unwrap().0.contains("3.54 mVrms to 7.07 Vrms"), "{:?}", ui.toast);
+        // the top: 7.07 Vrms is 20 Vpp, no further
+        ui.adjust(Item::BodeAmp, 1000);
+        assert_eq!(ui.m.bode_amp, 20.0);
     }
 
     #[test]
