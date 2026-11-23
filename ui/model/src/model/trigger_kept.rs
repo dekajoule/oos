@@ -82,15 +82,16 @@ impl Model {
 
     /// Gives the trigger type set now the values it kept, if it has been left before. The lower level of a two-level
     /// type comes back on the source it was set on, on another channel the one that channel kept. A second source
-    /// comes back while it is a channel that is on. True when the type had values kept.
+    /// comes back when it is a reference (the screen drops one that is no longer loaded) or a channel that is on.
+    /// True when the type had values kept.
     pub fn take_kept_trig_type(&mut self) -> bool {
         let Some(v) = self.trig_kept.types[type_index(self.trig_type)] else { return false };
         (self.slope, self.trig_pol, self.trig_when, self.trig_t1, self.trig_t2) = (v.slope, v.pol, v.when, v.t1, v.t2);
         (self.trig_slope2, self.win_mode, self.nth_idle, self.nth_n) = (v.slope2, v.win_mode, v.nth_idle, v.nth_n);
         (self.setup, self.hold, self.pat) = (v.setup, v.hold, v.pat);
         (self.video_std, self.video_sync, self.video_line) = (v.video_std, v.video_sync, v.video_line);
-        if v.ref2.is_none() && self.ch[v.src2.min(NCH - 1)].on {
-            (self.trig_src2, self.trig_ref2) = (v.src2, None);
+        if v.ref2.is_some() || self.ch[v.src2.min(NCH - 1)].on {
+            (self.trig_src2, self.trig_ref2) = (v.src2, v.ref2);
         }
         if !self.trig_type.two_level() || v.on == self.trigger_wave() {
             self.trig_level2 = v.level2;
@@ -150,6 +151,13 @@ mod tests {
         assert_eq!((m.trig_t1, m.trig_when, m.trig_pol), (5e-6, WhenKind::Gt, Pol::Neg), "Pulse's own");
         choose(&mut m, TrigType::Slope);
         assert_eq!((m.trig_t1, m.trig_when, m.trig_pol), (2e-6, WhenKind::Lt, Pol::Pos), "Slope's own");
+        // a reference as the second source comes back with its type
+        choose(&mut m, TrigType::Delay);
+        m.set_trigger_wave(WaveId::Ref(2), true);
+        choose(&mut m, TrigType::SetupHold);
+        m.set_trigger_wave(WaveId::Ch(1), true);
+        choose(&mut m, TrigType::Delay);
+        assert_eq!(m.trigger_wave2(), WaveId::Ref(2), "Delay's B");
         // the source stays whatever the type
         m.trig_src = 2;
         choose(&mut m, TrigType::Pulse);

@@ -142,12 +142,17 @@ impl Ui {
     }
 
     /// Switches the trigger type. The type left keeps its values, a type chosen again gets them back (#49,
-    /// `Model::keep_trig_type`); the source stays. On the demo a type also gets starting values that trigger on the
-    /// demo signals, its own kept values over them.
+    /// `Model::keep_trig_type`); on a scope and a record the source stays. The demo is the exception: there a type
+    /// starts on the channel that shows its signal, with values that trigger on it (`switch_trig_type`), and its own
+    /// kept values go over them.
     pub(super) fn set_trig_type(&mut self, t: TrigType) {
         self.m.keep_trig_type();
         self.switch_trig_type(t);
         if self.m.take_kept_trig_type() {
+            // a reference kept as the second source that is no longer loaded: the channel instead
+            if self.m.trig_ref2.is_some_and(|i| i >= NREF || self.refs[i].is_none()) {
+                self.m.trig_ref2 = None;
+            }
             self.dirty_map = true;
         }
     }
