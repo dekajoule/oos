@@ -707,7 +707,7 @@ impl Ui {
                 };
                 (p.f, g, p.phase.unwrap_or(f64::NAN))
             })
-            .filter(|p| p.1.is_finite())
+            .filter(|p| has_gain(p.1))
             .collect();
         self.bode.cursor = 0;
         self.bode.no_phase = if inp.is_none() {
@@ -1046,6 +1046,12 @@ fn shown_gain(g: f64, z: bool, vv: bool) -> Option<f64> {
     v.is_finite().then_some(v)
 }
 
+/// Whether a gain in dB of a free sweep is kept as a point: an output of 0 is -inf dB and stays (0 V/V, with its
+/// phase); an input of 0 gives no ratio (+inf or NaN) and is left out.
+fn has_gain(db: f64) -> bool {
+    db.is_finite() || db == f64::NEG_INFINITY
+}
+
 /// Where `hz` lies between `start` (0) and `stop` (1) on a log or a linear frequency axis.
 fn freq_frac(hz: f64, start: f64, stop: f64, log: bool) -> f64 {
     if log {
@@ -1311,6 +1317,8 @@ mod tests {
         assert!(near(shown_gain(-20.0, false, true), 0.1) && near(shown_gain(0.1, true, false), -20.0));
         assert_eq!((shown_gain(f64::NEG_INFINITY, false, true), shown_gain(0.5, true, true)), (Some(0.0), Some(0.5)));
         assert_eq!((shown_gain(f64::NEG_INFINITY, false, false), shown_gain(0.0, true, false)), (None, None));
+        let kept = [-3.0, f64::NEG_INFINITY, f64::INFINITY, f64::NAN].map(has_gain);
+        assert_eq!(kept, [true, true, false, false], "a free sweep keeps an output of 0, not an input of 0");
         let mut ui = crate::ui::testkit::demo_ui();
         assert!(ui.bode_items().contains(&Item::BodeSwLog) && ui.bode_items().contains(&Item::BodeUnit));
         // two empty refs: the sweep plans its frequencies and reads nothing

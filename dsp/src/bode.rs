@@ -125,8 +125,9 @@ pub fn log_sweep(start: f64, stop: f64, n: usize) -> Vec<f64> {
 }
 
 /// `n` linearly spaced frequencies from `start` to `stop` (both included): equal steps of (stop - start) / (n - 1).
+/// A start of 0 or below gives no plan, as for `log_sweep`.
 pub fn lin_sweep(start: f64, stop: f64, n: usize) -> Vec<f64> {
-    if n < 2 || stop <= start {
+    if n < 2 || start <= 0.0 || stop <= start {
         return vec![start.max(stop)];
     }
     let mut v: Vec<f64> = (0..n).map(|k| start + (stop - start) * k as f64 / (n - 1) as f64).collect();
@@ -518,6 +519,8 @@ mod tests {
         assert_eq!(f, vec![1e3, 1250.0, 1500.0, 1750.0, 2e3]);
         assert_eq!(sweep_freqs(10.0, 1e6, 6, true), log_sweep(10.0, 1e6, 6));
         assert_eq!((lin_sweep(5.0, 5.0, 4), lin_sweep(1.0, 2.0, 1)), (vec![5.0], vec![2.0]));
+        // a start of 0 or below (a setup line may hold one): one frequency, the stop, as the log plan gives
+        assert_eq!((lin_sweep(0.0, 1e3, 5), lin_sweep(-1.0, 1e3, 5)), (vec![1e3], vec![1e3]));
         assert!((tdiv_for(1e3, 5.0) - 5e-4).abs() < 1e-12);
         assert_eq!(
             (fmt_hz(999.9999999999998), fmt_hz(3162.2776601683804), fmt_hz(1e5), fmt_hz(12.5)),
