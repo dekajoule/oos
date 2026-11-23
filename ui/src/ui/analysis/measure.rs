@@ -600,8 +600,8 @@ impl Ui {
     }
 
     /// A large record of channel `channel` is measured in the background, and the last finished measurement had the
-    /// same settings (points, sample spacing and start time within 1 % of the record, `RefMeasureKey::in_step`; V/div,
-    /// levels): its value may stand in until the new one is there. After a change of settings it may not: the old value would read as the new one (unit 2026-11-15, the
+    /// same settings (`RefMeasureKey::same_settings`: every one of the key, the record's place in time within 1 % of
+    /// it): its value may stand in until the new one is there. After a change of settings it may not: the old value would read as the new one (unit 2026-11-15, the
     /// frequency of the time base before in roll mode).
     pub(in crate::ui) fn computing_like_last(&self, channel: usize) -> bool {
         if channel >= NCH || !self.measurement_computing(WaveId::Ch(channel)) {
@@ -620,12 +620,7 @@ impl Ui {
         }
         let Some(pending) = self.azr.ch_measure_pending[channel].get() else { return false };
         let cache = self.azr.ch_measure[channel].borrow();
-        cache.as_ref().is_some_and(|c| {
-            let k = c.key;
-            k.in_step(pending)
-                && (k.vpd, k.low, k.high, k.epoch, k.full)
-                    == (pending.vpd, pending.low, pending.high, pending.epoch, pending.full)
-        })
+        cache.as_ref().is_some_and(|c| c.key.same_settings(pending))
     }
 
     pub(in crate::ui) fn measurement_computing(&self, id: WaveId) -> bool {

@@ -264,4 +264,8 @@ fn a_running_record_whose_trigger_moves_shows_the_value_of_the_record_before() {
         assert!((freq(&u) - 250e3).abs() < 10.0, "round {round}: {}", freq(&u));
         assert!(u.meas_rows().iter().all(|r| !r.computing), "round {round}: a row says Computing");
     }
+    // another coupling of the channel: the value of the old one does not stand in
+    u.m.ch[0].invert = true;
+    next_record(&mut u, 3);
+    assert!(freq(&u).is_nan() && u.meas_rows()[0].computing, "a value of the channel before inverting is not shown");
 }
