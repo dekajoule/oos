@@ -721,8 +721,8 @@ fn eye_page_shots() {
 }
 
 /// A bit rate kept from a faster time base is under two samples a bit of this record: a rate that was set stays and
-/// the page says that it needs a faster time base, without an eye; a rate found from a record is found again from
-/// this one. Recovered with it, the clock had a bit far below a sample and the page took the memory of the scope.
+/// the page says that it needs a faster time base, without an eye; a rate found from a record is dropped and the
+/// clock comes from this one. Recovered with it, the clock had a bit far below a sample and the page took the memory of the scope.
 #[test]
 fn a_rate_the_record_cannot_hold_is_found_again_or_said() {
     for from_record in [false, true] {
@@ -743,8 +743,8 @@ fn a_rate_the_record_cannot_hold_is_found_again_or_said() {
             ui.now += REFRESH;
         }
         if from_record {
-            // (0: found from each record)
-            assert!(ui.m.eye_rate < 2e9, "found again from this record: {}", ui.m.eye_rate);
+            // dropped: 0, the clock comes from each record
+            assert!(ui.m.eye_rate < 2e9, "dropped: {}", ui.m.eye_rate);
             assert!(ui.azr.eye_res.is_some(), "an eye of the record's own clock: {:?}", ui.azr.page.status);
         } else {
             assert_eq!(ui.m.eye_rate, 2e9, "a rate that was set is kept");

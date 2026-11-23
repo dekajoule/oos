@@ -249,8 +249,8 @@ impl Ui {
     }
 
     /// The rate the eye takes for a record of one sample every `dt`. The rate is of the record it was set or found on;
-    /// at a slower time base its bit is shorter than two samples. A rate found from a record is dropped and found
-    /// again from this one; a rate that was set clears the page, which says it needs a faster record (None then).
+    /// at a slower time base its bit is shorter than two samples. A rate found from a record is dropped (0: the clock
+    /// comes from each record, or the automatic setup finds the rate again); a rate that was set clears the page, which says it needs a faster record (None then).
     /// Recovered with such a rate, the clock had a bit far below a sample, and the page took the memory of the scope
     /// (seen on a unit). The page itself and its worker for a large record (`eye_auto_update`) both ask here.
     pub(super) fn eye_rate_of_record(&mut self, dt: f64) -> Option<Option<f64>> {

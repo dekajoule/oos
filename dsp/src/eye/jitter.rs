@@ -26,7 +26,7 @@ pub fn tie(edges: &[f64], c: &Clock) -> Vec<f64> {
     edges.iter().map(|&t| t - c.nearest_tick(t)).collect()
 }
 
-/// The most unit intervals a TIE trend holds: more than the deepest record has samples.
+/// The most unit intervals a TIE trend holds: 2^26, the deepest record (2^27 points) at two samples a bit.
 const TREND_MAX: i64 = 1 << 26;
 
 /// TIE trend: the TIE linearly interpolated onto every UI between the first and the last edge (one value per UI, s);
