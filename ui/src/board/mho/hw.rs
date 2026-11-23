@@ -9,8 +9,10 @@
 //! With the unit's recording of the stock settings (`/oos/mho-settings.txt`, `tools/mho-settings.py`) the screen's
 //! keys set the board: the first channel on, its scale and the time base go to the nearest recorded setting
 //! (`settings::Settings::plan`): the FPGA's words, the ADCs' registers, the front end's words and select lines.
-//! Without it the board stays at the snapshot's setting. One channel at a time; the trigger is the edge on the channel
-//! measured at the screen's level and slope (`tpu::edge`, assumed to be the DHO's TPU). **Verified on the unit** that
+//! Without it the board stays at the snapshot's setting. With a recording of `--extended` several channels at once
+//! (`plan_many`) and each channel's offset, AC coupling and bandwidth limit (`vertical`); GND shows 0 V. The trigger
+//! is the edge on the trigger's channel (the first one shown when it is off) at the screen's level and slope
+//! (`tpu::edge`, the DHO's TPU, verified on two MHO98). **Verified on the unit** that
 //! the board measures at the snapshot's setting (three units, issues #4, #248, #491) and that the keys set the scale
 //! and the time base up to 500 MSa/s (two MHO98, #4 and #491); the trigger and 1 GSa/s and above not yet.
 
@@ -18,7 +20,7 @@ use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
 use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
 use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
 use oos_hal::mho::settings::{Plan, Settings};
-use oos_hal::mho::{acq, record, snapshot, tpu};
+use oos_hal::mho::{acq, record, snapshot, tpu, vertical};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -54,11 +56,10 @@ pub(super) fn spawn() -> HwShared {
     out
 }
 
-/// What the thread measures now: the channel (1 to 4), the hardware's scale in V/div, the sample interval, the
-/// points read and the samples before the trigger in them, the FSM's channel mask.
+/// What the thread measures now: the channels shown, the sample interval, the points read of each channel's record
+/// and the samples before the trigger in them, the FSM's channel mask.
 struct Now {
-    ch: usize,
-    scale: f64,
+    shown: Vec<Shown>,
     dt: f64,
     n: u32,
     pre: u32,
@@ -67,18 +68,36 @@ struct Now {
     k: u32,
 }
 
+/// A channel shown: its number (1 to 4), the hardware's scale in V/div at the BNC, the probe's ratio, the offset at the
+/// BNC, GND coupling.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Shown {
+    ch: usize,
+    scale: f64,
+    probe: f64,
+    offset: f64,
+    gnd: bool,
+}
+
 impl Now {
-    /// The board as plan `p` of channel `ch` sets it, every `k`-th point of its record making the frame.
-    fn of(ch: usize, p: &Plan, k: u32) -> Now {
-        Now {
-            ch,
-            scale: p.scale,
-            dt: k as f64 / p.srate,
-            n: p.depth.min(POINTS_MAX),
-            pre: p.pre.min(p.depth),
-            mask: p.mask,
-            k,
-        }
+    /// The board as plan `p` for the channels `chans` sets it, every `k`-th point of its record making the frame.
+    fn of(chans: &[super::Chan], p: &Plan, k: u32) -> Now {
+        let shown = chans
+            .iter()
+            .map(|c| Shown {
+                ch: c.ch,
+                scale: p.scales[c.ch - 1],
+                probe: c.probe,
+                offset: c.vertical.offset,
+                gnd: c.gnd,
+            })
+            .collect();
+        Now { shown, dt: k as f64 / p.srate, n: p.depth.min(POINTS_MAX), pre: p.pre.min(p.depth), mask: p.mask, k }
+    }
+
+    /// The channel the trigger is on: `ch` when it is shown, else the first one shown.
+    fn trigger_on(&self, ch: usize) -> Option<Shown> {
+        self.shown.iter().find(|c| c.ch == ch).or(self.shown.first()).copied()
     }
 
     /// The read-out of the record: the points around the trigger of every channel recorded (`mask`), interleaved.
@@ -96,16 +115,37 @@ impl Now {
 }
 
 /// The status line of a plan set.
-fn set_text(ch: usize, p: &Plan, k: u32) -> String {
+fn set_text(p: &Plan, k: u32) -> String {
     let how = if k > 1 { format!("; recorded at 4 GSa/s, every {}th point", k) } else { String::new() };
+    let chans: Vec<String> =
+        (0..4).filter(|&c| p.scales[c] > 0.0).map(|c| format!("CH{} at {} V/div", c + 1, p.scales[c])).collect();
     format!(
-        "MHO900: CH{} at {} V/div, {} s/div, {:.3e} Sa/s (recorded settings{})",
-        ch,
-        p.scale,
+        "MHO900: {}, {} s/div, {:.3e} Sa/s (recorded settings{})",
+        chans.join(", "),
         p.tdiv,
         p.srate / k as f64,
         how
     )
+}
+
+/// The plan for what the screen asks, with each channel's vertical settings laid over it; what could not be set goes
+/// to the log.
+fn plan_for(st: &Settings, w: &super::Want, fast: bool) -> Result<(Plan, u32), String> {
+    let chans: Vec<(usize, f64)> = w.chans.iter().map(|c| (c.ch, c.scale)).collect();
+    let (mut p, k) = match chans.as_slice() {
+        [(ch, scale)] if fast => st.plan_fast(*ch, w.tdiv, *scale)?,
+        _ => (st.plan_many(&chans, w.tdiv)?, 1),
+    };
+    for c in &w.chans {
+        let scale = p.scales[c.ch - 1];
+        for m in vertical::apply(st, &mut p, c.ch, scale, c.vertical) {
+            eprintln!("oos-ui mho: {}", m);
+        }
+        if c.fifty {
+            eprintln!("oos-ui mho: CH{}: 50 ohm is not set yet, the input stays at 1 Mohm", c.ch);
+        }
+    }
+    Ok((p, k))
 }
 
 fn run(out: &HwShared) {
@@ -141,8 +181,7 @@ fn run(out: &HwShared) {
     let fast = std::path::Path::new(FAST).exists();
     let depth = s.fpga.get(&snapshot::DEPTH).copied().unwrap_or(4000);
     let mut now = Now {
-        ch: s.channel,
-        scale: s.scale,
+        shown: vec![Shown { ch: s.channel, scale: s.scale, probe: 1.0, offset: 0.0, gnd: false }],
         dt: 10.0 * s.timebase / depth as f64,
         n: depth,
         pre: depth / 2,
@@ -157,7 +196,7 @@ fn run(out: &HwShared) {
     let mut applied: Option<super::Want> = None;
     status(format!(
         "MHO900: CH{} at {} V/div (snapshot){}",
-        now.ch,
+        s.channel,
         s.scale_text,
         if settings.is_some() { "; the keys set the board" } else { "; no settings file: the keys don't" }
     ));
@@ -167,7 +206,7 @@ fn run(out: &HwShared) {
     let mut statuses: BTreeMap<u32, u32> = BTreeMap::new();
     // the TPU's shadows (the MHO900's stock 0x201c is the DHO's) and the trigger last set, with the scale it was for
     let mut tsh = tpu::Shadows::APP;
-    let mut trig_set: Option<(super::Trig, usize, f64, f64)> = None;
+    let mut trig_set: Option<(super::Trig, Shown)> = None;
     let mut edges = EdgeLog::default();
     // the stock system's upper bits of 0x1154 for the pass-through: the snapshot's, then each plan's
     let mut keep_1154 = s.fpga.get(&0x1154).copied().unwrap_or(0);
@@ -183,33 +222,27 @@ fn run(out: &HwShared) {
             continue;
         }
         if let (Some(st), Some(w)) = (&settings, want) {
-            if applied.as_ref().map(|a| (a.ch, a.scale, a.tdiv, a.probe)) != Some((w.ch, w.scale, w.tdiv, w.probe)) {
-                if let Some(ch) = w.ch {
-                    let plan = if fast {
-                        st.plan_fast(ch, w.tdiv, w.scale)
-                    } else {
-                        st.plan(ch, w.tdiv, w.scale).map(|p| (p, 1))
-                    };
-                    match plan {
+            if applied.as_ref().map(|a| (&a.chans, a.tdiv)) != Some((&w.chans, w.tdiv)) {
+                if !w.chans.is_empty() {
+                    match plan_for(st, &w, fast) {
                         Ok((p, k)) => {
                             apply(&mut bar, afe.as_mut(), &p, sh.s1000, adc_sync);
                             // the plan wrote the recorded level words (the stock level, 0 V): the screen's again
                             trig_set = None;
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
-                            now = Now::of(ch, &p, k);
-                            status(set_text(ch, &p, k));
+                            now = Now::of(&w.chans, &p, k);
+                            status(set_text(&p, k));
                             (settle, show) = (SETTLE, true);
                         }
-                        Err(e) => status(format!("MHO900: CH{}: {}", ch, e)),
+                        Err(e) => status(format!("MHO900: {}", e)),
                     }
                 }
                 applied = Some(w.clone());
             }
-            if let Some(ch) = w.ch {
-                let key = (w.trig, ch, now.scale, w.probe);
-                if trig_set != Some(key) {
-                    trigger(&mut bar, &mut tsh, now.ch, now.scale, w.probe, w.trig);
-                    trig_set = Some(key);
+            if let Some(c) = now.trigger_on(w.trig.ch) {
+                if trig_set != Some((w.trig, c)) {
+                    trigger(&mut bar, &mut tsh, c, w.trig);
+                    trig_set = Some((w.trig, c));
                 }
             }
         }
@@ -247,12 +280,10 @@ fn run(out: &HwShared) {
             settle -= 1;
             continue;
         }
-        let words = channel_words(bytes, now.mask, now.ch, now.scale, std::mem::take(&mut show));
-        let probe = applied.as_ref().map_or(1.0, |w| w.probe);
-        let (words, pre) = thin(&words, now.pre - now.start(), now.k);
-        let mut f = frame(&words, now.ch - 1, now.scale, probe, now.dt, pre);
-        if let Some((t, ..)) = trig_set {
-            edges.align(&mut f, now.ch - 1, t, now.scale * probe, seq);
+        let words = split(bytes, now.mask, now.shown[0].scale, std::mem::take(&mut show));
+        let mut f = frame(&words, &now);
+        if let Some((t, c)) = trig_set {
+            edges.align(&mut f, c.ch - 1, t, c.scale * c.probe, seq);
         }
         publish(out, f, seq);
         std::thread::sleep(Duration::from_millis(PERIOD_MS));
@@ -316,19 +347,19 @@ fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32, adc_sy
     }
 }
 
-/// The words of channel `ch` from a read-out of the channels in `mask`, interleaved as on the DHO800/DHO900. The stock
-/// system records CH2, CH3 or CH4 alone together with CH1 (`settings::Plan::mask`); with `show`, the levels of each
-/// channel at `scale` go to the screen's log, which tells whether the words are where they are assumed to be.
-fn channel_words(bytes: &[u8], mask: u32, ch: usize, scale: f64, show: bool) -> Vec<u16> {
-    let mut all = record::deinterleave(bytes, mask);
+/// The words of each channel from a read-out of the channels in `mask`, interleaved as on the DHO800/DHO900 (verified
+/// on an MHO98 for CH2, CH3 and CH4 recorded with CH1, mho-dev-30, issue #4). With `show`, the levels of each channel
+/// at the first shown channel's `scale` go to the screen's log once after a setting.
+fn split(bytes: &[u8], mask: u32, scale: f64, show: bool) -> [Vec<u16>; 4] {
+    let all = record::deinterleave(bytes, mask);
     if show && record::ratio(mask) > 1 {
         let text: Vec<String> = (0..4)
             .filter_map(|c| snapshot::Levels::of(&all[c], scale).map(|l| (c, l)))
             .map(|(c, l)| format!("CH{} {:.3} V..{:.3} V, mean {:.3} V", c + 1, l.min, l.max, l.mean))
             .collect();
-        eprintln!("oos-ui mho: record of the channels {:#x} at CH{}'s scale: {}", mask, ch, text.join("; "));
+        eprintln!("oos-ui mho: record of the channels {:#x} at {} V/div: {}", mask, scale, text.join("; "));
     }
-    std::mem::take(&mut all[ch - 1])
+    all
 }
 
 /// Counts the status word an acquisition ended with; every 50 frames the counts go to the screen's log.
@@ -433,17 +464,17 @@ fn edge_near(v: &[f32], pre: usize, level: f32, h: f32, slope: tpu::Slope) -> Op
     best
 }
 
-/// The edge trigger on channel `ch` at the screen's level (V at the probe tip, `probe` the ratio) for the hardware's
-/// `scale` (V/div at the BNC): the DHO800/DHO900's sequence (`tpu::edge`), hysteresis by the scale as there, holdoff
-/// the shortest. The auto trigger's timeout stays the stock system's.
-fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, ch: usize, scale: f64, probe: f64, t: super::Trig) {
+/// The edge trigger on channel `c` at the screen's level (V at the probe tip) for the hardware's scale and offset (at
+/// the BNC): the DHO800/DHO900's sequence (`tpu::edge`), hysteresis by the scale as there, holdoff the shortest. The
+/// auto trigger's timeout stays the stock system's.
+fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, c: Shown, t: super::Trig) {
     let nv = |v: f64| v * 1e9;
-    let level = nv(t.level / probe.max(1e-9));
-    let noise = tpu::noise_hysteresis(nv(scale), false);
-    for (a, v) in tpu::edge(sh, ch as u32, t.slope, level, 0.0, nv(scale), 1.0, noise, 8_000_000) {
+    let level = t.level / c.probe;
+    let noise = tpu::noise_hysteresis(nv(c.scale), false);
+    for (a, v) in tpu::edge(sh, c.ch as u32, t.slope, nv(level), nv(c.offset), nv(c.scale), 1.0, noise, 8_000_000) {
         bar.wr(a, v);
     }
-    eprintln!("oos-ui mho: trigger: CH{} {:?} at {} V ({} V at the BNC)", ch, t.slope, t.level, t.level / probe);
+    eprintln!("oos-ui mho: trigger: CH{} {:?} at {} V ({} V at the BNC)", c.ch, t.slope, t.level, level);
 }
 
 /// Every `k`-th point of a record whose trigger is at `pre`, the trigger among them: the points and the trigger's index
@@ -454,12 +485,17 @@ fn thin(words: &[u16], pre: u32, k: u32) -> (Vec<u16>, u32) {
     (words.iter().skip(first).step_by(k).copied().collect(), ((pre - first) / k) as u32)
 }
 
-/// A frame of the read-out `words` of channel `ch` (0 to 3) at `scale` V/div: volts as the stock system decodes them
-/// (section 5) times the probe's ratio, the trigger at sample `pre` of the window.
-fn frame(words: &[u16], ch: usize, scale: f64, probe: f64, dt: f64, pre: u32) -> Frame {
-    let v: Vec<f32> = words.iter().map(|&w| (acq::volts(w, scale, 0.0) * probe) as f32).collect();
-    let mut f = Frame { dt, pre: pre as usize, acq: (1.0 / dt, words.len()), ..Frame::default() };
-    f.ch[ch] = v;
+/// A frame of the channels shown from their read-out `words`: volts as the stock system decodes them (section 5, the
+/// screen's offset at mid-code) times the probe's ratio, 0 V with GND coupling, every `k`-th point, the trigger at its
+/// sample of the window.
+fn frame(words: &[Vec<u16>; 4], now: &Now) -> Frame {
+    let mut f = Frame { dt: now.dt, ..Frame::default() };
+    for c in &now.shown {
+        let (w, pre) = thin(&words[c.ch - 1], now.pre - now.start(), now.k);
+        let volt = |x: u16| if c.gnd { 0.0 } else { (acq::volts(x, c.scale, c.offset) * c.probe) as f32 };
+        f.ch[c.ch - 1] = w.iter().map(|&x| volt(x)).collect();
+        (f.pre, f.acq) = (pre as usize, (1.0 / now.dt, w.len()));
+    }
     f.basic = std::array::from_fn(|c| BasicStats::of(&f.ch[c]));
     f
 }
@@ -471,13 +507,22 @@ mod tests {
     // Break it catches: the trace on another channel than the one measured, volts off by the scale or the probe,
     // the trigger point off.
     #[test]
-    fn a_frame_holds_the_channel_in_volts_at_the_probe_tip() {
-        let code = |v: f64| (32768.0 + v / 0.1 * 7500.0) as u16;
-        let words: Vec<u16> = (0..10_000).map(|i| code(if i < 5000 { 0.0 } else { 0.3 })).collect();
-        let f = frame(&words, 1, 0.1, 10.0, 2e-7, 5000);
-        assert!(f.ch[0].is_empty() && f.ch[2].is_empty() && f.ch[3].is_empty());
-        assert_eq!(f.ch[1].len(), 10_000);
+    fn a_frame_holds_the_channels_in_volts_at_the_probe_tip() {
+        // the board at -0.2 V offset: 0 V reads 0.2 V above mid-code
+        let code = |v: f64| (32768.0 + (v - 0.2) / 0.1 * 7500.0) as u16;
+        let words: [Vec<u16>; 4] = [
+            vec![],
+            (0..10_000).map(|i| code(if i < 5000 { 0.0 } else { 0.3 })).collect(),
+            vec![],
+            vec![32768; 10_000],
+        ];
+        let shown = |ch, gnd| Shown { ch, scale: 0.1, probe: 10.0, offset: -0.2, gnd };
+        let now = Now { shown: vec![shown(2, false), shown(4, true)], dt: 2e-7, n: 10_000, pre: 5000, mask: 0xb, k: 1 };
+        let f = frame(&words, &now);
+        assert!(f.ch[0].is_empty() && f.ch[2].is_empty());
+        assert_eq!((f.ch[1].len(), f.ch[3].len()), (10_000, 10_000));
         assert!((f.ch[1][0] - 0.0).abs() < 1e-3 && (f.ch[1][9999] - 3.0).abs() < 1e-3);
+        assert!(f.ch[3].iter().all(|&v| v == 0.0), "GND reads 0 V");
         assert_eq!((f.pre, f.dt, f.acq.1), (5000, 2e-7, 10_000));
     }
 
@@ -485,9 +530,9 @@ mod tests {
     #[test]
     fn a_channel_recorded_with_ch1_is_taken_from_the_odd_words() {
         let bytes: Vec<u8> = [1u16, 2, 1, 2, 1, 2].iter().flat_map(|w| w.to_le_bytes()).collect();
-        assert_eq!(channel_words(&bytes, 3, 2, 1.0, false), [2, 2, 2]);
-        assert_eq!(channel_words(&bytes, 9, 1, 1.0, false), [1, 1, 1]);
-        assert_eq!(channel_words(&bytes, 1, 1, 1.0, false), [1, 2, 1, 2, 1, 2]);
+        assert_eq!(split(&bytes, 3, 1.0, false)[1], [2, 2, 2]);
+        assert_eq!(split(&bytes, 9, 1.0, false)[0], [1, 1, 1]);
+        assert_eq!(split(&bytes, 1, 1.0, false)[0], [1, 2, 1, 2, 1, 2]);
     }
 
     // Break it catches: the trigger's point dropped by the thinning, the trigger's index off by the points before it.

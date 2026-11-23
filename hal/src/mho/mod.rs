@@ -43,3 +43,4 @@ pub mod recipe;
 pub mod settings;
 pub mod snapshot;
 pub mod target;
+pub mod vertical;

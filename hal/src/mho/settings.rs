@@ -74,6 +74,33 @@ pub struct Plan {
     pub pre: u32,
     /// the FSM's channel mask
     pub mask: u32,
+    /// the scale recorded for each channel shown, 0 for one not shown (`scale` is the first one's)
+    pub scales: [f64; 4],
+}
+
+/// The read path's digital gain and offset of slot `k` (0 to 3) and of its zoom copy (afe-settings.md 4.1): the
+/// channel of each slot follows the channels recorded (`slots`).
+fn slot_words(k: usize) -> [u32; 4] {
+    let k = k as u32;
+    [0x14c8 + 12 * k, 0x14d0 + 12 * k, 0x14f8 + 8 * k, 0x14fc + 8 * k]
+}
+
+/// The slots channel `ch` has in a record of the channels in `mask`: all four alone, the lower channel's 0 and 2 and
+/// the higher's 1 and 3 with two (CH1 and another: the stock system records no pair without CH1), its own (`ch - 1`)
+/// with three or four. Seen in an MHO98's recording (issue #4): CH2's gain in slots 1 and 3 with CH1+CH2, CH1 to CH4
+/// in slots 0 to 3 with all four and with CH2+CH3 (recorded as CH1+CH2+CH3).
+pub fn slots(ch: usize, mask: u32) -> Vec<usize> {
+    match crate::dho::hz::ratio(mask) {
+        1 => vec![0, 1, 2, 3],
+        2 if mask.trailing_zeros() as usize == ch - 1 => vec![0, 2],
+        2 => vec![1, 3],
+        _ => vec![ch - 1],
+    }
+}
+
+/// Words a plan never writes: not settings, live values, the sync, the SCU's mode word (the arm's).
+fn skipped(a: u32) -> bool {
+    NOT_REPLAYED.iter().any(|(n, _)| *n == a) || LIVE.contains(&a) || a == SYNC || a == super::snapshot::MODE
 }
 
 /// All settings of a unit's file.
@@ -207,14 +234,7 @@ impl Settings {
 
     /// The recorded values of `kind` (`tdiv`, `scale`) for channel `ch`, from the names `CHn_kind=V`.
     pub fn steps(&self, ch: usize, kind: &str) -> Vec<(f64, &Setting)> {
-        let prefix = format!("CH{}_{}=", ch, kind);
-        let mut v: Vec<(f64, &Setting)> = self
-            .list
-            .iter()
-            .filter_map(|s| s.name.strip_prefix(&prefix).and_then(|x| x.parse().ok()).map(|x| (x, s)))
-            .collect();
-        v.sort_by(|a, b| a.0.total_cmp(&b.0));
-        v
+        self.named(&format!("CH{}_{}=", ch, kind))
     }
 
     /// The board's state for channel `ch` (1 to 4) alone at the recorded time base and scale nearest to `tdiv` and
@@ -230,14 +250,11 @@ impl Settings {
             .find(|s| !s.adc[0].is_empty())
             .map(|s| s.adc.clone())
             .ok_or(format!("no ADC registers of CH{} recorded", ch))?;
-        let skip = |a: &u32| {
-            NOT_REPLAYED.iter().any(|(n, _)| n == a) || LIVE.contains(a) || *a == SYNC || *a == super::snapshot::MODE
-        };
         // the scale's bits against 1 V/div, laid over the time base's word
         let fpga = tb
             .fpga
             .iter()
-            .filter(|(a, _)| !skip(a))
+            .filter(|(a, _)| !skipped(**a))
             .map(|(&a, &v)| {
                 let d = sc.fpga.get(&a).copied().unwrap_or(0) ^ reference.fpga.get(&a).copied().unwrap_or(0);
                 (a, if a == FILTER { (v ^ d) & !3 | 1 } else { v ^ d })
@@ -261,7 +278,88 @@ impl Settings {
             depth: tb.fpga.get(&super::snapshot::DEPTH).copied().unwrap_or(10_000),
             pre: tb.fpga.get(&0x4050).copied().unwrap_or(5000),
             mask,
+            scales: std::array::from_fn(|c| if c + 1 == ch { sv } else { 0.0 }),
         })
+    }
+
+    /// The board's state for the channels `chans` (channel 1 to 4, scale in V/div, in channel order) at the time base
+    /// nearest to `tdiv`: one channel as `plan`; several at the recorded setting of the same channels on
+    /// (`combo=a,b_tdiv=T` and `CH1-4_tdiv=T` of `mho-settings.py --extended`, all at 1 V/div), each channel's
+    /// scale laid over it as in `plan` and its digital gain in its slots (`slots`). Err when the file has no setting
+    /// of these channels together.
+    pub fn plan_many(&self, chans: &[(usize, f64)], tdiv: f64) -> Result<Plan, String> {
+        match chans {
+            [] => Err("no channel on".into()),
+            [(ch, scale)] => self.plan(*ch, tdiv, *scale),
+            _ => self.plan_together(chans, tdiv),
+        }
+    }
+
+    fn plan_together(&self, chans: &[(usize, f64)], tdiv: f64) -> Result<Plan, String> {
+        let list: Vec<String> = chans.iter().map(|c| c.0.to_string()).collect();
+        let prefix =
+            if chans.len() == 4 { "CH1-4_tdiv=".to_string() } else { format!("combo={}_tdiv=", list.join(",")) };
+        let steps = self.named(&prefix);
+        let missing = || format!("CH{} together not recorded (mho-settings.py --extended)", list.join("+CH"));
+        let adc =
+            steps.iter().map(|x| x.1).find(|s| !s.adc[0].is_empty()).map(|s| s.adc.clone()).ok_or_else(missing)?;
+        let (td, tb) = nearest(steps, tdiv).ok_or_else(missing)?;
+        let bits = chans.iter().fold(0, |m, c| m | 1 << (c.0 - 1));
+        let mask = tb.fpga.get(&super::snapshot::MODE).map(|m| m & 0xf).filter(|m| m & bits == bits).unwrap_or(bits);
+        let mut fpga: BTreeMap<u32, u32> =
+            tb.fpga.iter().filter(|(a, _)| !skipped(**a)).map(|(&a, &v)| (a, v)).collect();
+        let (mut afe, mut select, mut scales) = (Vec::new(), Vec::new(), [0.0; 4]);
+        let slot_set: Vec<u32> = (0..4).flat_map(slot_words).collect();
+        for &(ch, scale) in chans {
+            let (sv, sc) = nearest(self.steps(ch, "scale"), scale).ok_or(format!("no scale of CH{} recorded", ch))?;
+            let reference = self.get(&format!("CH{}_scale=1", ch)).ok_or(format!("no CH{} at 1 V/div", ch))?;
+            for (a, v) in fpga.iter_mut().filter(|(a, _)| !slot_set.contains(a)) {
+                *v ^= sc.fpga.get(a).copied().unwrap_or(0) ^ reference.fpga.get(a).copied().unwrap_or(0);
+            }
+            // the channel's gain where it stands alone: slot 0 for CH1, slot 1 for the others (recorded with CH1)
+            let own = slot_words(if ch == 1 { 0 } else { 1 });
+            for k in slots(ch, mask) {
+                for (dst, src) in slot_words(k).into_iter().zip(own) {
+                    if let Some(&w) = sc.fpga.get(&src) {
+                        fpga.insert(dst, w);
+                    }
+                }
+            }
+            let switch_on = self.get(&format!("CH{}_alone", ch)).map(|s| s.afe.clone()).unwrap_or_default();
+            afe.extend(switch_on.iter().chain(&sc.afe).filter(|f| f.0 == ch));
+            let line = format!("_ch{}", ch);
+            let mine = |g: &u32| super::acq::afe::select_name(*g).is_some_and(|n| n.ends_with(&line));
+            select.extend(sc.select.iter().filter(|(g, _)| mine(g)));
+            scales[ch - 1] = sv;
+        }
+        if let Some(f) = fpga.get_mut(&FILTER) {
+            *f = *f & !3 | 1;
+        }
+        let srate = tb.num("srate").filter(|&r| r > 0.0).ok_or("the time base's sample rate is not recorded")?;
+        Ok(Plan {
+            fpga: fpga.into_iter().collect(),
+            adc,
+            afe,
+            select,
+            tdiv: td,
+            scale: scales[chans[0].0 - 1],
+            srate,
+            depth: tb.fpga.get(&super::snapshot::DEPTH).copied().unwrap_or(10_000),
+            pre: tb.fpga.get(&0x4050).copied().unwrap_or(5000),
+            mask,
+            scales,
+        })
+    }
+
+    /// The settings whose names start with `prefix` followed by a number, by that number.
+    fn named(&self, prefix: &str) -> Vec<(f64, &Setting)> {
+        let mut v: Vec<(f64, &Setting)> = self
+            .list
+            .iter()
+            .filter_map(|s| s.name.strip_prefix(prefix).and_then(|x| x.parse().ok()).map(|x| (x, s)))
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v
     }
 }
 
@@ -364,6 +462,22 @@ mod tests {
         assert_eq!(fast.fpga.iter().find(|w| w.0 == FILTER), Some(&(FILTER, 1)));
         assert_eq!(w.get(&FILTER), Some(&1));
         assert!(s.plan(3, 1e-3, 1.0).is_err());
+    }
+
+    // Break it catches: CH1's gain in its partner's slots, a channel of four in another's slot, one channel's gain not
+    // in every slot, several channels planned without a recording of them together.
+    #[test]
+    fn several_channels_take_their_slots() {
+        assert_eq!(
+            (slots(1, 1), slots(1, 3), slots(2, 3), slots(4, 9)),
+            (vec![0, 1, 2, 3], vec![0, 2], vec![1, 3], vec![1, 3])
+        );
+        assert_eq!((slots(2, 7), slots(3, 0xf), slots(4, 0xb)), (vec![1], vec![2], vec![3]));
+        assert_eq!(slot_words(1), [0x14d4, 0x14dc, 0x1500, 0x1504]);
+        let s = Settings::parse(&file()).unwrap();
+        assert_eq!(s.plan_many(&[(2, 0.1)], 2e-4), s.plan(2, 2e-4, 0.1));
+        assert!(s.plan_many(&[(1, 0.1), (2, 0.1)], 2e-4).unwrap_err().contains("--extended"));
+        assert!(s.plan_many(&[], 2e-4).is_err());
     }
 
     // Break it catches: a slow setting recorded at its own rate (its trigger lies anywhere), the depth or the points

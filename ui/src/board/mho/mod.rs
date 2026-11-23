@@ -20,20 +20,33 @@ use std::sync::Mutex;
 /// The Rigol MHO900.
 pub struct Mho;
 
-/// What the screen asks of the board: the channel (1 to 4, None: none on), its scale at the BNC in V/div, the time
-/// base in s/div and the probe's ratio (the frames are volts at the probe tip), and the trigger.
+/// What the screen asks of the board: the channels on (in order, none: nothing measured), the time base in s/div and
+/// the trigger.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Want {
-    pub ch: Option<usize>,
-    pub scale: f64,
+    pub chans: Vec<Chan>,
     pub tdiv: f64,
-    pub probe: f64,
     pub trig: Trig,
 }
 
-/// The edge trigger on the channel measured: its level in V at the probe tip and its slope.
+/// One channel on: its number (1 to 4), its scale at the BNC in V/div, the probe's ratio (the frames are volts at the
+/// probe tip), offset at the BNC, AC coupling and bandwidth limit (`vertical::Vertical`), GND coupling (a flat line at
+/// 0 V, the board stays at DC) and 50 ohm (not set yet: the input stays at 1 Mohm).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chan {
+    pub ch: usize,
+    pub scale: f64,
+    pub probe: f64,
+    pub vertical: oos_hal::mho::vertical::Vertical,
+    pub gnd: bool,
+    pub fifty: bool,
+}
+
+/// The edge trigger: its channel (1 to 4; the first channel on when that one is off), its level in V at the probe tip
+/// and its slope.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Trig {
+    pub ch: usize,
     pub level: f64,
     pub slope: oos_hal::mho::tpu::Slope,
 }
@@ -59,15 +72,30 @@ impl Board for Mho {
     }
 
     fn want(&self, m: &Model) -> Self::Want {
-        // the first channel on: the board measures one channel at a time for now (docs/mho.md)
-        let ch = (0..4).find(|&c| m.ch[c].on);
-        let c = ch.unwrap_or(0);
+        let chans = (0..4)
+            .filter(|&c| m.ch[c].on)
+            .map(|c| {
+                let k = &m.ch[c];
+                let probe = (k.probe as f64).max(1e-9);
+                Chan {
+                    ch: c + 1,
+                    scale: (crate::model::VSCALES[k.vscale] * k.vfine) as f64,
+                    probe,
+                    vertical: oos_hal::mho::vertical::Vertical {
+                        offset: k.offset as f64 / probe,
+                        ac: k.coupling == Coupling::Ac,
+                        bw_mhz: crate::model::BWS.get(k.bw).map_or(0, |b| b.1),
+                    },
+                    gnd: k.coupling == Coupling::Gnd,
+                    fifty: k.coupling == Coupling::Dc50,
+                }
+            })
+            .collect();
         Want {
-            ch: ch.map(|c| c + 1),
-            scale: (crate::model::VSCALES[m.ch[c].vscale] * m.ch[c].vfine) as f64,
+            chans,
             tdiv: m.hw_time_per_div() as f64,
-            probe: m.ch[c].probe as f64,
             trig: Trig {
+                ch: m.trig_src.min(3) + 1,
                 level: m.trig_level as f64,
                 slope: match m.slope {
                     crate::model::Slope::Rise => oos_hal::mho::tpu::Slope::Rising,

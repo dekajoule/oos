@@ -611,7 +611,33 @@ the channel's: lower channel on the even words, higher on the odd ones, as on th
 on the MHO900). After each setting the screen's log shows the levels of both channels once, so a picture of the probe
 on one of them tells which words hold it. A 10:1 probe set to 10x read 2.2 V for the 3 V signal at 500 mV/div: at the
 BNC that is 50 mV/div, whose range (about 4.3 divisions either side) ends at 0.22 V, so the signal was clipped; the
-screen's vertical offset, which the stock system uses to bring it into range, is not yet sent to the board. The trigger: the stock system's level words hold a window around the level (0x2004
+screen's vertical offset, which the stock system uses to bring it into range, is not yet sent to the board.
+
+**Verified on the unit** (hp197's MHO98, mho-dev-30, issue #4): with CH1 open and the probe on CH2, CH3 or CH4 alone,
+the channel's words (the odd ones) held the square and CH1's were flat, and every frame was triggered with the edge
+at the trigger point; with the probe on CH1 the other way round. So the DHO800/DHO900's interleave holds here.
+
+**Seen in a recording** (hp197's MHO98, `mho-settings.py --extended`, issue #4), the basis of mho-dev-31:
+
+- The stock system records no set of channels without CH1: CH2+CH3 is recorded with mask 7, CH2+CH4 with 0xb, CH3+CH4
+  with 0xd, CH2+CH3+CH4 with 0xf. CH1 with one other channel runs in the two-channel mode (ratio 2, segment 0x400 at
+  10 k points, 2 GSa/s at most); every other set in the four-channel mode (ratio 4, segment 0x800, 1 GSa/s at most).
+  ADC 0 keeps CH1's input mode (0x9460) with two channels; with four both ADCs change (0x1860 and 0x0149).
+- The read path's digital gain and offset (afe-settings.md 4.1: 0x14c8 + 12k and 0x14d0 + 12k, the zoom copies
+  0x14f8 + 8k and 0x14fc + 8k) has one slot per k: with one channel all four hold it, with CH1 and another CH1 slots 0
+  and 2 and the other 1 and 3, with four channel n slot n - 1. A channel's gain at a scale is the one in its slot
+  when it is recorded alone. At 1 V/div the set made from that (CH1+CH2) is word for word the recorded one.
+- The offset is the front end's DAC word 0x28 alone, linear in the offset: `zero - offset / lsb`, with the zero of the
+  scale (its own 0x28 at 0 V) and one `lsb` per input path (IG 0 at 10 mV/div: +51 uV per code; IG 1 at 100 mV/div:
+  -635 uV; IG 2 at 1 V/div: -972 uV; within 1 % between the four channels). IG 3 (from 5 V/div) has no recorded
+  offset; OOS takes ten times IG 2's (the DHO800/DHO900's ratio, **assumed**). The stock system rewrites the trigger's
+  level words with the offset, as `tpu::edge` does with it.
+- AC coupling clears bit 15 of the front end's 0x07, nothing else. GND sends no front-end word; it sets the
+  channel's gain slots to 0 and their offset to 0x8000. OOS shows GND as 0 V without changing the board.
+- The bandwidth limit (20M and 250M) rewrites the front end's 0x2e (bits 10:0 change, the scale's bits 15:11 stay)
+  and the FPGA's 0x1004 (bits 23:20: 0xf for CH1, 0xc for CH2 at 20M; none at 250M), and its zero trim (0x28) and gain
+  move by a few codes, which OOS leaves out.
+- 50 ohm rewrites most of the front end's words; not done yet. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.

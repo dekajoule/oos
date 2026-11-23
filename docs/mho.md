@@ -205,6 +205,10 @@ measures at that one setting: the probe compensation signal on the snapshot's ch
    (protocols/mho-acquisition.md, section 11). It runs `oos-fpgad mho-start --snapshot /oos/mho-snapshot.txt --yes` (the report goes
    to `/oos/mho-start.txt`, its last line says `RESULT: IT MEASURES` when the square wave came back), then restarts
    oos-ui on the board's frames. `oos-mho-live off` goes back to the demo signal; a power-off undoes all of it.
+   From mho-dev-31 on the scope runs `oos-mho-live` by itself at every start when `/oos/mho-snapshot.txt` is there
+   (its output in `/tmp/oos-mho-live.log`); a file `/oos/mho-manual` leaves it to the owner again. With a recording
+   of `mho-settings.py --extended` the screen's channels on (several at once), their offset, AC and GND coupling and
+   bandwidth limit set the board too; 50 ohm not yet.
 
 What `mho-start` does, step by step, is in protocols/mho-acquisition.md section 10; `--dry` lists every step without
 touching the board. Only that setting is measured: the scale, time base and trigger keys still act on the demo's
