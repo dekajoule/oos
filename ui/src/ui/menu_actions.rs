@@ -784,8 +784,8 @@ impl Ui {
             }
             Item::SlopeAct => self.key(key::SLOPE),
             Item::NavHist => self.key(key::NAVIGATE),
-            Item::NavBack => self.key(0x08),
-            Item::NavFwd => self.key(0x06),
+            Item::NavBack => self.key(key::NAV_BACK),
+            Item::NavFwd => self.key(key::NAV_FWD),
             Item::QuickRun => {
                 self.close_menu();
                 self.quick();

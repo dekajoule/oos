@@ -289,6 +289,10 @@ pub mod key {
     pub const GI: u8 = 0x03;
     pub const HMENU: u8 = 0x04;
     pub const NAVIGATE: u8 = 0x05;
+    /// History keys: `<` steps back to older records, `>` forward to newer ones, play-stop goes live.
+    pub const NAV_BACK: u8 = 0x06;
+    pub const NAV_PLAY: u8 = 0x07;
+    pub const NAV_FWD: u8 = 0x08;
     pub const CLEAR: u8 = 0x0b;
     pub const SLOPE: u8 = 0x09;
     pub const FORCE: u8 = 0x0a;
@@ -387,9 +391,9 @@ const KEYPAD: [&str; 19] =
 pub const LONG_PRESS: f64 = 0.6;
 
 pub const KEY_NAMES: [(&str, u8); 30] = [
-    ("navfwd", 0x06),
-    ("navplay", 0x07),
-    ("navback", 0x08),
+    ("navback", key::NAV_BACK),
+    ("navplay", key::NAV_PLAY),
+    ("navfwd", key::NAV_FWD),
     ("ref", 0x01),
     ("la", 0x02),
     ("gi", 0x03),
