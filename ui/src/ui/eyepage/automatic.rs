@@ -490,7 +490,11 @@ impl Ui {
             return large || matches!(self.m.eye_src, WaveId::Ch(_)) || self.azr.eye_auto.failed;
         }
         self.azr.eye_auto.wanted = Some(key.clone());
-        let requested = (!self.m.eye_from_record && self.m.eye_rate > 0.0).then_some(self.m.eye_rate);
+        // the rate set or found, unless it is of a faster record (`eye_rate_of_record`); a found rate is found again
+        let requested = |ui: &mut Self, dt: f64| {
+            let rate = ui.eye_rate_of_record(dt)?;
+            Some(rate.filter(|_| !ui.m.eye_from_record))
+        };
         if large {
             let captures = self.auto_eye_captures();
             let worker = self.azr.eye_auto.worker.get_or_insert_with(|| {
@@ -501,6 +505,7 @@ impl Ui {
                 return true;
             }
             let Some(data) = self.eye_samples(rec, self.m.eye_src) else { return true };
+            let Some(requested) = requested(self, data.dt) else { return true };
             let clock = self.m.eye_b.and_then(|id| self.eye_samples(rec, id));
             let rail = self.m.eye_rail.and_then(|id| self.eye_samples(rec, id));
             let job = Job {
@@ -521,6 +526,7 @@ impl Ui {
             return true;
         }
         let Some(wave) = self.eye_samples(rec, self.m.eye_b.unwrap_or(self.m.eye_src)) else { return true };
+        let Some(requested) = requested(self, wave.dt) else { return true };
         match infer(&wave.v, wave.dt, requested, self.m.eye_b.is_some()) {
             Ok((mut summary, _)) => {
                 if self.m.eye_from_record {
@@ -699,6 +705,25 @@ mod performance_and_timing_tests {
         ui.eye_set_place(EyePlace::Side);
         assert_eq!(ui.azr.eye.as_ref().unwrap().hits.as_ptr(), pointer);
         assert_eq!(ui.azr.eye_auto.submitted, 1);
+    }
+
+    /// A large record goes to the worker before the page's own check (`eye_rate_of_record`): a rate that was set and
+    /// has under two samples a bit is said there too, with no job; a rate found from a faster record is dropped and
+    /// the worker finds the rate of this one.
+    #[test]
+    fn a_large_record_says_that_a_set_rate_needs_a_faster_record() {
+        let (mut ui, requests, _results) = controlled(0);
+        ui.m.view = AView::Eye;
+        // one sample a bit of the 1 ps record
+        (ui.m.eye_from_record, ui.m.eye_rate) = (false, 1e12);
+        ui.analyzer_update();
+        assert!(requests.try_recv().is_err(), "no job for a rate the record cannot hold");
+        assert!(ui.azr.page.status[0].contains("faster time base"), "{:?}", ui.azr.page.status);
+        assert_eq!(ui.m.eye_rate, 1e12, "a rate that was set is kept");
+        ui.m.eye_from_record = true;
+        ui.analyzer_update();
+        let job = requests.try_recv().expect("a job for the rate of this record");
+        assert_eq!((job.requested_rate, ui.m.eye_rate), (None, 0.0));
     }
 
     #[test]
