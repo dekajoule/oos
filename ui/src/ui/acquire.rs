@@ -770,20 +770,13 @@ impl Ui {
         if self.offline.on {
             let (name, sub) = self.ref_card_lines();
             parts.push(if sub == "empty" || sub.ends_with("pts") { name } else { format!("{} {}", name, sub) });
-            parts.push(self.run_caption().0.into());
         } else {
             parts.push(match m.trig_line() {
                 Some(n) => format!("Trig D{}", n),
                 None => format!("Trig {} {}", self.trigger_source_label(), si_short(m.trig_level as f64, "V")),
             });
-            let st = match m.status {
-                TrigStatus::Triggered => "TRIG'D",
-                TrigStatus::Auto => "AUTO",
-                TrigStatus::Wait => "WAIT",
-                TrigStatus::Stop => "STOP",
-            };
-            parts.push(st.into());
         }
+        parts.push(self.run_caption().0.into());
         parts.push(format!("{:.0} wfm/s", self.counts.wfm_rate));
         parts.join("   \u{b7}   ")
     }
