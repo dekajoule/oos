@@ -38,6 +38,10 @@ pub(super) struct Page {
 /// Below the LAN box of the top bar: the pages of the network.
 const NET_BOX: Option<Anchor> = Some(|u, _| (u.net_box().x + u.net_box().w / 2, true));
 
+/// Under the top bar, centred: the cursor page, so that the readouts of the cursors in the strip above the cards stay
+/// in sight while the cursors move (its key has no button in the top bar since ADR 0076; ADR 0077).
+const TOP_CENTRE: Option<Anchor> = Some(|u, _| (u.scr.w / 2, true));
+
 /// Above a card at the bottom: the channel's, the time base's or the trigger's.
 const CH_CARD: Option<Anchor> = Some(|u, m| {
     let c = match m {
@@ -244,7 +248,7 @@ pub(super) const PAGES: [Page; 47] = [
             format!("Cursor \u{b7} {}", src)
         },
         |u, _| u.cursor_items(),
-        None,
+        TOP_CENTRE,
         None,
     ),
     page!(MenuId::Display, "Display", |u, _| u.display_items(), None),
