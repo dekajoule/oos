@@ -566,10 +566,10 @@ impl Ui {
         (Rect::new(c.x + 14, c.y, track.x - c.x - 22, c.h), track)
     }
 
-    /// A switch in its control `c`: one field, the state on the left, the switch on the right; on, the track is the
-    /// accent and the knob stands right.
+    /// A switch in its control `c`: one field, the state on the left, the switch on the right. On, the field is the
+    /// accent like a chosen segment or an active button, and the switch inverts on it: a dark track, the knob in the
+    /// accent on the right. Off, a dark field, a grey track, the knob on the left.
     fn draw_switch(&self, cv: &mut Canvas, c: Rect, on: bool) {
-        // On fills the field white like a chosen segment or an active button; the switch inverts on it
         if on {
             cv.round(c, 5, ACCENT, 255);
         } else {
