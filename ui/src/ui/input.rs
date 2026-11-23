@@ -1266,7 +1266,7 @@ impl Ui {
                 return;
             }
         }
-        if !self.menu_open && self.measurement_navigation_tap(x, y) {
+        if !self.menu_open && (self.measurement_navigation_tap(x, y) || self.strip_tap(x, y)) {
             return;
         }
         if self.auto_bar_tap(x, y) {

@@ -10,6 +10,8 @@ delay from one channel to another. The pictures on this page come from a host ru
 
 The values stand in the strip under the plot, one line per source, with the source's name in its colour. A default
 set-up shows six measurements of CH1: Pk-pk, Freq, Mean, RMS, Rise and +Duty. They are measured again on every record.
+A tap on a value opens **Selected** (below) with that measurement in focus, to remove it or open its settings; a tap on
+the strip beside the values opens the same list.
 
 ![Measurement strip](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-strip.png)
 

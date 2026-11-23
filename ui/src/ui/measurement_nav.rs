@@ -220,6 +220,109 @@ impl Ui {
         false
     }
 
+    /// The measurement index (as Measure > Selected numbers them) of each readout of `meas_rows`, in that order. A
+    /// catalogue entry without a row (`cat_row` None) has no readout and is skipped.
+    fn readout_indices(&self) -> Vec<usize> {
+        let (n1, n2) = (self.m.meas.len(), self.m.meas2.len());
+        (0..n1 + n2)
+            .chain(
+                self.m
+                    .cat
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &(id, a, b, c, d))| self.cat_row(id, a, b, c, d).is_some())
+                    .map(|(j, _)| n1 + n2 + j),
+            )
+            .collect()
+    }
+
+    /// The readouts of the measurement strip as drawn (`draw_strip_band`, `draw_strip_side`,
+    /// `draw_paged_measurement_strip`): each one's box and its measurement index, and the part of the strip that holds
+    /// them. Empty while the strip shows no measurements (none on, the Results panel or pane holds them).
+    pub(super) fn strip_readouts(&self) -> (Vec<(Rect, usize)>, Option<Rect>) {
+        let mut cells = Vec::new();
+        if self.strip_rows() == 0 || self.results_panel() || self.results_pane_on() || self.measurement_count() == 0 {
+            return (cells, None);
+        }
+        let rows = self.meas_rows();
+        let index = self.readout_indices();
+        let paged = self.paged_strip();
+        match self.m.strip_dock {
+            StripDock::Left | StripDock::Right => {
+                let col = self.strip_column();
+                // the lines of the column: the measurements first, in their groups
+                let mut order = Vec::new();
+                for id in self.meas_groups() {
+                    order.extend((0..rows.len()).filter(|&k| rows[k].src == id).map(|k| index[k]));
+                }
+                if paged {
+                    let lines = self.strip_side_lines().len();
+                    let (first, end, _) = self.page_bounds(lines, self.measurement_page_size());
+                    for (row, k) in (first..end.min(order.len())).enumerate() {
+                        cells.push((Rect::new(col.x + 4, col.y + 44 + row as i32 * 20, col.w - 8, 18), order[k]));
+                    }
+                } else {
+                    let n = self.strip_side_lines().len() as i32;
+                    let strip_row = self.lay().strip_row;
+                    let room = (col.h - 4).max(strip_row);
+                    let pitch = if n * strip_row <= room { strip_row } else { (room / n).max(12) };
+                    for (k, &i) in order.iter().enumerate() {
+                        let y = col.y + 2 + k as i32 * pitch;
+                        if y + 12 > col.y + col.h {
+                            break;
+                        }
+                        cells.push((Rect::new(col.x + 4, y, col.w - 8, (pitch - 2).max(12)), i));
+                    }
+                }
+                (cells, Some(col))
+            }
+            _ => {
+                let y0 = self.strip_band_y();
+                if paged {
+                    let (first, end, _) = self.page_bounds(rows.len(), self.measurement_page_size());
+                    let pitch = (W - 12) / tools::STRIP_PER_ROW as i32;
+                    for (k, i) in (first..end).enumerate() {
+                        let (row, column) = ((k / tools::STRIP_PER_ROW) as i32, (k % tools::STRIP_PER_ROW) as i32);
+                        cells.push((Rect::new(6 + column * pitch, y0 + row * STRIP_ROW, pitch - 4, 16), index[i]));
+                    }
+                    return (cells, Some(Rect::new(0, y0, self.scr.w, BAND_ROWS * STRIP_ROW)));
+                }
+                let f = self.fonts();
+                let strip_row = self.lay().strip_row;
+                let pw = 42.max(f.sb.width("CH4").max(f.sb.width("R10")) + 18);
+                let (vx, right) = (8 + pw + 8, self.scr.w - METRICS.edge - 2);
+                let mut y = y0;
+                for id in self.meas_groups() {
+                    let mine: Vec<usize> = (0..rows.len()).filter(|&k| rows[k].src == id).map(|k| index[k]).collect();
+                    for part in mine.chunks(tools::STRIP_PER_ROW) {
+                        let pitch = (right - vx) / part.len() as i32;
+                        for (k, &i) in part.iter().enumerate() {
+                            cells.push((Rect::new(vx + k as i32 * pitch, y, pitch, strip_row - 2), i));
+                        }
+                        y += strip_row;
+                    }
+                }
+                (cells, Some(Rect::new(0, y0, self.scr.w, y - y0)))
+            }
+        }
+    }
+
+    /// A tap on the measurement strip: Measure > Selected, with the readout tapped in focus. False off the strip.
+    pub(super) fn strip_tap(&mut self, x: i32, y: i32) -> bool {
+        let (cells, area) = self.strip_readouts();
+        if !area.is_some_and(|a| a.contains(x, y)) {
+            return false;
+        }
+        let hit = cells.iter().find(|(r, _)| r.contains(x, y)).map(|&(_, i)| i);
+        self.meas_pages.selected = hit.map_or(0, |i| i / (2 * SEL_ROWS));
+        self.open_menu(MenuId::MeasSelected);
+        if let Some(i) = hit {
+            let rows = self.dlg_layout().map(|d| d.rows).unwrap_or_default();
+            self.focus = rows.iter().position(|r| r.it == Item::MeasRemove(i as u16)).unwrap_or(0);
+        }
+        true
+    }
+
     pub(super) fn draw_paged_measurement_strip(&self, cv: &mut Canvas) -> bool {
         if !self.paged_strip() {
             return false;
@@ -383,6 +486,50 @@ impl Ui {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    // Break it catches: a tap on a readout of the strip did nothing; to change or remove a measurement the user went
+    // through Measure > Selected and looked for it there. Every dock, the strip in one page and in pages.
+    #[test]
+    fn a_tap_on_a_readout_opens_selected_with_it_in_focus() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.m.meas = vec![(Meas::Vpp, WaveId::Ch(0)), (Meas::Freq, WaveId::Ch(0))];
+        ui.m.meas2.clear();
+        ui.m.ch[1].on = true;
+        ui.m.meas.push((Meas::Vrms, WaveId::Ch(1)));
+        let focused = |ui: &Ui| ui.dlg_layout().map(|d| d.rows[ui.focus].it);
+        for many in [false, true] {
+            if many {
+                for &kind in &ALL_MEAS {
+                    if !ui.m.meas.contains(&(kind, WaveId::Ch(0))) {
+                        ui.m.meas.push((kind, WaveId::Ch(0)));
+                    }
+                }
+            }
+            for dock in StripDock::ALL {
+                ui.m.strip_dock = dock;
+                ui.relayout();
+                ui.step(0.02);
+                let (cells, area) = ui.strip_readouts();
+                let area = area.unwrap_or_else(|| panic!("{dock:?}: a strip"));
+                assert!(!cells.is_empty(), "{dock:?} many {many}: readouts");
+                assert_eq!(ui.paged_strip(), many, "{dock:?}");
+                for &(r, i) in cells.iter().take(4) {
+                    assert!(area.contains(r.x + r.w / 2, r.y + r.h / 2), "{dock:?}: {r:?} in {area:?}");
+                    ui.tap(r.x + r.w / 2, r.y + r.h / 2);
+                    assert!(ui.menu_open && ui.menu == MenuId::MeasSelected, "{dock:?} many {many}: index {i}");
+                    assert_eq!(focused(&ui), Some(Item::MeasRemove(i as u16)), "{dock:?} many {many}");
+                    ui.close_menu();
+                }
+                // the third readout is CH2's Vrms wherever the strip groups it
+                assert!(cells.iter().any(|&(_, i)| i == 2) || many, "{dock:?}: CH2 Vrms is a readout");
+            }
+        }
+        // with the Results panel the strip holds no measurements: a tap there is not this one
+        ui.m.strip_dock = StripDock::Under;
+        ui.results.on = true;
+        ui.relayout();
+        assert!(ui.strip_readouts().1.is_none());
+    }
 
     #[test]
     fn seventy_three_selections_survive_and_every_page_is_reachable() {
