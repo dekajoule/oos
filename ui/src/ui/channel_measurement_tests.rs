@@ -269,3 +269,24 @@ fn a_running_record_whose_trigger_moves_shows_the_value_of_the_record_before() {
     next_record(&mut u, 3);
     assert!(freq(&u).is_nan() && u.meas_rows()[0].computing, "a value of the channel before inverting is not shown");
 }
+
+/// In roll and scan the last finished value can be from before a change of the signal: it does not stand in.
+#[test]
+fn a_running_roll_or_scan_record_does_not_show_the_value_of_the_record_before() {
+    for (roll, scan) in [(true, false), (false, true)] {
+        let mut u = native(600_000);
+        u.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
+        u.m.meas2.clear();
+        u.m.run = RunState::Run;
+        let mut frame = u.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.as_ref().clone();
+        (frame.roll, frame.scan) = (roll, scan);
+        u.last[0] = Some(crate::wave::to_record(&Arc::new(frame), &u.m, 3600, 600e-6, -300e-6));
+        next_record(&mut u, 0);
+        for round in 0..3 {
+            next_record(&mut u, 0);
+            answer(&mut u);
+            let f = u.meas_at(WaveId::Ch(0), Meas::Freq);
+            assert!(f.is_nan(), "roll {roll} scan {scan} round {round}: the value of the record before shows ({f})");
+        }
+    }
+}
