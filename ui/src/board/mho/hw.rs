@@ -25,9 +25,10 @@ use std::time::Duration;
 /// The unit's snapshot and its recording of the stock settings, as `oos-mho-live` leaves them.
 const SNAPSHOT: &str = "/oos/mho-snapshot.txt";
 const SETTINGS: &str = "/oos/mho-settings.txt";
-/// With this file there, every time base records at its own rate (`settings::plan`) instead of at 4 GSa/s, thinned
-/// (`settings::plan_fast`): to compare the two on a unit without another build.
-const NATIVE: &str = "/oos/mho-native";
+/// With this file there, the time bases up to 20 us/div record at 4 GSa/s, thinned (`settings::plan_fast`), instead of
+/// at their own rate (`settings::plan`). On an MHO98 (mho-dev-26, issue #491) their own rate held the trigger better
+/// (the edge at the trigger point at every rate, 100 ns/div to 200 us/div), so it is the default.
+const FAST: &str = "/oos/mho-fast";
 /// How long one acquisition may take to complete, the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
 const DONE_MS: u64 = 1000;
@@ -120,7 +121,7 @@ fn run(out: &HwShared) {
         Err(e) => return status(format!("{}: {}", acq::C2H_DEVICE, e)),
     };
     let mut afe = settings.as_ref().and_then(|_| GpioAfe::open().ok());
-    let native = std::path::Path::new(NATIVE).exists();
+    let fast = std::path::Path::new(FAST).exists();
     let depth = s.fpga.get(&snapshot::DEPTH).copied().unwrap_or(4000);
     let mut now = Now {
         ch: s.channel,
@@ -161,10 +162,10 @@ fn run(out: &HwShared) {
         if let (Some(st), Some(w)) = (&settings, want) {
             if applied.as_ref().map(|a| (a.ch, a.scale, a.tdiv, a.probe)) != Some((w.ch, w.scale, w.tdiv, w.probe)) {
                 if let Some(ch) = w.ch {
-                    let plan = if native {
-                        st.plan(ch, w.tdiv, w.scale).map(|p| (p, 1))
-                    } else {
+                    let plan = if fast {
                         st.plan_fast(ch, w.tdiv, w.scale)
+                    } else {
+                        st.plan(ch, w.tdiv, w.scale).map(|p| (p, 1))
                     };
                     match plan {
                         Ok((p, k)) => {
@@ -317,6 +318,8 @@ fn publish(out: &HwShared, mut f: Frame, seq: u64) {
 struct EdgeLog {
     offsets: Vec<i64>,
     missing: u32,
+    /// frames without the set slope's edge but with the other one within 4 points of the trigger point
+    other: u32,
 }
 
 impl EdgeLog {
@@ -328,7 +331,15 @@ impl EdgeLog {
                 self.offsets.push(i as i64 - f.pre as i64);
                 f.pre = i;
             }
-            None => self.missing += 1,
+            None => {
+                self.missing += 1;
+                let flip = match t.slope {
+                    tpu::Slope::Rising => tpu::Slope::Falling,
+                    _ => tpu::Slope::Rising,
+                };
+                let o = edge_near(&f.ch[ch], f.pre, t.level as f32, h, flip);
+                self.other += o.is_some_and(|i| i.abs_diff(f.pre) <= 4) as u32;
+            }
         }
         if seq % 50 == 49 {
             self.offsets.sort_unstable();
@@ -336,13 +347,14 @@ impl EdgeLog {
             let n = self.offsets.len();
             eprintln!(
                 "oos-ui mho: edge against the trigger point, last 50 frames: {} found (min {}, median {}, max {} \
-                 samples of {:.3e} s), {} without",
+                 samples of {:.3e} s), {} without ({} of them with the other slope's edge at the trigger point)",
                 n,
                 at(0),
                 at(n / 2),
                 at(n.saturating_sub(1)),
                 f.dt,
-                self.missing
+                self.missing,
+                self.other
             );
             *self = EdgeLog::default();
         }

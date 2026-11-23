@@ -563,7 +563,17 @@ So the slower rates meet the trigger until the board has run at 4 GSa/s. The DHO
 pulses the pre-processing reset (0x1000 bit 5, horizontal-config.md section 4.1, steps 13 and 14), which the plans
 leave out with the rest of 0x1000. From mho-dev-26 on the acquisition thread pulses it before and after the words of
 every plan (**assumed** to be what resyncs them); with a file `/oos/mho-native` every time base records at its own
-rate instead of at 4 GSa/s, to compare the two. The trigger: the stock system's level words hold a window around the level (0x2004
+rate instead of at 4 GSa/s, to compare the two.
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-26, issue #491), both runs started at 100 ns/div (4 GSa/s) and taken
+slower to 200 us/div: with every time base at its own rate the edge lay at the trigger point (median 1 to 2 samples)
+at every rate, so the pre-processing reset resyncs them after 4 GSa/s. Recorded at 4 GSa/s and thinned, only about
+half the frames held an edge, and 200 us/div afterwards lay anywhere again. Every acquisition ended triggered (0x4034
+bit 6). At its own rate the share of frames with the set slope's edge was 90 to 100 % at 100 ns/div, 500 ns/div and
+200 us/div, 60 to 80 % from 1 us/div to 20 us/div. From mho-dev-27 on each time base records at its own rate (the 4
+GSa/s recording with a file `/oos/mho-fast`), and the screen's log counts the frames without the set slope's edge that
+have the other slope's at the trigger point (an earlier picture at 1 us/div showed a falling edge there with the slope
+set to rising). The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.
