@@ -174,3 +174,119 @@ fn measurement_values_without_an_si_unit_take_no_prefix() {
     assert_eq!(tools::meas_digits(0.498, "V", 3), si_digits(0.498, "V", 3));
     assert_eq!(tools::meas_digits(1.0, "A", 4), "1.000 A");
 }
+
+// A record that is replaced before the worker has measured it (seen on a unit 2026-11-20: a 40 MHz square in 1 Mpts at
+// 20 us/div).
+
+/// The next record of a running acquisition: the same signal, a new frame, its samples `shift` earlier (the trigger
+/// falls at another sample).
+fn next_record(u: &mut Ui, shift: usize) {
+    let mut last = u.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.as_ref().clone();
+    last.ch[0].rotate_left(shift);
+    let frame = Arc::new(crate::board::Frame { seq: last.seq + 1, ..last });
+    let count = frame.ch[0].len() as f64;
+    u.last[0] = Some(crate::wave::to_record(&frame, &u.m, 3600, count * 1e-9, -count * 0.5e-9));
+    u.counts.wfm_total += 1;
+    u.measure_last();
+}
+
+/// Polls until the worker's answer is taken and the next record is given to it.
+fn answer(u: &mut Ui) {
+    let jobs = |u: &Ui| u.azr.ref_measure_worker.borrow().as_ref().map_or(0, |w| w.submitted);
+    let before = jobs(u);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while jobs(u) == before {
+        assert!(Instant::now() < deadline, "the measurement worker did not answer");
+        std::thread::sleep(Duration::from_millis(2));
+        u.poll_reference_measurements();
+    }
+}
+
+#[test]
+fn a_running_record_larger_than_the_worker_is_fast_shows_the_value_of_the_record_before() {
+    let mut u = native(600_000);
+    u.m.meas = vec![(Meas::Freq, WaveId::Ch(0)), (Meas::Rise, WaveId::Ch(0))];
+    u.m.meas2.clear();
+    u.m.run = RunState::Run;
+    let freq = |u: &Ui| u.meas_at(WaveId::Ch(0), Meas::Freq);
+    next_record(&mut u, 0);
+    assert!(freq(&u).is_nan() && u.meas_rows()[0].computing, "nothing is measured yet");
+    // every answer comes after the next record is there
+    for round in 0..4 {
+        next_record(&mut u, 0);
+        answer(&mut u);
+        assert!((freq(&u) - 25e6).abs() < 1e3, "round {round}: {}", freq(&u));
+        assert!(u.meas_rows().iter().all(|r| !r.computing), "round {round}: a row says Computing");
+    }
+    // other settings: the value of the old ones does not stand in
+    u.m.meas_hpct = 80.0;
+    next_record(&mut u, 0);
+    answer(&mut u);
+    assert!(freq(&u).is_nan() && u.meas_rows()[0].computing, "an answer for other levels is not shown");
+    next_record(&mut u, 0);
+    answer(&mut u);
+    assert!((freq(&u) - 25e6).abs() < 1e3, "{}", freq(&u));
+    // stopped, the record stays and its own answer comes
+    u.m.run = RunState::Stop;
+    next_record(&mut u, 0);
+    assert!(freq(&u).is_nan(), "a stopped record is not given the value of another");
+}
+
+/// The trigger of a running acquisition falls at another sample from record to record, so each record starts at
+/// another time: still the same settings, the value of the record before stands in. A 250 kHz square, slow enough for
+/// the trigger to find its edge (a faster one is smoothed away and the hardware point stands).
+#[test]
+fn a_running_record_whose_trigger_moves_shows_the_value_of_the_record_before() {
+    let mut u = native(600_000);
+    u.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
+    u.m.meas2.clear();
+    u.m.run = RunState::Run;
+    u.m.trig_level = 0.0;
+    let values: Vec<f32> = (0..600_000).map(|k| if k % 4000 < 2000 { -1.0 } else { 1.0 }).collect();
+    let basic = crate::board::BasicStats::of(&values);
+    let frame = crate::board::Frame {
+        seq: 1,
+        dt: 1e-9,
+        pre: 300_000,
+        ch: [values, Vec::new(), Vec::new(), Vec::new()],
+        basic: [basic, Default::default(), Default::default(), Default::default()],
+        ..Default::default()
+    };
+    u.last[0] = Some(crate::wave::to_record(&Arc::new(frame), &u.m, 3600, 600e-6, -300e-6));
+    let freq = |u: &Ui| u.meas_at(WaveId::Ch(0), Meas::Freq);
+    let start = |u: &Ui| u.channel_measurement_key(0, false).map(|k| k.1);
+    next_record(&mut u, 0);
+    let first = start(&u);
+    for round in 0..4 {
+        next_record(&mut u, 3);
+        assert_ne!(start(&u), first, "round {round}: the record starts at another time");
+        answer(&mut u);
+        assert!((freq(&u) - 250e3).abs() < 10.0, "round {round}: {}", freq(&u));
+        assert!(u.meas_rows().iter().all(|r| !r.computing), "round {round}: a row says Computing");
+    }
+    // another coupling of the channel: the value of the old one does not stand in
+    u.m.ch[0].invert = true;
+    next_record(&mut u, 3);
+    assert!(freq(&u).is_nan() && u.meas_rows()[0].computing, "a value of the channel before inverting is not shown");
+}
+
+/// In roll and scan the last finished value can be from before a change of the signal: it does not stand in.
+#[test]
+fn a_running_roll_or_scan_record_does_not_show_the_value_of_the_record_before() {
+    for (roll, scan) in [(true, false), (false, true)] {
+        let mut u = native(600_000);
+        u.m.meas = vec![(Meas::Freq, WaveId::Ch(0))];
+        u.m.meas2.clear();
+        u.m.run = RunState::Run;
+        let mut frame = u.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.as_ref().clone();
+        (frame.roll, frame.scan) = (roll, scan);
+        u.last[0] = Some(crate::wave::to_record(&Arc::new(frame), &u.m, 3600, 600e-6, -300e-6));
+        next_record(&mut u, 0);
+        for round in 0..3 {
+            next_record(&mut u, 0);
+            answer(&mut u);
+            let f = u.meas_at(WaveId::Ch(0), Meas::Freq);
+            assert!(f.is_nan(), "roll {roll} scan {scan} round {round}: the value of the record before shows ({f})");
+        }
+    }
+}

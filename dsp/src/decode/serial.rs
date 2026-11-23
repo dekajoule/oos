@@ -269,7 +269,50 @@ fn spi_lines(l: &Lines) -> Result<Vec<Packet>, &'static str> {
         _ => None,
     };
     let cs = cs_hi.as_deref().or(l.lines[2]);
-    Ok(spi(clk, l.main(), None, cs, l.sh.spi_mode, l.sh.bits, true, l.thr, l.hy, gap))
+    let p = spi(clk, l.main(), None, cs, l.sh.spi_mode, l.sh.bits, true, l.thr, l.hy, gap);
+    match cs {
+        Some(c) if spi_frames_cut(clk, c, l.sh.spi_mode, l.thr, l.hy, &p) => Err(SPI_CUT),
+        _ => Ok(p),
+    }
+}
+
+/// What the band of an SPI decoder says where most frames end before a word is whole: the record has too few samples
+/// for the clock (a slower time base at the same memory), or the frames are shorter than the Data bits set.
+pub const SPI_CUT: &str = "Frames shorter than a word: too few samples for the clock, or Data bits";
+
+/// A bus the record does not show: more frames of `cs` (active low) have capture edges of the clock and no whole word
+/// than frames with a word. What a long frame still gives is then no reading of the bus (200 kbit/s in a record of
+/// 125 kSa/s read "05 05 05 05" for a frame of 16 words, and nothing for the frames of one word around it). A frame
+/// runs from a falling edge of `cs` to the next rising one; a record whose first known `cs` is low starts with one
+/// (also when it starts in the hysteresis band, where `edges` has no edge for the settling).
+fn spi_frames_cut(clk: &[f32], cs: &[f32], mode: u8, thr: f32, hy: f32, words: &[Packet]) -> bool {
+    let rising = matches!(mode, 0 | 3);
+    let clocks: Vec<f64> = edges(clk, thr, hy).iter().filter(|e| e.rising == rising).map(|e| e.t).collect();
+    let cs_e = edges(cs, thr, hy);
+    let low_at_start = states(cs, thr, hy).into_iter().flatten().next() == Some(false);
+    // one pass over the edges of CS: each frame's start and end
+    let (mut frames, mut open) = (Vec::new(), low_at_start.then_some(0.0));
+    for e in &cs_e {
+        match (e.rising, open) {
+            (false, None) => open = Some(e.t),
+            (true, Some(start)) => {
+                frames.push((start, e.t));
+                open = None;
+            }
+            _ => {}
+        }
+    }
+    frames.extend(open.map(|start| (start, f64::INFINITY)));
+    let (mut read, mut cut) = (0, 0);
+    // the words come in the order of their start, as the clocks do
+    for (start, end) in frames {
+        if words.get(words.partition_point(|w| w.t0 < start)).is_some_and(|w| w.t0 < end) {
+            read += 1;
+        } else if clocks.get(clocks.partition_point(|&t| t <= start)).is_some_and(|&t| t < end) {
+            cut += 1;
+        }
+    }
+    cut > read
 }
 
 /// SPI: words of `bits` bits sampled on the capture edge of `mode` (0/3: rising, 1/2: falling); a word ends after
@@ -641,6 +684,84 @@ mod tests {
             ]
         );
         assert!(i2c(&a, &c, 1.65, 0.2).iter().all(|x| !matches!(x.kind, Kind::Addr { .. } | Kind::Data)));
+    }
+
+    /// A bus of one word a frame, a frame every 500 us at 200 kHz, every eighth frame 16 words long, recorded from
+    /// `from` for `len` seconds at `dt` and decoded with Data bits `bits`, in `mode`, with CS active high or low; the
+    /// first `band` samples of CS sit in the hysteresis band.
+    fn spi_burst(
+        from: f64,
+        len: f64,
+        dt: f64,
+        bits: u32,
+        mode: u8,
+        cs_high: bool,
+        band: usize,
+    ) -> Result<Vec<Packet>, &'static str> {
+        use crate::protocols::{Lines, Shared, OPTS};
+        let short = spi_logic(&[(0xa5, 0)], 8, mode, 200e3, 0.0, 3.3);
+        let words: Vec<(u32, u32)> = (0..16).map(|k| (k, 0)).collect();
+        let long = spi_logic(&words, 8, mode, 200e3, 0.0, 3.3);
+        let (period, burst) = (500e-6, 8.0 * 500e-6);
+        let line = |i: usize| -> Vec<f32> {
+            let v = |t: f64| {
+                let t = t.rem_euclid(burst);
+                let v = if t < 2.0 * period { long[i].v(t) } else { short[i].v(t.rem_euclid(period)) };
+                if i == 0 && cs_high {
+                    3.3 - v
+                } else {
+                    v
+                }
+            };
+            sample(v, from, dt, (len / dt) as usize)
+        };
+        let [mut cs, clk, mosi] = [0, 1, 2].map(line);
+        cs.iter_mut().take(band).for_each(|x| *x = 1.65);
+        let sh = Shared {
+            baud: 9600.0,
+            bits,
+            parity: Parity::None,
+            spi_mode: mode,
+            can_rate: 500e3,
+            canh: false,
+            usb_speed: crate::decode::UsbSpeed::Auto,
+            cphy_rate: 0.0,
+            uart_inv: false,
+            spi_timeout: 0.0,
+            spi_cs_high: cs_high,
+        };
+        let lines = [Some(&mosi[..]), Some(&clk[..]), Some(&cs[..]), None];
+        SPI.decode(&Lines { lines, dt, thr: 1.65, hy: 0.2, opt: [0; OPTS], sh, chans: [None; 4], src: [None; 4] })
+    }
+
+    /// An SPI bus the record has too few samples for: the frames of one word give nothing and a long frame gives
+    /// words that are none. The decoder says what is wrong; it lists no such words. In every mode, with CS active low
+    /// and high.
+    #[test]
+    fn spi_says_when_the_frames_are_shorter_than_a_word() {
+        for mode in 0..4 {
+            for cs_high in [false, true] {
+                let case = format!("mode {mode}, CS active {}", if cs_high { "high" } else { "low" });
+                // 2.5 samples a bit: every word is read
+                let p = spi_burst(0.0, 40e-3, 2e-6, 8, mode, cs_high, 0).unwrap_or_else(|e| panic!("{case}: {e}"));
+                assert!(p.iter().filter(|x| x.kind == Kind::Data).count() > 100, "{case}");
+                // 8 us a sample: under one sample a bit
+                assert_eq!(spi_burst(0.0, 40e-3, 8e-6, 8, mode, cs_high, 0).err(), Some(SPI_CUT), "{case}");
+                // enough samples, and Data bits 16 on frames of 8: the same note
+                assert_eq!(spi_burst(0.0, 40e-3, 2e-6, 16, mode, cs_high, 0).err(), Some(SPI_CUT), "{case}");
+            }
+        }
+    }
+
+    /// A record that starts in a frame: that frame counts like the others. Here it is cut, as is the next one, and
+    /// the long frame after them reads words that are none. Also when CS starts in the hysteresis band and settles low.
+    #[test]
+    fn spi_counts_the_frame_the_record_starts_in() {
+        let p = 500e-6;
+        // from inside the short frame at 6 periods, through the long frame of the next burst
+        for band in [0, 2] {
+            assert_eq!(spi_burst(6.0 * p + 20e-6, 3.6 * p, 8e-6, 8, 0, false, band).err(), Some(SPI_CUT), "{band}");
+        }
     }
 
     #[test]

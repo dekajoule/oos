@@ -489,8 +489,17 @@ mod tests {
         let mut ch: [Vec<f32>; NCH] = std::array::from_fn(|_| Vec::new());
         ch[0] = scl;
         ch[1] = sda;
-        u.last[0] =
-            Some(Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false });
+        u.last[0] = Some(Record {
+            t0: 0.0,
+            dt,
+            ch,
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+            peak: false,
+        });
         u.m.bus.on = true;
         u.m.bus.clk = WaveId::Ch(0);
         u.m.bus.data = WaveId::Ch(1);
@@ -520,8 +529,17 @@ mod tests {
         let mut u = ui();
         let mut ch: [Vec<f32>; NCH] = std::array::from_fn(|_| Vec::new());
         ch[0] = scl;
-        u.last[0] =
-            Some(Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false });
+        u.last[0] = Some(Record {
+            t0: 0.0,
+            dt,
+            ch,
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+            peak: false,
+        });
         let slow: Vec<f32> = sda.iter().step_by(2).copied().collect();
         u.refs[2] = Some(super::super::RefWave {
             src: 1,

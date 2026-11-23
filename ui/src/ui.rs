@@ -222,6 +222,8 @@ pub const LAYS: [Lay; 3] = [
 const DLG_HEAD: i32 = 50;
 const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
+/// The field with the entry above the keys of an entry pad (ADR 0077).
+const PAD_ENTRY_H: i32 = 62;
 /// records kept for history playback
 const HISTORY: usize = 200;
 /// Seconds the trigger level line stays after the level changed.
@@ -252,6 +254,8 @@ const LABEL: Rgb = rgb(0xc8, 0xc8, 0xc8);
 const DIM: Rgb = rgb(0x90, 0x90, 0x92);
 const AXIS_TEXT: Rgb = rgb(0xa4, 0xa4, 0xa6);
 const DARK_TEXT: Rgb = rgb(0x0a, 0x0a, 0x0b);
+/// What dims the screen behind a dialog that takes the input (the power dialog, an entry pad).
+const SHADE: Rgb = rgb(0, 0, 0);
 const ACCENT: Rgb = rgb(0xf4, 0xf4, 0xf4);
 const GREEN: Rgb = rgb(0x3f, 0xb9, 0x50);
 const RED: Rgb = rgb(0xf8, 0x51, 0x49);

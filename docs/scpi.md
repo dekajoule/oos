@@ -34,7 +34,7 @@ Waveform names are `CHAN1` through `CHAN4` as available on the model, and `R1` t
 | Command | Meaning |
 | --- | --- |
 | `*IDN?` | `OOS,<model>,<serial>,oos-ui <version>`. On a computer the serial can be `0`. |
-| `*RST` | Restore the app's default configuration. This changes the acquisition workspace. |
+| `*RST` | Restore the app's default configuration. This changes the acquisition workspace. The waveform transfer starts again too: `:WAV:SOURce CHAN1`, `:MODE NORMal`, `:FORMat BYTE`, `:STARt 1`, `:STOP` through the last point. |
 | `*CLS` | Clear the SCPI error/status state and pending operation-complete event registrations. Does not clear waveform memory. |
 | `*OPC?` | Wait for the defined finite operations below, then return `1`. |
 | `*OPC` | Register completion of those finite operations in standard-event bit 0. |
@@ -304,7 +304,7 @@ Additional OOS families accept item names defined by their analysis page/source 
 | --- | --- |
 | Power | `:POWer:ITEM? <item>[,V,I]`: `VRMS`, `IRMS`, `REAL`, `APP`, `REAC`, `PF`, `PHAS`, `FREQ`, `EON`, `EOFF`, `ECOND`, `RDSON`. Single-source ripple items also exist. |
 | Harmonics | `:POWer:HARMonics? [source]`: semicolon-separated harmonic-index/amplitude pairs. |
-| Spectrum | `:SPECtrum:ITEM? <item>[,source]`: `F1`, `THD`, `THDPCT`, `THDN`, `SNR`, `SINAD`, `SFDR`, `ENOB`, `ACPR`, `ACPRLO`, `ACPRHI`, `FLOOR`. |
+| Spectrum | `:SPECtrum:ITEM? <item>[,source]`: `F1`, `THD`, `THDPCT`, `THDN`, `SNR`, `SINAD`, `SFDR`, `ENOB`, `ACPR`, `ACPRLO`, `ACPRHI`, `FLOOR`; `F1` to `ENOB` are `9.9E37` without a fundamental (noise alone: no line stands 20 dB above the median of the bins around it). |
 | Magnetic | `:MAGnetic:ITEM? <item>[,V,I]`: `L`, `B`, `H`, `MUR`, `LOSS`. Requires the configured geometry/calibration. |
 | Inverter | `:INVerter:ITEM? <item>[,sources...]`: configured inverter result, numeric or text. |
 | Double pulse | `:DPT:ITEM? <item>[,V,I[,G]]`: e.g. `VPEAK`, `IPEAK`, `EON`, `EOFF`, `TDON`, `TR`, `TDOFF`, `TF`, `QRR`. |

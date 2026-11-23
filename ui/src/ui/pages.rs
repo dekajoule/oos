@@ -38,6 +38,10 @@ pub(super) struct Page {
 /// Below the LAN box of the top bar: the pages of the network.
 const NET_BOX: Option<Anchor> = Some(|u, _| (u.net_box().x + u.net_box().w / 2, true));
 
+/// Under the top bar, centred: the cursor page, so that the readouts of the cursors in the strip above the cards stay
+/// in sight while the cursors move (its key has no button in the top bar since ADR 0076; ADR 0077).
+const TOP_CENTRE: Option<Anchor> = Some(|u, _| (u.scr.w / 2, true));
+
 /// Above a card at the bottom: the channel's, the time base's or the trigger's.
 const CH_CARD: Option<Anchor> = Some(|u, m| {
     let c = match m {
@@ -244,7 +248,7 @@ pub(super) const PAGES: [Page; 47] = [
             format!("Cursor \u{b7} {}", src)
         },
         |u, _| u.cursor_items(),
-        None,
+        TOP_CENTRE,
         None,
     ),
     page!(MenuId::Display, "Display", |u, _| u.display_items(), None),
@@ -657,6 +661,18 @@ mod tests {
         for b in &super::super::bars::STATUS_BOXES {
             assert!(page(b.page).is_some(), "the {} box opens {:?}, which is not in PAGES", b.label, b.page);
         }
+    }
+
+    /// The cursor page opens centred under the top bar, so the cursor readouts in the strip stay in sight (ADR 0077).
+    #[test]
+    fn the_cursor_page_opens_centred_under_the_top_bar() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.open_menu(MenuId::Cursor);
+        let d = ui.dlg_layout().expect("the cursor page is a dialog");
+        let f = ui.frame();
+        assert!((d.r.x + d.r.w / 2 - ui.scr.w / 2).abs() <= 1, "centred: {:?} on {}", d.r, ui.scr.w);
+        assert_eq!(d.r.y, f.top.bottom() + 4, "under the top bar");
+        assert!(d.r.y + d.r.h < f.bottom.y, "above the strip and the cards");
     }
 
     /// A picker is answered by one page at most: of the rows of every page, and of the pickers a page opens itself.

@@ -158,6 +158,8 @@ impl Scpi {
             "*RST" if !query => {
                 self.event_status = 0;
                 self.opc_events.clear();
+                // the waveform transfer too: a page or source left by an earlier read would cut or redirect the next
+                (self.wav_src, self.wav_fmt, self.wav_mode, self.wav_start, self.wav_stop) = super::WAV_DEFAULT;
                 ui.key(crate::ui::key::DEFAULT);
                 return Some(None);
             }
