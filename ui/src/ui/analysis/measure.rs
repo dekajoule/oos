@@ -59,9 +59,24 @@ pub(in crate::ui) struct RefMeasureKey {
 }
 
 impl RefMeasureKey {
-    /// The same measurement of another record: everything is equal but the record the samples are of.
+    /// The same measurement of another record: everything is equal but the record the samples are of, and the place of
+    /// the record in time (`in_step`).
     fn same_settings(self, other: Self) -> bool {
-        Self { samples: self.samples, revision: self.revision, capture: self.capture, ..other } == self
+        let (samples, revision, capture) = (self.samples, self.revision, self.capture);
+        let (t0, len, lo, hi) = (self.t0, self.len, self.lo, self.hi);
+        self.in_step(other) && Self { samples, revision, capture, t0, len, lo, hi, ..other } == self
+    }
+
+    /// The same span of time and sampling: equal sample spacing, and a start and a length within 1 % of the record.
+    /// The trigger of a running acquisition falls at another place from record to record (its interpolated sample,
+    /// `ti` in `wave::record`), and with it the start and, on the screen gate, the first and last sample; a change of
+    /// the time base or a move of the delay by more than that is a change of settings.
+    fn in_step(self, other: Self) -> bool {
+        let (dt, t0) = (f64::from_bits(self.dt), f64::from_bits(self.t0));
+        let slack = self.len.max(other.len) / 100;
+        self.dt == other.dt
+            && self.len.abs_diff(other.len) <= slack.max(2)
+            && (t0 - f64::from_bits(other.t0)).abs() <= (slack.max(2) as f64) * dt
     }
 }
 
@@ -585,8 +600,8 @@ impl Ui {
     }
 
     /// A large record of channel `channel` is measured in the background, and the last finished measurement had the
-    /// same settings (points, sample spacing, start time, V/div, levels): its value may stand in until the new one is
-    /// there. After a change of settings it may not: the old value would read as the new one (unit 2026-11-15, the
+    /// same settings (points, sample spacing and start time within 1 % of the record, `RefMeasureKey::in_step`; V/div,
+    /// levels): its value may stand in until the new one is there. After a change of settings it may not: the old value would read as the new one (unit 2026-11-15, the
     /// frequency of the time base before in roll mode).
     pub(in crate::ui) fn computing_like_last(&self, channel: usize) -> bool {
         if channel >= NCH || !self.measurement_computing(WaveId::Ch(channel)) {
@@ -607,17 +622,9 @@ impl Ui {
         let cache = self.azr.ch_measure[channel].borrow();
         cache.as_ref().is_some_and(|c| {
             let k = c.key;
-            (k.len, k.dt, k.t0, k.vpd, k.low, k.high, k.epoch, k.full)
-                == (
-                    pending.len,
-                    pending.dt,
-                    pending.t0,
-                    pending.vpd,
-                    pending.low,
-                    pending.high,
-                    pending.epoch,
-                    pending.full,
-                )
+            k.in_step(pending)
+                && (k.vpd, k.low, k.high, k.epoch, k.full)
+                    == (pending.vpd, pending.low, pending.high, pending.epoch, pending.full)
         })
     }
 
