@@ -11,7 +11,12 @@
 #   tools/scope-binaries.sh --base-sums FILE [BASE]
 #                                      take the base's sums from FILE (what --sums-only printed for BASE, e.g. kept by
 #                                      CI on the push to main) instead of building it. FILE is only valid for the same
-#                                      commit, this script and rust-toolchain.toml: the caller keys it by all three.
+#                                      commit, this script, rust-toolchain.toml and board family: the caller keys it
+#                                      by all four.
+#
+# Both sides are built for the board family OOS_BOARD, `dho` when it is not set (ADR 0067, tools/lib/board.sh); dho
+# is built as without OOS_BOARD. A base without the family has no programs of it to compare: they are new, which
+# counts as a difference.
 #
 # Both are built as boot/build-dev-image.sh builds them (release for aarch64-unknown-linux-musl, the crates' own
 # profile and target flags), with the folder's path replaced by /oos.
@@ -29,7 +34,11 @@ stop() {
 	exit 2
 }
 [ -z "$(git status --porcelain --untracked-files=no)" ] || stop "the tree has changes: commit them first"
-only=0
+. tools/lib/board.sh
+board=$(oos_board "$root") || stop "no board family to build"
+# dho as without OOS_BOARD, as tools/check.sh builds it and as the sums CI keeps of main were built
+[ "$board" != dho ] || unset OOS_BOARD
+only=0 new=0
 base_sums=
 base=
 while [ $# -gt 0 ]; do
@@ -54,6 +63,7 @@ if [ $only = 0 ]; then
 		base=$(git merge-base origin/main HEAD 2>/dev/null) || stop "no origin/main to compare with: name a commit"
 	fi
 	base=$(git rev-parse --verify --quiet "$base^{commit}") || stop "not a commit: $arg"
+	git cat-file -e "$base:rootfs/board/$board/etc/oos-board" 2>/dev/null || new=1
 fi
 here=$(git rev-parse HEAD)
 back=$(git symbolic-ref --quiet --short HEAD || echo "$here")
@@ -69,9 +79,13 @@ sums() { # sums NAME: build the programs, print their sums
 	# the flags are added to the crate's own target flags (.cargo/config.toml), not put in their place
 	(cd fpgad && RUSTC_BOOTSTRAP=1 cargo build --release --locked --quiet --target "$target" \
 		--config "target.$target.rustflags=[$flags]") || return 1
-	shasum -a 256 "ui/target/$target/release/oos-ui" "fpgad/target/$target/release/oos-fpgad" \
-		"fpgad/target/$target/release/oos-update" |
-		awk -v n="$1" '{ sub(".*/", "", $2); print n, $2, $1 }'
+	u="ui/target/$target/release" f="fpgad/target/$target/release"
+	# shasum where Perl brings it (macOS, most Linux), else sha256sum of coreutils (#67)
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$u/oos-ui" "$f/oos-fpgad" "$f/oos-update"
+	else
+		sha256sum "$u/oos-ui" "$f/oos-fpgad" "$f/oos-update"
+	fi | awk -v n="$1" '{ sub(".*/", "", $2); print n, $2, $1 }'
 }
 work=$(mktemp -d)
 trap 'git checkout -q "$back" 2>/dev/null; rm -rf "$work"' EXIT
@@ -79,6 +93,11 @@ sums this >"$work/this" || stop "this commit does not build for the scope"
 if [ $only = 1 ]; then
 	cut -d' ' -f2- "$work/this"
 	exit 0
+fi
+if [ "$new" = 1 ]; then
+	cat "$work/this"
+	echo "the base $(git log -1 --format='%h' "$base") has no board family $board: its programs for the scope are new"
+	exit 1
 fi
 if [ -n "$base_sums" ]; then
 	sed 's/^/base /' "$base_sums" >"$work/base"

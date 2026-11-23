@@ -20,6 +20,7 @@
 //! Unauthenticated: bench LAN only (an update must carry a trusted signature, but the community key is public).
 //! `net.allow` (`netacl`, docs/network.md 6) limits `POST /update` and `/mcp` to the listed address prefixes.
 
+use oos_hal::update::hash::unhex;
 use std::net::{TcpListener, TcpStream};
 use std::time::Instant;
 
@@ -40,9 +41,10 @@ pub trait Site {
     fn remote_ok(&self, line: &str) -> bool;
     /// The answer of a route of the program: (content type, body, whether the body is the reason it failed and not
     /// the data asked for); None for a route that is none of its. An empty content type is 202 with no body.
-    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Vec<u8>, bool)>;
-    /// What `GET /update` shows: the state of the update and the result of the last upload.
-    fn update_state(&mut self) -> (String, String);
+    fn answer(&mut self, route: &str, post: bool, body: &[u8]) -> Option<(&'static str, Body, bool)>;
+    /// What `GET /update` shows: what gives the state of the update (it may take a while: the server calls it on a
+    /// thread of its own, not in the frame loop) and the result of the last upload.
+    fn update_state(&mut self) -> (fn() -> String, String);
     /// The session of the screen: an upload that started in another one is not taken.
     fn waveform_epoch(&self) -> u64;
     /// Reads an uploaded waveform file (on the server's thread for it, not the frame loop).
@@ -163,7 +165,36 @@ pub struct Http<U> {
     offer: Offer,
 }
 
-/// The web page /update: the state of `Ui::update_state` and an upload form.
+/// The body of an answer of the program (`Site::answer`): made, or made on a sender thread of the server when making
+/// it takes long (a picture encoded from a copy of the screen), never in the frame loop (#205).
+pub enum Body {
+    Now(Vec<u8>),
+    Later(Box<dyn FnOnce() -> Vec<u8> + Send>),
+}
+
+impl Body {
+    /// The bytes, made now if they are made later.
+    pub fn bytes(self) -> Vec<u8> {
+        match self {
+            Body::Now(b) => b,
+            Body::Later(make) => make(),
+        }
+    }
+
+    /// `bytes` as text (an MCP answer for a test or the soak run).
+    pub fn text(self) -> String {
+        String::from_utf8_lossy(&self.bytes()).into_owned()
+    }
+}
+
+/// The head of an answer of `Http::answer`: status, type (none for an answer without a body: the 202 of an MCP
+/// notification), length, the `extra` lines, no caching, and the connection closes after it.
+fn answer_head(status: &str, ctype: &str, length: usize, extra: &str) -> String {
+    let ctype = if ctype.is_empty() { String::new() } else { format!("Content-Type: {ctype}\r\n") };
+    format!("HTTP/1.1 {status}\r\n{ctype}Content-Length: {length}\r\n{extra}Cache-Control: no-store\r\nConnection: close\r\n\r\n")
+}
+
+/// The web page /update: the state of `Ui::update_status` and an upload form.
 fn update_page(status: &str, last: &str) -> String {
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
     format!(
@@ -299,11 +330,8 @@ fn unescape(s: &str) -> String {
         match b[i] {
             b'+' => out.push(b' '),
             b'%' if i + 2 < b.len() => {
-                // on the bytes: the two characters after % need not be ASCII
-                let hex = |c: u8| (c as char).to_digit(16);
-                if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
-                    out.push((h * 16 + l) as u8);
-                }
+                // on the bytes: the two after % need not be ASCII; other than two hex digits, the three are dropped
+                out.extend(std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(unhex).unwrap_or_default());
                 i += 2;
             }
             c => out.push(c),
@@ -338,23 +366,9 @@ impl<U: Send + 'static> Http<U> {
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = Self::bind_quietly(port);
+        let l = oos_system::net6::tcp_service(port, "web remote");
         if l.is_none() {
             eprintln!("oos-ui: web port {} not available", port);
-        }
-        l
-    }
-
-    /// `bind` without the message when the port is taken.
-    fn bind_quietly(port: u16) -> Option<TcpListener> {
-        let l = oos_system::net6::tcp(port);
-        if let Some(l) = &l {
-            let _ = l.set_nonblocking(true);
-            eprintln!(
-                "oos-ui: web remote on port {}{}",
-                port,
-                if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" }
-            );
         }
         l
     }
@@ -365,7 +379,7 @@ impl<U: Send + 'static> Http<U> {
         if self.l.is_some() {
             return false;
         }
-        self.l = Self::bind_quietly(port);
+        self.l = oos_system::net6::tcp_service(port, "web remote");
         self.l.is_some()
     }
 
@@ -483,8 +497,8 @@ impl<U: Send + 'static> Http<U> {
 
     /// Answers the waveform upload whose parsing has finished.
     fn finish_wave<S: Site<Upload = U>>(&mut self, site: &mut S) {
-        if let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(site)) {
-            let job = self.wave.take().unwrap();
+        let Some((ok, text)) = self.wave.as_ref().and_then(|job| job.finish(site)) else { return };
+        if let Some(job) = self.wave.take() {
             let status = if ok { "200 OK" } else { "409 Conflict" };
             let head = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\
@@ -582,10 +596,21 @@ impl<U: Send + 'static> Http<U> {
                 self.pending.remove(i);
                 return false;
             }
-            "/update" if !post => (OK, "text/html; charset=utf-8", {
+            // the state comes from a program that takes a while: the page is made and sent on a thread of the senders
+            // (#205), 503 when they are all busy
+            "/update" if !post => {
                 let (status, last) = site.update_state();
-                update_page(&status, &last).into_bytes()
-            }),
+                let made = oos_system::net::answer_in_background(s, move || {
+                    let page = update_page(&status(), &last).into_bytes();
+                    let head = answer_head(OK, "text/html; charset=utf-8", page.len(), "");
+                    (head, if head_only { Vec::new() } else { page })
+                });
+                if !made {
+                    oos_system::net::busy_answer(s);
+                }
+                self.pending.remove(i);
+                return false;
+            }
             "/lxi/identification" => {
                 (OK, "text/xml", lxi_identification(&self.offer, &oos_hal::model::platform().caps.name).into_bytes())
             }
@@ -595,23 +620,32 @@ impl<U: Send + 'static> Http<U> {
                 false => refused(),
             },
             _ => match site.answer(route, post, req_body) {
+                // made on a sender thread, 503 when they are all busy (#205)
+                Some((ctype, Body::Later(make), failed)) => {
+                    let status = if failed { "409 Conflict" } else { OK };
+                    let made = oos_system::net::answer_in_background(s, move || {
+                        let body = make();
+                        (answer_head(status, ctype, body.len(), ""), if head_only { Vec::new() } else { body })
+                    });
+                    if !made {
+                        oos_system::net::busy_answer(s);
+                    }
+                    self.pending.remove(i);
+                    return false;
+                }
                 // the route says the body is why it failed, not the data asked for
-                Some((ctype, body, true)) => ("409 Conflict", ctype, body),
+                Some((ctype, Body::Now(body), true)) => ("409 Conflict", ctype, body),
                 // an MCP notification: no body
-                Some(("", body, false)) => ("202 Accepted", "", body),
-                Some((ctype, body, false)) => (OK, ctype, body),
+                Some(("", Body::Now(body), false)) => ("202 Accepted", "", body),
+                Some((ctype, Body::Now(body), false)) => (OK, ctype, body),
                 None => ("404 Not Found", "text/plain", b"not found".to_vec()),
             },
         };
-        let length = format!("Content-Length: {}\r\n", body.len());
         let allowed = match allow {
             Some(a) if status.starts_with("405") => format!("Allow: {}\r\n", a),
             _ => String::new(),
         };
-        let head = format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}{}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
-            status, ctype, length, allowed
-        );
+        let head = answer_head(status, ctype, body.len(), &allowed);
         let body = if head_only { Vec::new() } else { body };
         if body.len() > SEND_INLINE {
             if !oos_system::net::send_in_background(s, head, body) {

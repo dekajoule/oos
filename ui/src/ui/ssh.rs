@@ -5,6 +5,7 @@
 //! generated password on demand, the host key, and the trusted keys (imported from a USB stick, listed, removed).
 //! The switch for SSH itself stands with the other services (ui/remote.rs). `crate::ssh` has the files and the rules.
 
+use super::menu_text::on_off;
 use super::*;
 use crate::ssh::{self, Keys};
 
@@ -111,7 +112,7 @@ impl Ui {
             Item::SshState if !self.sys.remote_ssh => "off".into(),
             Item::SshState if s.state.is_empty() => "not started".into(),
             Item::SshState => s.state.clone(),
-            Item::SshPassword => if self.sys.ssh_password { "On" } else { "Off" }.into(),
+            Item::SshPassword => on_off(self.sys.ssh_password),
             Item::SshHostKey => {
                 s.host_fp.as_ref().map_or("not made yet".into(), |f| format!("{}\u{2026}", &f[..f.len().min(19)]))
             }
@@ -167,10 +168,10 @@ impl Ui {
     }
 
     fn ssh_login(&self) -> String {
-        if self.net.is_empty() {
+        if self.net.addr.is_empty() {
             "ssh root@<address of the scope>".into()
         } else {
-            format!("ssh root@{}", self.net)
+            format!("ssh root@{}", self.net.addr)
         }
     }
 
@@ -205,7 +206,7 @@ impl Ui {
 
     fn ssh_import(&mut self) {
         let Some(dir) = self.ssh.dir.clone() else { return };
-        if !self.usb {
+        if !self.stick.mounted {
             return self.toast("No USB stick in the front port");
         }
         let text = match ssh::stick_text(&self.ssh.stick) {
@@ -278,7 +279,7 @@ mod tests {
         assert!(u.sys.ssh_password, "no key: password login must stay on");
         assert!(u.toast.as_ref().unwrap().0.contains("locks root out"));
         // a key from the stick, then it may go off
-        u.usb = true;
+        u.stick.mounted = true;
         std::fs::write(d.join("usb").join("id_ed25519.pub"), ED).unwrap();
         u.activate(Item::SshImport);
         assert_eq!(u.toast.as_ref().unwrap().0, "1 key added");
@@ -303,7 +304,7 @@ mod tests {
         let (mut u, d) = with_dir("import");
         u.activate(Item::SshImport);
         assert_eq!(u.toast.as_ref().unwrap().0, "No USB stick in the front port");
-        u.usb = true;
+        u.stick.mounted = true;
         u.activate(Item::SshImport);
         assert!(u.toast.as_ref().unwrap().0.starts_with("No *.pub"));
         std::fs::write(d.join("usb").join("id_ed25519"), "-----BEGIN OPENSSH PRIVATE KEY-----\n").unwrap();
@@ -319,7 +320,7 @@ mod tests {
         let (mut u, d) = with_dir("show");
         std::fs::create_dir_all(d.join("ssh")).unwrap();
         std::fs::write(d.join("ssh").join("password"), "abcd-efgh-jkmn-pqrs\n").unwrap();
-        u.net = "192.0.2.10".into();
+        u.net.addr = "192.0.2.10".into();
         let d_items = u.dlg_layout().unwrap();
         for r in &d_items.rows {
             assert!(!u.value(r.it).contains("abcd"), "{:?} shows the password", r.it);

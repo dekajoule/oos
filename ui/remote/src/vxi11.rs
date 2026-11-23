@@ -27,9 +27,9 @@ impl<'a> Xdr<'a> {
         Xdr { b, p: 0 }
     }
     pub fn u32(&mut self) -> Option<u32> {
-        let v = self.b.get(self.p..self.p + 4)?;
+        let v = oos_hal::try_bytes_at(self.b, self.p)?;
         self.p += 4;
-        Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]))
+        Some(u32::from_be_bytes(v))
     }
     pub fn opaque(&mut self) -> Option<&'a [u8]> {
         let n = self.u32()? as usize;
@@ -392,15 +392,10 @@ impl<P: crate::Program> Server<P> {
         let recheck = self.acl.changed(&mut self.acl_seen);
         let mut i = 0;
         while i < self.conns.len() {
-            let mut closed = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
-            // what is still to be written goes first, as much as the socket takes now (#192)
-            closed |= self.conns[i].flush() == oos_system::net::Sent::Gone;
-            let mut eof = self.conns[i].closing;
-            if !closed && !eof {
-                let c = &mut self.conns[i];
-                let end = oos_system::net::read_some(&c.s, &mut c.buf, MAX_RECORD, 8192, 65536);
-                (eof, closed) = (end.eof, end.closed);
-            }
+            let left_out = recheck && !self.acl.permits_peer(self.conns[i].s.peer_addr());
+            let c = &mut self.conns[i];
+            let end = oos_system::net::flush_and_read(&c.s, &mut c.out, &mut c.buf, c.closing, left_out, MAX_RECORD);
+            let (eof, mut closed) = (end.eof, end.closed);
             // RPC record marking: 4-byte header (bit31 = last fragment, length), fragments joined; the next call once the
             // replies before it are out, also the calls a client sent before it closed its side
             while !closed && self.conns[i].out.is_empty() {
@@ -411,8 +406,8 @@ impl<P: crate::Program> Server<P> {
                     Some(c) if self.conns[i].core => {
                         let response = core_async(&c, &mut self.links, exec);
                         if c.proc_ == 10 && response.get(24..28) == Some(&0u32.to_be_bytes()) {
-                            if let Some(id) = response.get(28..32) {
-                                let id = u32::from_be_bytes(id.try_into().unwrap()) as usize;
+                            if let Some(&[b0, b1, b2, b3]) = response.get(28..32) {
+                                let id = u32::from_be_bytes([b0, b1, b2, b3]) as usize;
                                 for connection in &mut self.conns {
                                     connection.links.retain(|old| *old != id);
                                 }

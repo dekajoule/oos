@@ -64,9 +64,7 @@ const FINISH: u32 = 9;
 pub(crate) const DEPTH_MAX: usize = 64;
 
 fn be32(b: &[u8], at: usize) -> Result<u32, String> {
-    b.get(at..at + 4)
-        .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
-        .ok_or_else(|| "device tree cut short".to_string())
+    crate::try_bytes_at(b, at).map(u32::from_be_bytes).ok_or_else(|| "device tree cut short".to_string())
 }
 
 fn cstr(b: &[u8], at: usize) -> Result<&str, String> {
@@ -235,7 +233,7 @@ pub fn rsce_file<'a>(blob: &'a [u8], name: &str) -> Result<&'a [u8], String> {
 }
 
 fn be32_le(b: &[u8], at: usize) -> Result<u32, String> {
-    b.get(at..at + 4).map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]])).ok_or_else(|| "RSCE cut short".to_string())
+    crate::try_bytes_at(b, at).map(u32::from_le_bytes).ok_or_else(|| "RSCE cut short".to_string())
 }
 
 /// The tree file in an image's device tree section.
@@ -287,8 +285,8 @@ fn node_at<'a>(root: &'a mut Node, path: &str) -> Option<&'a mut Node> {
 fn ramdisk(root: &Node) -> Option<(u64, u64)> {
     let c = root.kid("chosen")?;
     let num = |v: &[u8]| match v.len() {
-        4 => Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]) as u64),
-        8 => Some(u64::from_be_bytes([v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]])),
+        4 => Some(u32::from_be_bytes(crate::bytes_at(v, 0)) as u64),
+        8 => Some(u64::from_be_bytes(crate::bytes_at(v, 0))),
         _ => None,
     };
     Some((num(c.prop("linux,initrd-start")?)?, num(c.prop("linux,initrd-end")?)?))
@@ -360,6 +358,12 @@ pub fn with_loader_changes(new: &[u8], old: &[u8], running: &[u8]) -> Result<(Ve
             t.rsv.push(x);
         }
     }
+    // a loader that seeds the kernel's address randomisation writes `/chosen/kaslr-seed`; kexec-tools (`kexec_load`
+    // with `--dtb`) refuses a tree whose seed is not 0 ("kaslr-seed is not wiped to 0") and puts a fresh one into a seed
+    // of 0, so the carried-over seed is wiped (issue #193)
+    if let Some(seed) = t.root.kid_mut("chosen").and_then(|c| c.props.iter_mut().find(|x| x.0 == "kaslr-seed")) {
+        seed.1.iter_mut().for_each(|b| *b = 0);
+    }
     t.boot_cpu = r.boot_cpu;
     Ok((t.to_bytes(), n + rsv_n))
 }
@@ -374,6 +378,41 @@ mod tests {
 
     fn tree(root: Node, rsv: Vec<(u64, u64)>) -> Vec<u8> {
         Fdt { rsv, boot_cpu: 0, root }.to_bytes()
+    }
+
+    /// `be32`, `be32_le` and the numbers of /chosen read through `try_bytes_at`/`bytes_at` as the old readers did, at
+    /// every offset of a real tree and RSCE container and of short ones: the same value, the same error text.
+    #[test]
+    fn readers_match_the_old_ones() {
+        let old_be = |b: &[u8], at: usize| {
+            b.get(at..at + 4)
+                .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
+                .ok_or_else(|| "device tree cut short".to_string())
+        };
+        let old_le = |b: &[u8], at: usize| {
+            b.get(at..at + 4)
+                .map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]]))
+                .ok_or_else(|| "RSCE cut short".to_string())
+        };
+        let dtb = tree(node("", &[("compatible", b"rigol,dho900\0")], vec![node("chosen", &[], vec![])]), vec![(1, 2)]);
+        let rsce: Vec<u8> = (0..3 * 512).map(|i| (i * 61 + 3) as u8).collect();
+        for b in [&dtb[..], &rsce[..], &dtb[..3], &dtb[..4], &dtb[..5], &[][..]] {
+            for at in 0..b.len() + 6 {
+                assert_eq!(be32(b, at), old_be(b, at), "be32 at {} of {}", at, b.len());
+                assert_eq!(be32_le(b, at), old_le(b, at), "be32_le at {} of {}", at, b.len());
+            }
+        }
+        let old_num = |v: &[u8]| match v.len() {
+            4 => Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]) as u64),
+            8 => Some(u64::from_be_bytes([v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]])),
+            _ => None,
+        };
+        for n in 0..=9u32 {
+            let v: Vec<u8> = (0..n).map(|i| (0x81 + 0x11 * i) as u8).collect();
+            let root =
+                node("", &[], vec![node("chosen", &[("linux,initrd-start", &v), ("linux,initrd-end", &v)], vec![])]);
+            assert_eq!(ramdisk(&root), old_num(&v).map(|x| (x, x)), "{} bytes", n);
+        }
     }
 
     #[test]
@@ -462,6 +501,25 @@ mod tests {
         assert!(m.root.kid("memory").is_some() && m.root.kid("gone").is_none() && m.root.kid("gpu").is_some());
         assert_eq!(m.rsv, vec![(0x460_0000, 0x17000)], "nor its reservation");
         assert_eq!(n, 6);
+    }
+
+    // Issue #193 (found in a fork, checked on main): a running tree with a seed for the kernel's address randomisation
+    // passed it on to the kexec start, and kexec-tools refused the tree. The test fails when the merged tree keeps a
+    // seed other than 0 (from the loader or from the new image), or when the seed is dropped instead of set to 0
+    // (kexec-tools only fills in a seed that is there and 0).
+    #[test]
+    fn the_kaslr_seed_is_wiped_to_0() {
+        let seed: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8];
+        let old = node("", &[], vec![node("chosen", &[("bootargs", b"a\0")], vec![])]);
+        let run = node("", &[], vec![node("chosen", &[("bootargs", b"a\0"), ("kaslr-seed", seed)], vec![])]);
+        let (m, _) =
+            with_loader_changes(&tree(old.clone(), vec![]), &tree(old.clone(), vec![]), &tree(run, vec![])).unwrap();
+        let m = Fdt::parse(&m).unwrap();
+        assert_eq!(m.root.kid("chosen").unwrap().prop("kaslr-seed"), Some(&[0u8; 8][..]), "the loader's seed");
+        let new = node("", &[], vec![node("chosen", &[("bootargs", b"a\0"), ("kaslr-seed", seed)], vec![])]);
+        let (m, _) = with_loader_changes(&tree(new, vec![]), &tree(old.clone(), vec![]), &tree(old, vec![])).unwrap();
+        let m = Fdt::parse(&m).unwrap();
+        assert_eq!(m.root.kid("chosen").unwrap().prop("kaslr-seed"), Some(&[0u8; 8][..]), "the new image's seed");
     }
 
     #[test]

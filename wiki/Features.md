@@ -6,7 +6,7 @@ in the README. How to use it: the guides listed on [[Home]].
 **Acquisition**
 - Normal, peak detect, average and high-resolution modes (high resolution in software, it needs more samples than screen
   points); Auto or fixed memory depth up to 125 M points
-- Time base from 1 ns/div; roll mode from 200 ms/div, scan mode at slow time bases
+- Time base from 1 ns/div; roll mode from 200 ms/div (the state box says ROLL), scan mode at slow time bases
 - Zoom window, pinch and drag on the touch screen
 - Auto set-up, then a bar with four views of the signal: a few periods, many periods, the rising or the falling edge
 - Channel bandwidth Auto (follows the sample rate, the default), Full, 20 MHz or a limit in 5 MHz steps
@@ -47,7 +47,8 @@ in the README. How to use it: the guides listed on [[Home]].
 - Four decoders at once, with an event table you can export and that jumps to an event; DCC lists one command per row
   ("Loco 5  Fwd 50/128")
 - Serial: UART, UART 9-bit, I2C, SPI, Quad-SPI, I3C, 1-Wire, DS2482, SWD, JTAG
-- Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553
+- Automotive and aerospace: CAN, CAN-FD, LIN, FlexRay, SENT, ARINC 429, MIL-STD-1553. LIN takes the bit rate of each
+  frame from its sync field, so a bus at a rate that Baud does not list is read
 - Audio, lighting, industrial: I2S, S/PDIF, DMX512, Modbus RTU, Modbus ASCII
 - Other: USB low/full speed, USB PD, parallel, C-PHY, Manchester, MLT-3
 - Model railways: NMRA DCC (contributed by Arjen Halma), with a view of the layout in Display > Second pane > Bus view:
@@ -96,6 +97,9 @@ in the README. How to use it: the guides listed on [[Home]].
 - System > Date and time: the clock from an NTP server (off by default), time zones with daylight saving time, or set by
   hand; once the clock is set, file names carry the local date and time
 - System > Network > 10 Mbit retry: an Ethernet link that comes up at 10 Mbit/s gets one more autonegotiation
+- System > Network > Show address: the LAN and WLAN boxes of the top bar show the scope's address (off by
+  default: their name beside a green dot, or a dash without a link, so a picture of the screen does not pass the
+  address on)
 - On-screen keyboard for names, formulas and WLAN passwords, with arrow keys to correct inside a long entry
 - The start-up screen shows the version and the build
 - Signed update packages with trial start and automatic rollback

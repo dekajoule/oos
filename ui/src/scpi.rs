@@ -19,7 +19,7 @@
 //! :HISTogram:ENABle|TYPE|SOURce, :HISTogram:STATistics:RESult?,
 //! :MATH<n>:DISPlay|OPERator|SOURce1|SOURce2|SCALe|OFFSet|EXPRession, :MATH<n>:FFT:SOURce|WINDow|SCALe, :MATH<n>:FILTer:TYPE|W1|W2,
 //! :BUS<n>:MODE|DISPlay|FORMat|EVENt|THReshold|DATA?, :BUS<n>:RS232:TX|RX|BAUD|PARity|DBITs, :BUS<n>:IIC:SCLK:SOURce|SDA:SOURce, :BUS<n>:SPI:SCLK:SOURce|MOSI:SOURce|SS:SOURce|DBITs,
-//! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance,
+//! :POWer:ITEM? <item>[,src...], :POWer:HARMonics? [src], :SPECtrum:ITEM? <item>[,src], :BODE:MODE LOOP|PSRR|IMPedance, :BODE:UNIT DB|RATio, :BODE:AMPLitude <Vpp>,
 //! :MAGnetic:ITEM? <item>[,V,I], :INVerter:ITEM? <item>[,src...], :DPT:ITEM? <item>[,V,I[,G]], :BANDwidth:ITEM? <item>[,src],
 //! :WAVeform:SOURce CHANn|Rn|MODE NORM/MAX/RAW|FORMat BYTE/WORD/ASC|STARt|STOP|POINts|DATA?|PREamble?,
 //! :DISPlay:DATA? [BMP|PNG], :DISPlay:TYPE|GRADing:TIME|WBRightness|GBRightness|GRID|RULers|COLor,
@@ -193,7 +193,12 @@ pub struct Scpi {
     opc_events: Vec<crate::ui::Operations>,
 }
 
-pub(crate) use crate::words::{e, kw, nearest_index, num, parse_bool};
+pub(crate) use crate::words::{e, kw, nearest_index, num, num64, parse_bool};
+
+/// The answer of a query that is the text `s`, as the subsystems return it.
+fn t(s: &str) -> Option<Vec<u8>> {
+    Some(s.as_bytes().to_vec())
+}
 
 /// Splits a keyword with a numeric suffix: "CHAN2" -> ("CHAN", 2).
 fn suffix(tok: &str) -> (&str, Option<usize>) {
@@ -251,17 +256,20 @@ fn parse_slot(s: &str) -> Option<usize> {
 
 use crate::model::nearest_step as nearest;
 
+/// What `:WAVeform` reads until a command sets another, and again after `*RST`: CH1, BYTE, NORMal, the whole page.
+const WAV_DEFAULT: (WaveId, u8, u8, u64, u64) = (WaveId::Ch(0), 0, 0, 1, 0);
+
 impl Scpi {
     pub fn open(port: u16) -> Scpi {
         Scpi {
             l: Self::bind(port),
             clients: Vec::new(),
             send_limits: Default::default(),
-            wav_src: WaveId::Ch(0),
-            wav_fmt: 0,
-            wav_mode: 0,
-            wav_start: 1,
-            wav_stop: 0,
+            wav_src: WAV_DEFAULT.0,
+            wav_fmt: WAV_DEFAULT.1,
+            wav_mode: WAV_DEFAULT.2,
+            wav_start: WAV_DEFAULT.3,
+            wav_stop: WAV_DEFAULT.4,
             err: Vec::new(),
             event_status: 0,
             error_serial: 0,
@@ -273,23 +281,9 @@ impl Scpi {
     }
 
     fn bind(port: u16) -> Option<TcpListener> {
-        let l = Self::bind_quietly(port);
+        let l = crate::net6::tcp_service(port, "SCPI");
         if l.is_none() {
             eprintln!("oos-ui: SCPI port {} not available", port);
-        }
-        l
-    }
-
-    /// `bind` without the message when the port is taken.
-    fn bind_quietly(port: u16) -> Option<TcpListener> {
-        let l = crate::net6::tcp(port);
-        if let Some(l) = &l {
-            let _ = l.set_nonblocking(true);
-            eprintln!(
-                "oos-ui: SCPI on port {}{}",
-                port,
-                if l.local_addr().is_ok_and(|a| a.is_ipv6()) { " (IPv4 and IPv6)" } else { "" }
-            );
         }
         l
     }
@@ -300,7 +294,7 @@ impl Scpi {
         if self.l.is_some() {
             return false;
         }
-        self.l = Self::bind_quietly(port);
+        self.l = crate::net6::tcp_service(port, "SCPI");
         self.l.is_some()
     }
 
@@ -316,6 +310,42 @@ impl Scpi {
         }
         ui.mark_changed();
         None
+    }
+
+    /// A command that sets one value: `v` is its argument parsed, which `set` takes into `ui` and marks the model
+    /// changed; an argument that did not parse (`None`) is refused with -224 and changes nothing.
+    fn set_arg<T>(&mut self, ui: &mut Ui, arg: &str, v: Option<T>, set: impl FnOnce(&mut Ui, T)) -> Option<Vec<u8>> {
+        match v {
+            Some(v) => {
+                set(ui, v);
+                ui.mark_changed();
+            }
+            None => self.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
+        }
+        None
+    }
+
+    /// The commands every meter has (`:COUNter`, `:DVM`, `:MASK`): the rows of its table (`slices`) and `SOURce`,
+    /// the channel `src` of the model. None when `n` names neither.
+    fn meter_cmd(
+        &mut self,
+        ui: &mut Ui,
+        slices: &[&'static [crate::settings::Setting]],
+        n: &[&str],
+        query: bool,
+        arg: &str,
+        src: fn(&mut Model) -> &mut usize,
+    ) -> Option<Option<Vec<u8>>> {
+        if let Some(row) = crate::settings::command(slices, n) {
+            return Some(self.setting_cmd(ui, row, query, arg));
+        }
+        if n.len() != 1 || !kw(n[0], "SOURce") {
+            return None;
+        }
+        if query {
+            return Some(t(&format!("CHAN{}", (*src(&mut ui.m)).min(n_ch() - 1) + 1)));
+        }
+        Some(self.set_arg(ui, arg, parse_ch(arg), |ui, c| *src(&mut ui.m) = c))
     }
 
     /// Queue a SCPI error and latch the matching *ESR bit. A query that fails still answers with this text,
@@ -414,7 +444,8 @@ impl Scpi {
                     let line: Vec<u8> = self.clients[i].buf.drain(..=p).collect();
                     self.clients[i].program = Some(Program::new(&String::from_utf8_lossy(&line)));
                 }
-                let mut program = self.clients[i].program.take().unwrap();
+                // there is one: kept from before, or made from the line just taken
+                let Some(mut program) = self.clients[i].program.take() else { break };
                 let Some(mut response) = self.poll_program(ui, cv, &mut program) else {
                     // after the end of the input a program that would have to wait is dropped, and no later line runs
                     if eof {

@@ -19,7 +19,6 @@
 mod board;
 mod cmd;
 mod compress;
-mod decode;
 mod deepmeas;
 mod drawpipe;
 #[cfg(target_os = "linux")]
@@ -33,16 +32,12 @@ mod hid;
 #[cfg(target_os = "linux")]
 mod input;
 mod layout;
-mod logic;
-mod math;
 mod measures;
-mod model;
 #[cfg(test)]
 mod perfguard;
 mod platform;
 mod protocols;
 mod scpi;
-mod settings;
 mod shots;
 mod site;
 #[cfg(test)]
@@ -54,14 +49,14 @@ mod trignear;
 mod ui;
 mod vpu;
 mod wave;
-mod words;
-mod zone;
 
 // the system services (ADR 0064): their paths in this crate stay `crate::sysconf` and the like
 #[cfg(target_os = "linux")]
 use oos_system::hostname;
 // the transports (ADR 0064), generic over the program they carry: here always `scpi::Program`
 use oos_remote::{announce, hislip, http, vxi11};
+// the model and the settings table (ADR 0064): their paths in this crate stay `crate::model` and the like
+use oos_model::{decode, logic, math, model, settings, words, zone};
 use oos_system::{
     base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
 };
@@ -160,17 +155,17 @@ fn main() {
             m
         ));
     }
-    ui.limits_path = limits;
+    ui.overclock.path = limits;
     if experimental {
         ui.toast("Experimental limits active (limits.conf), see System > System info");
     }
     if let Some(script) = arg(&args, "--script") {
         // host test runs store next to the script (build.sh: target/test-shots)
         if let Some(d) = std::path::Path::new(&script).parent().filter(|d| !d.as_os_str().is_empty()) {
-            ui.store_dir = d.to_path_buf();
+            ui.files.dir = d.to_path_buf();
         }
         if let Some(d) = arg(&args, "--store-dir") {
-            ui.store_dir = d.into();
+            ui.files.dir = d.into();
         }
         // another screen than the panel (host only: the device shows the panel it has)
         if let Some(s) = arg(&args, "--size") {
@@ -198,7 +193,7 @@ fn main() {
         return;
     }
     if let Some(d) = arg(&args, "--store-dir") {
-        ui.store_dir = d.into();
+        ui.files.dir = d.into();
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);
@@ -221,7 +216,7 @@ fn serve(mut ui: Ui, args: &[String]) {
     let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args, &ui.acl());
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     let live = shots::Live::default();
-    while !ui.quit {
+    while !ui.asks.quit {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
@@ -414,7 +409,7 @@ fn hdmi_gpu_frame(
             hc.text_in(&f.xl, gfx::Rect::new(0, 0, mw, band), 1, &ui.hdmi_header(), gfx::rgb(0xe6, 0xed, 0xf3));
             // the waveform area without the bars and menus: the layer over the traces as it was before them
             let over =
-                ui.hdmi_over.as_ref().filter(|o| (o.w, o.h) == (panel.under.w, panel.under.h)).unwrap_or(&panel.over);
+                ui.hdmi.over.as_ref().filter(|o| (o.w, o.h) == (panel.under.w, panel.under.h)).unwrap_or(&panel.over);
             let plot = gpu::Quad {
                 over: Some(over),
                 reuse: false,
@@ -479,7 +474,7 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
     // one frame: on the CPU, or in layers through the GPU and read back
     fn frame(ui: &mut Ui, cv: &mut Canvas, gpu: &mut Option<gpu::Gpu>, gl: &mut GpuLayers, shot_n: &mut u32) {
         ui.step(1.0 / 30.0);
-        ui.hdmi_snap_want = std::env::var_os("OOS_GPU_HDMI").is_some();
+        ui.hdmi.snap_want = std::env::var_os("OOS_GPU_HDMI").is_some();
         match gpu.as_mut() {
             Some(g) => {
                 if let Err(e) = gl.compose(ui, g, cv, 0, true) {
@@ -489,7 +484,7 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
             }
             None => ui.render(cv),
         }
-        if let Some(p) = ui.shot_request.take() {
+        if let Some(p) = ui.asks.shot.take() {
             save_shot(ui, cv, p, shot_n);
         }
     }
@@ -552,7 +547,7 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
             }
             cmd::Out::None => {}
         }
-        if ui.quit {
+        if ui.asks.quit {
             break;
         }
     }
@@ -594,7 +589,7 @@ fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
     use board::Board;
     eprintln!("oos-ui: power {:?}", a);
     inp.set_leds(0);
-    unsafe { libc::sync() };
+    store::sync_disks();
     match a {
         ui::PowerAction::Off => {
             inp.send(&board::board().panel_cmd(board::PanelCmd::PowerOff));
@@ -617,7 +612,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     power_on_picture(&mut ui, &mut disp, start_up.as_deref());
     restore_settings(&mut ui);
     let mut d = Device::new(ui, disp, inp, start_up, args);
-    while !d.ui.quit && !input::stop_requested() {
+    while !d.ui.asks.quit && !input::stop_requested() {
         d.pass();
     }
     d.close();
@@ -903,7 +898,7 @@ impl Device {
                 }
                 input::In::Cmd(line) => {
                     if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &line) {
-                        self.ui.shot_request = Some(p);
+                        self.ui.asks.shot = Some(p);
                     }
                 }
             }
@@ -981,7 +976,7 @@ impl Device {
         self.hislip.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program));
         for c in self.web.poll(&mut site::Ctx::new(&mut self.ui, &self.cv, &mut self.scpi).with_live(&self.live)) {
             if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &c) {
-                self.ui.shot_request = Some(p);
+                self.ui.asks.shot = Some(p);
             }
         }
     }
@@ -996,7 +991,7 @@ impl Device {
         let t1 = Instant::now();
         self.ui.set_hdmi_present(self.hdmi.is_some());
         let hdmi_frame = self.hdmi.is_some() && (self.frame_n + 1).is_multiple_of(2);
-        self.ui.hdmi_snap_want = hdmi_frame && self.ui.m.hdmi == model::HdmiMode::Waveform;
+        self.ui.hdmi.snap_want = hdmi_frame && self.ui.m.hdmi == model::HdmiMode::Waveform;
         self.gpu_follow();
         // the web page's picture: the screen the CPU draws next swaps out the shown one; with the GPU, `cv` changes
         // only when a picture comes back, and each one goes to the web page from there
@@ -1018,7 +1013,7 @@ impl Device {
         self.hdmi_picture(hdmi_frame, hdmi_done);
         let t3 = Instant::now();
         self.hdmi_watch();
-        self.ui.hdmi_out = self.hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
+        self.ui.hdmi.out = self.hdmi.as_ref().map(|h| (h.width as u32, h.height as u32));
         let a = 0.05;
         self.ui.times.step += a * ((t1 - t0).as_secs_f32() * 1000.0 - self.ui.times.step);
         self.ui.times.render += a * ((t2 - t1).as_secs_f32() * 1000.0 - self.ui.times.render);
@@ -1067,7 +1062,7 @@ impl Device {
             let r: Result<(), String> = (|| {
                 // the picture comes back only for someone who wants it: the web page, a screenshot, and twice a
                 // second for SCPI and the rest
-                let shot = self.ui.shot_request.is_some();
+                let shot = self.ui.asks.shot.is_some();
                 // and every frame for a monitor that gets the panel's picture from the CPU (its buffers could not be
                 // given to the GPU), else it would show a picture up to half a second old
                 let hdmi_cpu = self.hdmi.is_some() && self.hdmi_gpu == Some(false);
@@ -1161,7 +1156,7 @@ impl Device {
             // the monitor's picture: its own layout, the workspace, or the panel's
             let size = match self.ui.m.hdmi {
                 model::HdmiMode::Layout => ui::Screen::for_monitor(h.width, h.height),
-                model::HdmiMode::Waveform if !self.ui.hdmi_snap.is_empty() => {
+                model::HdmiMode::Waveform if !self.ui.hdmi.snap.is_empty() => {
                     Some(ui::Screen { w: h.width, h: h.height })
                 }
                 _ => None,
@@ -1169,9 +1164,9 @@ impl Device {
             match size {
                 Some(s) => {
                     if self.hdmi_cv.as_ref().is_none_or(|c| (c.w, c.h) != (s.w, s.h)) {
-                        self.hdmi_cv = Some(Canvas::new(s.w, s.h));
+                        self.hdmi_cv = None;
                     }
-                    let hc = self.hdmi_cv.as_mut().unwrap();
+                    let hc = self.hdmi_cv.get_or_insert_with(|| Canvas::new(s.w, s.h));
                     if self.ui.m.hdmi == model::HdmiMode::Layout {
                         self.ui.render_view(hc);
                     } else {
@@ -1226,23 +1221,23 @@ impl Device {
             self.led_mask = lm;
             self.led_t = Instant::now();
         }
-        if let Some(p) = self.ui.shot_request.take() {
+        if let Some(p) = self.ui.asks.shot.take() {
             save_shot(&mut self.ui, &self.cv, p, &mut self.shot_n);
         }
-        for c in self.ui.panel_tx.drain(..) {
+        for c in self.ui.asks.panel.drain(..) {
             self.inp.send(&board::board().panel_cmd(c));
         }
-        if let Some(a) = self.ui.power_action.take() {
+        if let Some(a) = self.ui.power.action.take() {
             power(&mut self.inp, a);
         }
         self.save_setup();
         if self.net_t.is_none_or(|t| t.elapsed().as_secs() >= 5) {
             let ui = &mut self.ui;
             let (first, all) = ipv4_addresses();
-            (ui.net_if, ui.net) = first;
-            ui.net_ifs = all;
-            ui.net_fixed = std::path::Path::new("/tmp/oos-net.fallback").exists();
-            ui.eth_link = std::fs::read_to_string("/sys/class/net/eth0/carrier").is_ok_and(|c| c.trim() == "1");
+            (ui.net.iface, ui.net.addr) = first;
+            ui.net.ifs = all;
+            ui.net.fixed = std::path::Path::new("/tmp/oos-net.fallback").exists();
+            ui.net.eth_link = std::fs::read_to_string("/sys/class/net/eth0/carrier").is_ok_and(|c| c.trim() == "1");
             self.net_t = Some(Instant::now());
         }
         if self.eth_t.is_none_or(|t| t.elapsed().as_secs() >= 1) {
@@ -1251,7 +1246,7 @@ impl Device {
         }
         self.fps_n += 1;
         if self.fps_t.elapsed().as_secs_f64() >= 1.0 {
-            self.ui.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
+            self.ui.counts.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
             self.fps_n = 0;
             self.fps_t = Instant::now();
         }
@@ -1268,7 +1263,7 @@ impl Device {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
                     // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
-                    if std::path::Path::new("/oos/setups").is_dir() {
+                    if sysconf::data_partition() {
                         let _ = std::fs::write("/oos/oos-ui.setup.new", &t)
                             .and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
                     }
@@ -1287,6 +1282,10 @@ impl Device {
             h.close();
         }
         self.disp.restore();
+        // the panel's DRM file and the inputs' descriptors are closed by the kernel when the process ends, after the
+        // other parts are dropped
+        self.disp.keep_open();
+        self.inp.keep_open();
     }
 }
 
@@ -1308,13 +1307,13 @@ fn hdmi_targets(g: &mut gpu::Gpu, h: &drm::Display, base: usize) -> Result<bool,
 #[cfg(target_os = "linux")]
 fn eth_watch(ui: &mut Ui, now: f64) {
     let speed = ethlink::speed();
-    match ui.eth.step(now, ethlink::carrier(), speed, ui.sys.eth_retry_10m) {
+    match ui.net.eth.step(now, ethlink::carrier(), speed, ui.sys.eth_retry_10m) {
         Some(ethlink::Act::Restart) => {
             eprintln!(
                 "oos-ui: {} up at 10 Mbit/s {}, restarting the autonegotiation ({} of {}; {})",
                 ethlink::IFACE,
                 ethlink::duplex(),
-                ui.eth.tries,
+                ui.net.eth.tries,
                 ethlink::MAX_TRIES,
                 ethlink::mii_regs()
             );
@@ -1342,7 +1341,7 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     hc.clear(HDMI_BG);
     let body = ui.frame().body;
     let (sw, sh) = (ui.scr.w, body.h);
-    if ui.hdmi_snap.len() < (sw * sh) as usize {
+    if ui.hdmi.snap.len() < (sw * sh) as usize {
         return;
     }
     // the waveform area as large as it fits; the settings line in the band above it (at least 48 px)
@@ -1354,32 +1353,17 @@ fn hdmi_workspace(ui: &Ui, hc: &mut Canvas) {
     hc.text_in(&f.xl, gfx::Rect::new(0, 0, hc.w, head), 1, &ui.hdmi_header(), gfx::rgb(0xe6, 0xed, 0xf3));
     // `fit` centres in the rest: start at the band so the plot sits right under the settings line
     let top = (head as usize).saturating_sub(fit.y0) * stride;
-    fit.scale(&ui.hdmi_snap, &mut hc.px[top..], stride);
+    fit.scale(&ui.hdmi.snap, &mut hc.px[top..], stride);
 }
 
 /// The address to show in the top bar, and all of them, as (interface, address).
 #[cfg(target_os = "linux")]
 fn ipv4_addresses() -> ((String, String), Vec<(String, String)>) {
-    let mut found = Vec::new();
-    unsafe {
-        let mut ifa: *mut libc::ifaddrs = std::ptr::null_mut();
-        if libc::getifaddrs(&mut ifa) != 0 {
-            return ((String::new(), String::new()), Vec::new());
-        }
-        let mut p = ifa;
-        while !p.is_null() {
-            let a = &*p;
-            let up = a.ifa_flags & (libc::IFF_UP as u32) != 0 && a.ifa_flags & (libc::IFF_LOOPBACK as u32) == 0;
-            if up && !a.ifa_addr.is_null() && (*a.ifa_addr).sa_family as i32 == libc::AF_INET {
-                let link = a.ifa_flags & (libc::IFF_RUNNING as u32) != 0;
-                let sin = &*(a.ifa_addr as *const libc::sockaddr_in);
-                let name = std::ffi::CStr::from_ptr(a.ifa_name).to_string_lossy().into_owned();
-                found.push((name, std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)), link));
-            }
-            p = a.ifa_next;
-        }
-        libc::freeifaddrs(ifa);
-    }
+    let found = oos_system::ifaddrs::list()
+        .into_iter()
+        .filter(|e| e.has(libc::IFF_UP) && !e.has(libc::IFF_LOOPBACK))
+        .filter_map(|e| e.v4().map(|a| (e.name.clone(), a, e.has(libc::IFF_RUNNING))))
+        .collect();
     pick_addresses(found)
 }
 
@@ -1425,7 +1409,7 @@ mod tests {
     fn hdmi_workspace_picture() {
         let mut ui = crate::ui::testkit::demo_ui();
         let mut cv = Canvas::new(ui::PANEL_W, ui::PANEL_H);
-        ui.hdmi_snap_want = true;
+        ui.hdmi.snap_want = true;
         for _ in 0..10 {
             ui.step(1.0 / 30.0);
             ui.render(&mut cv);
@@ -1433,7 +1417,7 @@ mod tests {
         let mut hc = Canvas::new(1920, 1080);
         hdmi_workspace(&ui, &mut hc);
         // the plot fills the width under the settings band (1024 x 486 -> 1920 x 911 under an 84-px band)
-        assert_eq!(ui.hdmi_snap.len(), (ui.scr.w * ui.frame().body.h) as usize);
+        assert_eq!(ui.hdmi.snap.len(), (ui.scr.w * ui.frame().body.h) as usize);
         assert!(ui.hdmi_header().contains("CH1 1 V/div"));
         if let Ok(d) = std::env::var("OOS_SHOT_DIR") {
             let _ = std::fs::write(format!("{}/hdmi-workspace.png", d), store::png_of(&hc));

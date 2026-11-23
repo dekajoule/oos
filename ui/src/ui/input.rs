@@ -7,6 +7,71 @@
 
 use super::*;
 
+/// The power dialog as the screen keeps it (ADR 0062): the power key opens and closes it, a key or a tap closes it.
+#[derive(Default)]
+pub struct Power {
+    /// the dialog is open; it is drawn over everything and takes the next tap
+    pub open: bool,
+    /// what the dialog asked for, taken by the main loop (main.rs)
+    pub action: Option<PowerAction>,
+}
+
+/// What the screen asks of the main loop (main.rs), which takes it (ADR 0062).
+#[derive(Default)]
+pub struct Asks {
+    /// a screenshot: its file, or empty for the default name
+    pub shot: Option<String>,
+    /// the end of the program (the command file's `quit`, the tests)
+    pub quit: bool,
+    /// commands for the front panel (the power handshake)
+    pub panel: Vec<crate::board::PanelCmd>,
+}
+
+/// What the input keeps between two events (ADR 0062).
+pub(super) struct State {
+    /// a key held on the front panel that has a long press (a channel key, Measure): the key, since when, and whether
+    /// it was held long enough for its long press already (`panel_key`)
+    pub held: Option<(u8, f64, bool)>,
+    /// a finger on the card of a channel that is on, since when (a long touch: AC/DC, as the key)
+    pub card: Option<(usize, f64)>,
+    /// when each knob turned last, for its acceleration (`knob_accel`)
+    pub knob_t: [f64; 16],
+    /// screen path of the zone being drawn
+    pub zone_path: Vec<(i32, i32)>,
+    /// two fingers on the plot
+    pub pinch: Pinch,
+}
+
+impl Default for State {
+    fn default() -> State {
+        State {
+            held: None,
+            card: None,
+            knob_t: [0.0; 16],
+            zone_path: Vec::new(),
+            pinch: Pinch {
+                active: false,
+                p0: (0, 0),
+                p1: (0, 0),
+                ref_dx: 0,
+                ref_dy: 0,
+                area: Rect::new(0, 0, 0, 0),
+                detail: false,
+            },
+        }
+    }
+}
+
+pub(super) struct Pinch {
+    pub active: bool,
+    p0: (i32, i32),
+    p1: (i32, i32),
+    ref_dx: i32,
+    ref_dy: i32,
+    area: Rect,
+    detail: bool,
+}
+
 /// What a press hits, found before the touch state starts.
 struct PressHits {
     in_plot: bool,
@@ -51,8 +116,8 @@ impl Ui {
 
     fn knob_accel(&mut self, k: u8) -> i32 {
         let i = ((k >> 4) & 15) as usize;
-        let dt = self.now - self.knob_t[i];
-        self.knob_t[i] = self.now;
+        let dt = self.now - self.input.knob_t[i];
+        self.input.knob_t[i] = self.now;
         if dt < 0.04 {
             4
         } else if dt < 0.1 {
@@ -79,51 +144,56 @@ impl Ui {
     }
 
     /// A key of the front panel (the panel sends a key's code when it is pressed and 0 when it is let go): as `key`,
-    /// but a channel key acts when it is let go, and held for `LONG_PRESS` it switches the channel between AC and DC
-    /// coupling instead (at once, while still held). Scripts, the control FIFO and the web remote press keys through
-    /// `key`, as before.
+    /// but a key with a long press acts when it is let go, and held for `LONG_PRESS` it does its long press instead (at
+    /// once, while still held): a channel key switches the channel between AC and DC coupling, Measure adds the next
+    /// usual measurement. Scripts, the control FIFO and the web remote press keys through `key`, as before.
     pub fn panel_key(&mut self, k: u8) {
         let c = k.wrapping_sub(key::CH1) as usize;
-        if c < 4 && c < n_ch() {
-            // a second channel key while one is held: the held one counts as a short press
-            self.ch_release();
-            self.ch_hold = Some((c, self.now, false));
+        if (c < 4 && c < n_ch()) || k == key::MEASURE {
+            // a second such key while one is held: the held one counts as a short press
+            self.held_release();
+            self.input.held = Some((k, self.now, false));
             return;
         }
-        if k == 0 || self.ch_hold.is_some() {
-            self.ch_release();
+        if k == 0 || self.input.held.is_some() {
+            self.held_release();
         }
         self.key(k);
     }
 
-    /// A held channel key let go: its own action, unless it was held long enough for AC/DC.
-    fn ch_release(&mut self) {
-        if let Some((c, _, long)) = self.ch_hold.take() {
+    /// A held key let go: its own action, unless it was held long enough for its long press.
+    fn held_release(&mut self) {
+        if let Some((k, _, long)) = self.input.held.take() {
             if !long {
-                self.key(key::CH1 + c as u8);
+                self.key(k);
             }
         }
     }
 
-    /// A channel key held for `LONG_PRESS`: AC/DC once; letting it go then does nothing more. The same for a finger
-    /// held on a channel's card: then the finger's lift is no tap.
+    /// A key held for `LONG_PRESS`: its long press once (AC/DC for a channel key, a measurement for Measure); letting
+    /// it go then does nothing more. A finger held on a channel's card: AC/DC as well, and the finger's lift is no
+    /// tap.
     pub(super) fn ch_hold_poll(&mut self) {
-        if let Some((c, t)) = self.card_hold {
+        if let Some((c, t)) = self.input.card {
             let still = self.touch.down
                 && (self.touch.x - self.touch.x0).abs() < 16
                 && (self.touch.y - self.touch.y0).abs() < 16;
             if !still {
-                self.card_hold = None;
+                self.input.card = None;
             } else if self.now - t >= LONG_PRESS {
-                self.card_hold = None;
+                self.input.card = None;
                 self.touch.down = false;
                 self.toggle_ac_dc(c);
             }
         }
-        if let Some((c, t, false)) = self.ch_hold {
+        if let Some((k, t, false)) = self.input.held {
             if self.now - t >= LONG_PRESS {
-                self.ch_hold = Some((c, t, true));
-                self.toggle_ac_dc(c);
+                self.input.held = Some((k, t, true));
+                if k == key::MEASURE {
+                    self.add_usual_meas();
+                } else {
+                    self.toggle_ac_dc(k.wrapping_sub(key::CH1) as usize);
+                }
             }
         }
     }
@@ -162,8 +232,8 @@ impl Ui {
             self.power_key();
             return;
         }
-        if self.power_dlg {
-            self.power_dlg = false;
+        if self.power.open {
+            self.power.open = false;
             return;
         }
         if self.wlan.osk.is_some() {
@@ -194,8 +264,7 @@ impl Ui {
                 }
             }
             key::SINGLE => {
-                self.operation_serial = self.operation_serial.wrapping_add(1);
-                self.single_operation = self.operation_serial;
+                self.ops.arm_single();
                 m.set_sweep(TrigMode::Single);
                 m.run = RunState::Run;
                 self.single_armed = false;
@@ -233,11 +302,11 @@ impl Ui {
             key::REF => self.toggle_menu(MenuId::Ref),
             key::ANALYSE => self.toggle_menu(MenuId::Decode),
             // history: back / forward step through the stored records (stops the acquisition), play-stop = live
-            0x08 => self.history_step(-1),
-            0x06 => self.history_step(1),
-            0x07 | key::NAVIGATE => {
-                if self.hist_pos.is_some() {
-                    self.hist_pos = None;
+            key::NAV_BACK => self.history_step(-1),
+            key::NAV_FWD => self.history_step(1),
+            key::NAV_PLAY | key::NAVIGATE => {
+                if self.history.pos.is_some() {
+                    self.history.pos = None;
                     self.m.run = RunState::Run;
                     self.toast("Live");
                 } else {
@@ -254,9 +323,9 @@ impl Ui {
     fn power_key(&mut self) {
         // the stock Launcher answers every power-key press with "cancel power-down" (FA 05 02); the MCU very
         // likely cuts power by itself otherwise (board.md section 4)
-        self.panel_tx.push(crate::board::PanelCmd::CancelPowerDown);
-        self.power_dlg = !self.power_dlg;
-        if self.power_dlg {
+        self.asks.panel.push(crate::board::PanelCmd::CancelPowerDown);
+        self.power.open = !self.power.open;
+        if self.power.open {
             self.dialog = None;
             self.close_menu();
         }
@@ -283,9 +352,7 @@ impl Ui {
         } else if self.menu_open && self.menu == MenuId::Channel(c) {
             m.ch[c].on = false;
             self.menu_open = false;
-            if let Some(o) = (0..NCH).find(|&i| self.m.ch[i].on) {
-                self.m.active = o;
-            }
+            self.select_a_channel_that_is_on(c);
         } else {
             m.active = c;
             self.open_menu(MenuId::Channel(c));
@@ -294,25 +361,37 @@ impl Ui {
         self.settings_changed();
     }
 
+    /// After channel `c` went off: when it was the selected one, the first channel still on is selected, so the
+    /// vertical knobs act on a channel that is shown (#523). The key and the menu's On both come here.
+    pub(super) fn select_a_channel_that_is_on(&mut self, c: usize) {
+        if self.m.active != c || self.m.ch[c].on {
+            return;
+        }
+        if let Some(o) = (0..NCH).find(|&i| self.m.ch[i].on) {
+            self.select_workspace_source(WaveId::Ch(o));
+        }
+    }
+
     /// The Default key: the default set-up, keeping the Quick key action and the text size.
     fn default_key(&mut self) {
         let m = &self.m;
         let meas = Self::default_meas();
         // the Quick key action is a preference, not part of the set-up that Default resets
         let (quick, text_size) = (m.quick, m.text_size);
-        self.m = Model::default();
+        let mut fresh = Model::default();
+        fresh.keep_session(&self.m);
+        self.m = fresh;
         self.m.meas = meas;
         (self.m.quick, self.m.text_size) = (quick, text_size);
         self.bus_auto = None;
         self.clear_measurement_statistics();
         self.select_workspace_source(WaveId::Ch(self.m.active));
-        self.meas_own.clear();
-        self.meas_cfg = None;
+        self.meas_own.rows.clear();
+        self.meas_own.dialog = None;
         self.ensure_meas_own();
-        self.stats_on = false;
+        self.results.on = false;
         self.xy = false;
-        self.mask = None;
-        self.mask_ref = None;
+        self.mask_sw.forget();
         self.close_menu();
         self.dirty_map = true;
         self.toast("Default set-up");
@@ -342,7 +421,7 @@ impl Ui {
         let dir = if sub == 0xa { 1 } else { -1 };
         let acc = if push { 1 } else { self.knob_accel(k) };
         if let Some(WaveId::Ref(slot)) = self.selected_workspace_source() {
-            self.ref_sel = slot;
+            self.ref_page.sel = slot;
             match base {
                 0xd0 => {
                     if push {
@@ -354,7 +433,9 @@ impl Ui {
                 }
                 0x90 => {
                     if push {
-                        self.refs[self.ref_sel].as_mut().unwrap().offset = 0.0;
+                        if let Some(r) = self.refs[self.ref_page.sel].as_mut() {
+                            r.offset = 0.0;
+                        }
                         self.settings_changed();
                     } else {
                         self.adjust(Item::RefOffset, dir * acc);
@@ -419,6 +500,10 @@ impl Ui {
             0xb0 | 0xa0 => {
                 let items = self.items(self.menu);
                 if !self.menu_open {
+                    // multi 2 turned over a Bode plot moves its cursor, so the menu need not cover it (#50)
+                    if base == 0xa0 && !push && self.bode_cursor_step(dir * acc) {
+                        return;
+                    }
                     self.open_menu(MenuId::Main);
                     return;
                 }
@@ -478,23 +563,24 @@ impl Ui {
         }
         let map = self.zoom_drag_map(self.touch.x, self.touch.y);
         let modal =
-            self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some();
-        let p = &mut self.pinch;
+            self.load_slot_ask || self.menu_open || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some();
+        let p = &mut self.input.pinch;
         if id == 1 {
             match ph {
                 Phase::Down => {
-                    if !modal && self.touch.down && map.is_some_and(|(area, _, _)| area.contains(x, y)) {
+                    let on_plot = map.filter(|(area, _, _)| area.contains(x, y));
+                    if let Some((area, _, _)) = on_plot.filter(|_| !modal && self.touch.down) {
                         p.active = true;
-                        p.area = map.unwrap().0;
-                        p.detail = self.m.zoom && p.area.y >= Self::split_zoom(self.grid).1.y;
+                        p.area = area;
+                        p.detail = self.m.zoom && p.area.y >= Self::split_zoom(self.plot.grid).1.y;
                         p.p0 = (self.touch.x, self.touch.y);
                         p.p1 = (x, y);
                         p.ref_dx = (p.p1.0 - p.p0.0).abs();
                         p.ref_dy = (p.p1.1 - p.p0.1).abs();
                         // cancel the one-finger drag
                         self.touch.drag = Drag::None;
-                        self.zoom_path.clear();
-                        self.zoom_map = None;
+                        self.zoom_box.path.clear();
+                        self.zoom_box.map = None;
                     }
                 }
                 Phase::Move => p.p1 = (x, y),
@@ -517,7 +603,7 @@ impl Ui {
             self.touch_ev(ph, x, y);
             return;
         }
-        let p = &mut self.pinch;
+        let p = &mut self.input.pinch;
         if !p.active {
             return;
         }
@@ -557,7 +643,7 @@ impl Ui {
             } else if !self.m.zoom {
                 match self.selected_workspace_source() {
                     Some(WaveId::Ref(i)) => {
-                        self.ref_sel = i;
+                        self.ref_page.sel = i;
                         self.adjust(Item::RefVpd, dv);
                     }
                     _ => self.adjust(Item::ChScale(self.m.active), dv),
@@ -571,18 +657,18 @@ impl Ui {
         if self.workspace_touch(ph, x, y) {
             return;
         }
-        if self.wins.len() < 2 {
+        if self.plot.wins.len() < 2 {
             return self.touch_in(ph, x, y);
         }
-        let keep = (self.area, self.cur_win);
+        let keep = (self.plot.area, self.plot.cur_win);
         let w = if ph == Phase::Down {
-            self.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0)
+            self.plot.wins.iter().position(|r| r.contains(x, y)).unwrap_or(0)
         } else {
-            self.touch.win.min(self.wins.len() - 1)
+            self.touch.win.min(self.plot.wins.len() - 1)
         };
-        (self.area, self.cur_win) = (self.wins[w], w);
+        (self.plot.area, self.plot.cur_win) = (self.plot.wins[w], w);
         self.touch_in(ph, x, y);
-        (self.area, self.cur_win) = keep;
+        (self.plot.area, self.plot.cur_win) = keep;
     }
 
     /// One finger's press, move or lift in the area of the current window.
@@ -593,7 +679,7 @@ impl Ui {
             && (self.full_btn().1.contains(x, y)
                 || (self.plot_btns_shown() && (self.zoom_btn().1.contains(x, y) || self.win_btn().1.contains(x, y))));
         let in_plot = ph == Phase::Down
-            && self.grid.contains(x, y)
+            && self.plot.grid.contains(x, y)
             && !covered
             && !on_btn
             && !(self.eye_open() && self.eye_pane_rect().contains(x, y));
@@ -602,12 +688,12 @@ impl Ui {
             && ((self.zoom_btn().1.contains(x, y) && !self.view_on())
                 || (self.m.zoom && self.zoom_readout().contains(x, y))
                 || (self.view_on() && self.view_btn().contains(x, y)));
-        let zmap = if self.zoom_arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
+        let zmap = if self.zoom_box.arm && in_plot && !on_chrome { self.zoom_drag_map(x, y) } else { None };
         // a finger on a list that scrolls (the measurement page, the Results pane, a table) moves it
         let grip = if ph == Phase::Down
             && !self.m.touch_lock
             && self.dialog.is_none()
-            && !self.power_dlg
+            && !self.power.open
             && self.wlan.osk.is_none()
         {
             self.scroll_grip(x, y)
@@ -632,16 +718,14 @@ impl Ui {
             y0: y,
             x,
             y,
-            t0: self.now,
-            held: false,
             drag: Drag::None,
             start_offset: 0.0,
             start_delay: sd,
             start_level: self.m.trig_level,
             start_cur: 0.0,
-            win: self.cur_win,
+            win: self.plot.cur_win,
         };
-        if self.m.touch_lock || self.dialog.is_some() || self.power_dlg || self.wlan.osk.is_some() {
+        if self.m.touch_lock || self.dialog.is_some() || self.power.open || self.wlan.osk.is_some() {
             return;
         }
         if let Some((l, g)) = grip {
@@ -651,7 +735,7 @@ impl Ui {
         if !in_plot {
             // a finger held on the card of a channel that is on: AC/DC, as the channel key
             let (chs, _, _) = self.cards();
-            self.card_hold =
+            self.input.card =
                 chs.iter().position(|r| r.contains(x, y)).filter(|&c| self.m.ch[c].on).map(|c| (c, self.now));
         } else {
             // an edge strip of the plot swipes between the views (not while a zoom box is armed)
@@ -660,11 +744,11 @@ impl Ui {
             t.drag = if edge { Drag::ViewEdge } else { Drag::Pending };
             if let Some(map) = zmap {
                 t.drag = Drag::ZoomBox;
-                self.zoom_path = vec![(x, y), (x, y)];
-                self.zoom_map = Some(map);
-            } else if let Some((k, _)) = self.zone_arm {
+                self.zoom_box.path = vec![(x, y), (x, y)];
+                self.zoom_box.map = Some(map);
+            } else if let Some((k, _)) = self.zone_trig.arm {
                 t.drag = Drag::Zone(k);
-                self.zone_path = vec![(x, y)];
+                self.input.zone_path = vec![(x, y)];
             }
         }
     }
@@ -703,13 +787,13 @@ impl Ui {
 
     /// What a press at (`tx0`, `ty0`) drags once it moved by (`dx`, `dy`): zoom edges, cursors, levels, offsets or delay.
     fn pick_drag(&self, tx0: i32, ty0: i32, dx: i32, dy: i32) -> Drag {
-        let near_right = tx0 > self.area.x + self.area.w - 50;
-        let near_left = tx0 < self.area.x + 50;
+        let near_right = tx0 > self.plot.area.x + self.plot.area.w - 50;
+        let near_left = tx0 < self.plot.area.x + 50;
         let cur_hit = |frac: f32, vertical: bool| -> bool {
             if vertical {
-                (self.area.x + (frac * self.area.w as f32) as i32 - tx0).abs() < 24
+                (self.plot.area.x + (frac * self.plot.area.w as f32) as i32 - tx0).abs() < 24
             } else {
-                (self.area.y + (frac * self.area.h as f32) as i32 - ty0).abs() < 24
+                (self.plot.area.y + (frac * self.plot.area.h as f32) as i32 - ty0).abs() < 24
             }
         };
         let m = &self.m;
@@ -719,7 +803,7 @@ impl Ui {
                 && cur_hit(frac, vertical)
         };
         let overview_drag = if m.zoom {
-            let overview = Self::split_zoom(self.grid).0;
+            let overview = Self::split_zoom(self.plot.grid).0;
             if overview.contains(tx0, ty0) {
                 let ppd = overview.w as f32 / HDIV;
                 let half = tscales()[m.zscale] * HDIV * 0.5;
@@ -772,8 +856,8 @@ impl Ui {
             }
         } else if m.zoom && dy.abs() > dx.abs() {
             Drag::ZoomVertical
-        } else if dy.abs() > dx.abs() && self.drag_reference().is_some() {
-            Drag::RefOffset(self.drag_reference().unwrap())
+        } else if let Some(r) = self.drag_reference().filter(|_| dy.abs() > dx.abs()) {
+            Drag::RefOffset(r)
         } else if dy.abs() > dx.abs() {
             // nearest enabled channel marker when starting at the left edge, else the active channel (in a
             // split plot: of this window)
@@ -811,7 +895,7 @@ impl Ui {
             Drag::Offset(c) => self.m.ch[c].offset,
             Drag::RefOffset(i) => self.refs[i].as_ref().map_or(0.0, |reference| reference.offset),
             Drag::ZoomLeft | Drag::ZoomRight => tscales()[self.m.zscale],
-            Drag::ZoomVertical => self.zoom_vcenter,
+            Drag::ZoomVertical => self.zoom_view.vcenter,
             Drag::Bus => self.m.bus.pos,
             _ => 0.0,
         };
@@ -848,11 +932,11 @@ impl Ui {
     fn touch_drag_to(&mut self, x: i32, y: i32) {
         let t = &self.touch;
         let (dx, dy) = (x - t.x0, y - t.y0);
-        let ppx = self.area.w as f32 / HDIV;
-        let ppy = self.area.h as f32 / VDIV;
+        let ppx = self.plot.area.w as f32 / HDIV;
+        let ppy = self.plot.area.h as f32 / VDIV;
         match t.drag {
             Drag::ZoomVertical => {
-                self.zoom_vcenter = t.start_offset + dy as f32 / ppy / self.zoom_vfactor;
+                self.zoom_view.vcenter = t.start_offset + dy as f32 / ppy / self.zoom_view.vfactor;
                 self.dirty_map = true;
             }
             Drag::RefOffset(i) => {
@@ -861,13 +945,13 @@ impl Ui {
                 }
             }
             Drag::Overview => {
-                let overview = Self::split_zoom(self.grid).0;
+                let overview = Self::split_zoom(self.plot.grid).0;
                 self.m.zdelay = t.start_delay + dx as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                 self.clamp_zoom();
                 self.settings_changed();
             }
             Drag::ZoomLeft | Drag::ZoomRight => {
-                let overview = Self::split_zoom(self.grid).0;
+                let overview = Self::split_zoom(self.plot.grid).0;
                 let time = self.m.delay
                     + (x - overview.x - overview.w / 2) as f32 / (overview.w as f32 / HDIV) * self.m.time_per_div();
                 let span = if t.drag == Drag::ZoomLeft { t.start_cur - time } else { time - t.start_cur };
@@ -920,25 +1004,25 @@ impl Ui {
                 self.settings_changed();
             }
             Drag::Zone(_) => {
-                let shape = self.zone_arm.is_some_and(|a| a.1);
-                let last = self.zone_path.last().copied().unwrap_or((x, y));
+                let shape = self.zone_trig.arm.is_some_and(|a| a.1);
+                let last = self.input.zone_path.last().copied().unwrap_or((x, y));
                 if !shape {
-                    self.zone_path.truncate(1);
-                    self.zone_path.push((x, y));
+                    self.input.zone_path.truncate(1);
+                    self.input.zone_path.push((x, y));
                 } else if (x - last.0).abs() + (y - last.1).abs() >= 6 {
-                    self.zone_path.push((x, y));
+                    self.input.zone_path.push((x, y));
                 }
             }
             Drag::ZoomBox => {
-                if let Some(p) = self.zoom_path.last_mut() {
+                if let Some(p) = self.zoom_box.path.last_mut() {
                     *p = (x, y);
                 }
             }
             Drag::CursorA | Drag::CursorB | Drag::CursorC | Drag::CursorD => {
                 let v = if self.m.cursor == CursorMode::Volt || matches!(t.drag, Drag::CursorC | Drag::CursorD) {
-                    t.start_cur + dy as f32 / self.area.h as f32
+                    t.start_cur + dy as f32 / self.plot.area.h as f32
                 } else {
-                    t.start_cur + dx as f32 / self.area.w as f32
+                    t.start_cur + dx as f32 / self.plot.area.w as f32
                 }
                 .clamp(0.0, 1.0);
                 match t.drag {
@@ -956,16 +1040,10 @@ impl Ui {
     /// A lift: it ends the drag, finishes a zone or a zoom box, or is a tap.
     fn touch_up(&mut self, x: i32, y: i32) {
         let t = &mut self.touch;
-        let was = (t.down, t.drag, t.x0, t.y0, t.held);
+        let was = (t.down, t.drag, t.x0, t.y0);
         t.down = false;
         t.drag = Drag::None;
-        t.held = false;
         if !was.0 {
-            return;
-        }
-        // the short menu is already open; this lift runs its shortcut instead of a tap
-        if was.4 {
-            self.meas_hold_up(x, y);
             return;
         }
         if let Drag::Zone(k) = was.1 {
@@ -1004,8 +1082,8 @@ impl Ui {
 
     /// A box magnifies both axes without changing source scales or acquisition.
     fn finish_zoom_box(&mut self) {
-        let path = std::mem::take(&mut self.zoom_path);
-        let map = self.zoom_map.take();
+        let path = std::mem::take(&mut self.zoom_box.path);
+        let map = self.zoom_box.map.take();
         if path.len() != 2 {
             return;
         }
@@ -1013,7 +1091,7 @@ impl Ui {
         // A plain tap ends box drawing; valid boxes can be drawn repeatedly.
         if (x1 - x0).abs() < 12 || (y1 - y0).abs() < 12 {
             if (x1 - x0).abs() < 12 && (y1 - y0).abs() < 12 {
-                self.zoom_arm = false;
+                self.zoom_box.arm = false;
             }
             return;
         }
@@ -1045,15 +1123,15 @@ impl Ui {
         let next_center = center + (0.5 - (midpoint - a.y as f32) / a.h as f32) * VDIV / factor;
         let next_factor = (factor * a.h as f32 / (high - low).max(1) as f32).clamp(1.0, 1024.0);
         if !on {
-            self.zoom_saved = Some((self.m.tscale, self.m.tfine, self.m.delay));
+            self.zoom_view.saved = Some((self.m.tscale, self.m.tfine, self.m.delay));
         }
         self.m.zscale = z;
         self.m.zdelay = (t0 + t1) * 0.5;
         self.m.zoom = true;
-        self.zoom_vfactor = next_factor;
-        self.zoom_vcenter = next_center;
+        self.zoom_view.vfactor = next_factor;
+        self.zoom_view.vcenter = next_center;
         self.clamp_zoom();
-        self.zoom_arm = true;
+        self.zoom_box.arm = true;
         self.dirty_map = true;
         if !on {
             self.relayout();
@@ -1062,10 +1140,10 @@ impl Ui {
 
     /// Turns the drawn screen path into zone `k` (waveform coordinates of its source channel).
     fn finish_zone(&mut self, k: usize) {
-        let shape = self.zone_arm.is_some_and(|a| a.1);
-        self.zone_arm = None;
-        let path = std::mem::take(&mut self.zone_path);
-        let a = self.area;
+        let shape = self.zone_trig.arm.is_some_and(|a| a.1);
+        self.zone_trig.arm = None;
+        let path = std::mem::take(&mut self.input.zone_path);
+        let a = self.plot.area;
         let (tdiv, delay) = self.view();
         let ch = &self.m.ch[self.m.zones[k].src];
         let ppx = a.w as f64 / HDIV as f64;
@@ -1093,7 +1171,7 @@ impl Ui {
 
     /// Zones (green = must intersect, red = must not) and the zone being drawn.
     pub(super) fn draw_zones(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let (tdiv, delay) = self.view();
         let ppx = a.w as f64 / HDIV as f64;
         cv.set_clip(a);
@@ -1124,18 +1202,18 @@ impl Ui {
             cv.text(&self.fonts().s, lx + 4, ly + 14, &format!("Z{}", k + 1), col);
         }
         // the path being drawn is in screen coordinates: once, over the whole plot
-        if self.cur_win != 0 {
+        if self.plot.cur_win != 0 {
             cv.no_clip();
             return;
         }
-        cv.set_clip(self.grid);
-        if self.zone_arm.is_some_and(|a| a.1) {
-            for w in self.zone_path.windows(2) {
+        cv.set_clip(self.plot.grid);
+        if self.zone_trig.arm.is_some_and(|a| a.1) {
+            for w in self.input.zone_path.windows(2) {
                 cv.line(w[0].0, w[0].1, w[1].0, w[1].1, ACCENT);
             }
         }
-        if self.zone_arm.is_some_and(|a| !a.1) && self.zone_path.len() == 2 {
-            let ((x0, y0), (x1, y1)) = (self.zone_path[0], self.zone_path[1]);
+        if self.zone_trig.arm.is_some_and(|a| !a.1) && self.input.zone_path.len() == 2 {
+            let ((x0, y0), (x1, y1)) = (self.input.zone_path[0], self.input.zone_path[1]);
             for (p, q) in [((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))] {
                 cv.line(p.0, p.1, q.0, q.1, ACCENT);
             }
@@ -1150,7 +1228,7 @@ impl Ui {
         let box_button =
             self.m.zoom && self.zoom_controls().iter().any(|(rect, text)| *text == "Box" && rect.contains(x, y));
         if !box_button {
-            self.zoom_arm = false;
+            self.zoom_box.arm = false;
         }
         if self.workspace_popup_tap(x, y) {
             return;
@@ -1162,7 +1240,7 @@ impl Ui {
         if !self.full_on() && self.m.bar_compact && self.workspace_footer_tap(x, y) {
             return;
         }
-        if self.power_dlg {
+        if self.power.open {
             self.power_tap(x, y);
             return;
         }
@@ -1188,7 +1266,7 @@ impl Ui {
                 return;
             }
         }
-        if !self.menu_open && self.measurement_navigation_tap(x, y) {
+        if !self.menu_open && (self.measurement_navigation_tap(x, y) || self.strip_tap(x, y)) {
             return;
         }
         if self.auto_bar_tap(x, y) {
@@ -1235,11 +1313,11 @@ impl Ui {
             // no top bar and no cards: only what is over the plot
             if let Some((h, _)) = self.results_rects() {
                 if Rect::new(h.x, h.y - 5, h.w, h.h + 10).contains(x, y) {
-                    self.results_min = !self.results_min;
+                    self.results.folded = !self.results.folded;
                     return;
                 }
             }
-            if self.menu_open && self.grid.contains(x, y) {
+            if self.menu_open && self.plot.grid.contains(x, y) {
                 self.close_menu();
             }
             return;
@@ -1249,16 +1327,16 @@ impl Ui {
 
     /// A tap while the power dialog is open: it closes; Power off or Restart is taken unless an update runs.
     fn power_tap(&mut self, x: i32, y: i32) {
-        self.power_dlg = false;
+        self.power.open = false;
         let (_, [off, restart, _]) = self.pwr_layout();
         if (off.contains(x, y) || restart.contains(x, y)) && self.update_busy() {
             // a cut now leaves recovery half-written (docs/update.md)
             self.toast("Update running: wait until it is done");
         } else if off.contains(x, y) {
-            self.power_action = Some(PowerAction::Off);
+            self.power.action = Some(PowerAction::Off);
             self.toast("Powering off ...");
         } else if restart.contains(x, y) {
-            self.power_action = Some(PowerAction::Restart);
+            self.power.action = Some(PowerAction::Restart);
             self.toast("Restarting ...");
         }
     }
@@ -1283,8 +1361,6 @@ impl Ui {
         for (b, _, r) in self.top_buttons() {
             if self.top_hit(r).contains(x, y) {
                 return match b {
-                    // a tap opens the measurement list; a press-and-hold opens the short menu (meas_hold_tick)
-                    TopBtn::Menu(MenuId::Measure) => self.open_meas_list(),
                     TopBtn::Menu(id) => self.toggle_menu(id),
                     TopBtn::Live => self.return_to_live(),
                 };
@@ -1296,7 +1372,7 @@ impl Ui {
         // header of the results overlay (40 px touch area): fold / unfold
         if let Some((h, _)) = self.results_rects() {
             if Rect::new(h.x, h.y - 5, h.w, h.h + 10).contains(x, y) {
-                self.results_min = !self.results_min;
+                self.results.folded = !self.results.folded;
                 return;
             }
         }
@@ -1348,9 +1424,9 @@ impl Ui {
         if self.record_mode() {
             for (slot, rect) in self.record_cards() {
                 if rect.contains(x, y) {
-                    self.ref_sel = slot;
-                    self.offline_ref = slot;
-                    self.meas_src = WaveId::Ref(slot);
+                    self.ref_page.sel = slot;
+                    self.offline.slot = slot;
+                    self.sources.a = WaveId::Ref(slot);
                     if x >= rect.x + rect.w - 42 && y < rect.y + 28 {
                         if let Some(reference) = self.refs[slot].as_mut() {
                             reference.on = !reference.on;
@@ -1379,7 +1455,7 @@ impl Ui {
             }
             return self.toggle_menu(MenuId::Trigger);
         }
-        if self.menu_open && self.grid.contains(x, y) {
+        if self.menu_open && self.plot.grid.contains(x, y) {
             self.close_menu();
         }
     }

@@ -3,10 +3,11 @@
 
 //! `:MEASure`: the items and channel pairs the strip can show (`ITEM`, `STRip?`, `READout?`, `SOURce`, `CLEar`),
 //! statistics, thresholds (`REFS`, `SETup`, `THOLd`), gating, burst idle, Time Outside, Duration N, the edges and the
-//! indicator. A new `:MEASure` command goes into `measure_cmd` here (a new item into `MEAS_ITEMS` or `PAIR_ITEMS`),
-//! with its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
+//! indicator (a row of settings/measure.rs). A new `:MEASure` setting of a setup file is a row of that table; another
+//! command goes into `measure_cmd` here (a new item into `MEAS_ITEMS` or `PAIR_ITEMS`), with its line in docs/scpi.md;
+//! either with its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, parse_bool, parse_wave, wave_tok, Scpi};
+use super::{e, kw, num64, parse_bool, parse_wave, t, wave_tok, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -181,7 +182,6 @@ impl Scpi {
         arg: &str,
         cmd: &str,
     ) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if nodes.len() == 2 && query {
             if kw(nodes[1], "ITEM") {
                 return self.meas_item(ui, arg);
@@ -198,7 +198,7 @@ impl Scpi {
             if query {
                 return t(&e(ui.m.meas_idle));
             }
-            match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+            match num64(arg).filter(|v| *v >= 0.0) {
                 Some(v) => {
                     ui.m.meas_idle = v;
                     ui.measure_last();
@@ -280,7 +280,6 @@ impl Scpi {
 
     /// `:MEASure:SOURce`: source A, and B after a comma.
     fn meas_sources(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if query {
             return t(&wave_tok(ui.meas_source()));
         }
@@ -301,7 +300,6 @@ impl Scpi {
 
     /// `:MEASure:REFS`: the 10/90 or 20/80 threshold pair.
     fn meas_refs(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if query {
             let ten = ui.m.meas_lpct < 0.15 && ui.m.meas_hpct > 0.85;
             return t(if ten { "10/90" } else { "20/80" });
@@ -324,12 +322,11 @@ impl Scpi {
 
     /// `:MEASure:TSETup|THOLd` (`n1`): the setup and hold times.
     fn meas_setup_hold(&mut self, ui: &mut Ui, n1: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let setup = kw(n1, "TSETup");
         if query {
             return t(&e(if setup { ui.m.meas_tsetup } else { ui.m.meas_thold }));
         }
-        match arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0) {
+        match num64(arg).filter(|v| *v >= 0.0) {
             Some(v) => {
                 if setup {
                     ui.m.meas_tsetup = v;
@@ -349,7 +346,7 @@ impl Scpi {
             let pct = if high { ui.m.meas_hpct } else { ui.m.meas_lpct };
             return Some(format!("{}", (pct * 100.0).round() as i32).into_bytes());
         }
-        let Some(pct) = arg.trim().parse::<f64>().ok().filter(|v| (0.0..=100.0).contains(v)) else {
+        let Some(pct) = num64(arg).filter(|v| (0.0..=100.0).contains(v)) else {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         };
@@ -373,7 +370,6 @@ impl Scpi {
     }
 
     fn meas_stat_cmd(&mut self, ui: &mut Ui, which: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if kw(which, "DISPlay") {
             if query {
                 return t(if ui.stats_shown() { "1" } else { "0" });
@@ -501,7 +497,6 @@ impl Scpi {
     /// Burst idle, the side Time Outside counts, how many periods Duration N spans, and which edges it uses.
     /// The DHO programmer manual has no header for these Measure-menu settings.
     fn meas_gate(&mut self, ui: &mut Ui, which: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         if kw(which, "OUTSide") {
             if query {
                 return t(match ui.m.meas_out {
@@ -550,28 +545,14 @@ impl Scpi {
         None
     }
 
-    /// The labels the screen draws on the trace for the measurements. Both Rigol headers drive that one switch.
+    /// The labels the screen draws on the trace for the measurements, a row of settings/measure.rs. Both Rigol headers
+    /// drive that one switch.
     pub(super) fn meas_indicator(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
-        if query {
-            return t(if ui.m.meas_labels { "1" } else { "0" });
-        }
-        match parse_bool(arg) {
-            Some(on) => {
-                ui.m.meas_labels = on;
-                ui.mark_changed();
-                None
-            }
-            None => {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                None
-            }
-        }
+        self.setting_cmd(ui, crate::settings::measure::INDICATOR, query, arg)
     }
 
     /// :MEASure:ITEM? <item>[,CHANn|Rn[,src]]
     fn meas_item(&mut self, ui: &Ui, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let mut parts = arg.split(',');
         let item = parts.next().unwrap_or("").trim();
         if item.is_empty() {

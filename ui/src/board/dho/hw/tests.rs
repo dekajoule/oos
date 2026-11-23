@@ -15,11 +15,12 @@ use super::settings::{
     live_compress, raw_for_ui, raw_newest, screen_margin, seg_max, seg_read_plan, settings, single_wants_more,
     slow_mode, LIVE_DEPTH, ROLL_TDIV, SCAN_TDIV,
 };
+use super::slow::{scan_gap, scan_la_pos, scan_write};
 use super::trim::{overlay_in_use, TrimPending, CORE_OFFSET, TRIM_HOLD};
 use super::units::{
     dvm_step, hw_merge, mask_map_from, unit_key, DvmKey, DvmStep, UnitGuard, DVM_HW, HW_STATUS_OFF, MASK_HW, ZONE_HW,
 };
-use crate::board::{Frame, Slow};
+use crate::board::{lock, Frame, Slow};
 use crate::model::*;
 use oos_hal::dho::seq::{Chan, Segments, Settings, Trig};
 use oos_hal::dho::{auxout, hz, uarttrig};
@@ -121,7 +122,7 @@ fn auto_depth_covers_a_delayed_screen() {
     }
 }
 use super::*;
-use crate::board::to_record;
+use crate::wave::to_record;
 
 #[test]
 fn aux_out_reaches_the_settings() {
@@ -826,12 +827,14 @@ fn live_compression_plan_by_time_base() {
     assert_eq!(plan(100e-9, false).0, 1);
     for (tdiv, two) in [(1e-6, false), (2e-6, false), (10e-6, false), (100e-6, false), (10e-6, true), (1e-3, false)] {
         let (k, fb, frames, raw_frames, p) = plan(tdiv, two);
-        let per_column = p.rate as f64 * tdiv * 10.0 / crate::compress::SCREEN_COLUMNS;
-        assert!(k >= crate::compress::K_MIN, "{} s/div: k {}", tdiv, k);
+        let per_column = p.rate as f64 * tdiv * 10.0 / crate::board::policy::compress::SCREEN_COLUMNS;
+        assert!(k >= crate::board::policy::compress::K_MIN, "{} s/div: k {}", tdiv, k);
         // at least POINTS_PER_COLUMN points per column, less than twice that
         let points = per_column / k as f64;
         assert!(
-            (crate::compress::POINTS_PER_COLUMN..2.0 * crate::compress::POINTS_PER_COLUMN).contains(&points),
+            (crate::board::policy::compress::POINTS_PER_COLUMN
+                ..2.0 * crate::board::policy::compress::POINTS_PER_COLUMN)
+                .contains(&points),
             "{} s/div: {} points per column",
             tdiv,
             points
@@ -957,7 +960,7 @@ fn final_replay_at_stop() {
     let s = settings(&m, false);
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, oos_hal::dho::seq::tdiv_fs(s.delay));
     let b = batch_plan(&s, &p);
-    let w = Some(crate::deepmeas::Want { every: false });
+    let w = Some(crate::board::policy::deep::Want { every: false });
     assert_eq!(final_replay(&b, &p, 3, false, false, w), deep_raw_settings(&b, &p));
     assert!(final_replay(&b, &p, 3, false, false, w).is_some());
     assert!(final_replay(&b, &p, 3, true, false, w).is_none(), "newest frame already raw");
@@ -1022,7 +1025,7 @@ fn deep_raw_window_for_the_measurements() {
     );
     assert!(start < p.pre && start + n > p.pre);
     let bytes = oos_hal::dho::seq::frame_bytes(&d, &p);
-    assert!(bytes <= crate::deepmeas::MAX_BYTES, "{} bytes", bytes);
+    assert!(bytes <= crate::board::policy::deep::MAX_BYTES, "{} bytes", bytes);
     // the decoded frame is raw and knows its trigger point
     let f = decode(&vec![0u8; bytes], &d, &p, 1);
     assert!(!f.envelope && f.ch[0].len() == n as usize && f.pre == (p.pre - start) as usize);
@@ -1234,15 +1237,15 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
         Scene { volts, la: None, first_fs: 1_000_000_000, period_fs: Some(50_000_000_000), auto_fs: None, view };
     let (u, bar, c2h, clock) = unit(scene);
     let lines = oos_hal::dho::lines::Recorded::default();
-    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort };
+    let hw = super::port::Hw { bar, c2h, afe: None, lines, clock, port: super::liverun::SimPort(None) };
     let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(crate::board::Shared::default()));
-    out.lock().unwrap().want = Some(want.clone());
+    lock(&out).want = Some(want.clone());
     let mut passes = 0;
     super::run(hw, want.mask, false, "/nonexistent".into(), out.clone(), || {
         passes += 1;
         passes <= 40
     });
-    let g = out.lock().unwrap();
+    let g = lock(&out);
     assert!(g.status.starts_with("configured") || !g.queue.is_empty(), "status: {}", g.status);
     let u = u.borrow();
     let played = u.trace.iter().filter(|e| matches!(e, Event::Played { .. })).count();

@@ -12,27 +12,36 @@ use crate::board::Frame;
 use oos_hal::dho::hz;
 use oos_hal::dho::seq::Settings;
 
+/// Sets `prearm_on` for the calling thread (tests: the live run, `liverun.rs`).
+#[cfg(test)]
+pub(super) fn force_prearm(on: Option<bool>) {
+    PREARM_ON.force(on);
+}
+
 /// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
 /// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
 /// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
 ///.
 pub(super) fn prearm_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get())
+    PREARM_ON.get()
 }
+
+static PREARM_ON: crate::board::policy::Switch =
+    crate::board::policy::Switch::new(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get());
 
 pub(super) const PREARM: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.prearm", env: None, on: "on" };
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
 #[cfg(any(target_os = "linux", test))]
-pub(super) fn disarm<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
+pub(super) fn disarm<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
     armed: &mut Option<(Settings, u64)>,
     state: &mut oos_hal::dho::seq::State,
     bar: &mut B,
     c2h: &mut R,
+    clock: &mut C,
 ) {
     if armed.take().is_some() {
-        if let Err(e) = oos_hal::dho::seq::disarm(state, bar, c2h, |_| {}) {
+        if let Err(e) = oos_hal::dho::seq::disarm(state, bar, c2h, clock, |_| {}) {
             eprintln!("oos-ui hw: disarm: {}", e);
         }
     }
@@ -185,7 +194,7 @@ pub(super) fn edge_check(f: &Frame, s: &Settings) -> Edge {
     }
     // a fifth of a division: an edge the trigger took crosses it, noise on a flat level near the level does not
     let hyst = (0.2 * s.ch[tc].scale) as f32;
-    crate::fastdraw::edge_near(
+    oos_dsp::edges::edge_near(
         v,
         f.pre,
         s.level as f32,
@@ -268,7 +277,11 @@ pub fn stop_plan(b: &Settings, p: &hz::Params, tdiv: f64, delay: f64) -> (Settin
 /// one whose newest frame the deep measurements may read raw (`deep_raw_settings`), since the next batch would write
 /// the ring under it. Prearm gains at
 /// short time bases; deep compressed records take most of a batch in the read anyway.
-pub(super) fn prearm_keeps_replay(b: &Settings, p: &hz::Params, deep: Option<crate::deepmeas::Want>) -> bool {
+pub(super) fn prearm_keeps_replay(
+    b: &Settings,
+    p: &hz::Params,
+    deep: Option<crate::board::policy::deep::Want>,
+) -> bool {
     !raw_newest(b, p) && (deep.is_none() || deep_raw_settings(b, p).is_none())
 }
 
@@ -276,14 +289,13 @@ pub(super) fn prearm_keeps_replay(b: &Settings, p: &hz::Params, deep: Option<cra
 /// before, when that frame was read as pairs and not already raw and nothing was armed ahead (`ahead`: the ring is
 /// being written again): the whole frame for the live compression, the screen window for a deep record when the deep
 /// measurements want samples.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn final_replay(
     b: &Settings,
     p: &hz::Params,
     count: u32,
     newest_raw: bool,
     ahead: bool,
-    deep: Option<crate::deepmeas::Want>,
+    deep: Option<crate::board::policy::deep::Want>,
 ) -> Option<Settings> {
     if count == 0 || newest_raw || ahead {
         return None;
@@ -296,17 +308,16 @@ pub(super) fn final_replay(
 
 /// The raw read of a deep record's screen window for the measurements (deepmeas.rs): the batch `b` read the whole
 /// record through the compression (`batch_plan`, above 1 M points), Normal acquisition, no LA; the window of
-/// `screen_window` with the record's edge allowed, at most `deepmeas::MAX_BYTES`. Settings for `seq::read_raw_again`.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// `screen_window` with the record's edge allowed, at most `policy::deep::MAX_BYTES`. Settings for `seq::read_raw_again`.
 pub(super) fn deep_raw_settings(b: &Settings, p: &hz::Params) -> Option<Settings> {
     if b.compress < 2
         || b.window.is_some()
-        || p.memsel <= crate::compress::MAX_DEPTH
+        || p.memsel <= crate::board::policy::compress::MAX_DEPTH
         || !matches!(b.mode, oos_hal::dho::acq::Mode::Normal)
     {
         return None;
     }
-    let cap = (crate::deepmeas::MAX_BYTES / (2 * p.ratio.max(1) as usize)) as i64 + 1;
+    let cap = (crate::board::policy::deep::MAX_BYTES / (2 * p.ratio.max(1) as usize)) as i64 + 1;
     // the whole record when the window would reach past it (`window_below` refuses a window beyond the end)
     let w = window_below(b, p, cap)
         .or_else(|| ((p.memsel as i64) < cap && b.la.is_none()).then(|| (p.memsel, -(p.pre as i64))))?;

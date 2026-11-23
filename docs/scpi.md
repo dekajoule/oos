@@ -34,7 +34,7 @@ Waveform names are `CHAN1` through `CHAN4` as available on the model, and `R1` t
 | Command | Meaning |
 | --- | --- |
 | `*IDN?` | `OOS,<model>,<serial>,oos-ui <version>`. On a computer the serial can be `0`. |
-| `*RST` | Restore the app's default configuration. This changes the acquisition workspace. |
+| `*RST` | Restore the app's default configuration. This changes the acquisition workspace. The waveform transfer starts again too: `:WAV:SOURce CHAN1`, `:MODE NORMal`, `:FORMat BYTE`, `:STARt 1`, `:STOP` through the last point. |
 | `*CLS` | Clear the SCPI error/status state and pending operation-complete event registrations. Does not clear waveform memory. |
 | `*OPC?` | Wait for the defined finite operations below, then return `1`. |
 | `*OPC` | Register completion of those finite operations in standard-event bit 0. |
@@ -51,7 +51,7 @@ Stored Run searches successive qualifying windows through the immutable record a
 
 ### Operation completion
 
-`*OPC?` fences the finite operation current at the barrier: Autoset, a submitted SIM generation, and an armed Single. Continuous Run and background measurement/Math/decode/Eye calculations are not drained by OPC. Use their readiness/value interfaces separately. Operation completion is not a statement that a result is valid; inspect the error queue and trigger status.
+`*OPC?` fences the finite operation current at the barrier: Autoset, a submitted SIM generation, an armed Single, and a STOP of the hardware until its record is in place (the thread holds and its last record is taken; at most 3 s). After `:STOP` and `*OPC?` the preamble and the data describe the same record (#24). Continuous Run and background measurement/Math/decode/Eye calculations are not drained by OPC. Use their readiness/value interfaces separately. Operation completion is not a statement that a result is valid; inspect the error queue and trigger status.
 
 Raw TCP and HiSLIP retain a bounded per-client continuation while waiting, allowing UI progress and other clients. Commands after the barrier execute after it completes; earlier writes are not repeated. A Single with no matching event can wait indefinitely, so choose a client timeout appropriate to the test. Cancellation/rearming invalidates the old operation rather than silently waiting on a newer arm. See the interpreter's cancellation errors in `:SYST:ERR?`.
 
@@ -64,16 +64,16 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | Command | Parameters / reply |
 | --- | --- |
 | `:CHANnel<n>:SCALe[?]` | Volts/div; setter chooses the nearest supported scale. Probe factor applies. |
-| `:CHANnel<n>:OFFSet[?]` | Volts. |
+| `:CHANnel<n>:OFFSet[?]` | Volts; kept within what the vertical scale can reach (2, 12, 56 or 550 V at the BNC, by scale), also when `:SCALe` gets smaller. |
 | `:CHANnel<n>:COUPling[?]` | `DC|AC|GND`; `DC50` only on a board supporting it. |
 | `:CHANnel<n>:PROBe[?]` | Positive attenuation factor. |
-| `:TIMebase[:MAIN]:SCALe[?]` | Seconds/div; nearest supported timebase. |
+| `:TIMebase[:MAIN]:SCALe[?]` | Seconds/div; nearest supported timebase. As the knob, the delay moves so the expand point of `:TIMebase:HREFerence:MODE` keeps its place, and the zoom stays inside the new time base. |
 | `:TIMebase[:MAIN]:OFFSet[?]` | Horizontal delay in seconds; `POSition` is an alias. |
 | `:ACQuire:SRATe?` | ADC/model sample rate, not a loaded reference's native rate. |
 | `:ACQuire:MDEPth[?]` | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the numeric configured/effective acquisition depth. |
-| `:TRIGger:MODE[?]` | Actual trigger type. Same OOS handler as `:TRIGger:TYPe[?]`. |
+| `:TRIGger:MODE[?]` | Actual trigger type. Same OOS handler as `:TRIGger:TYPe[?]`. As in the menu, a type chosen again gets back the values it was left with, and the source stays. |
 | `:TRIGger:STATus?` | `STOP|TD|AUTO|WAIT`. A completed Single reports STOP. |
-| `:TRIGger:EDGE:SOURce[?]` | `CHANn|Rn`; available LA inputs can use `D0` through `D15`. |
+| `:TRIGger:EDGE:SOURce[?]` | `CHANn|Rn`; available LA inputs can use `D0` through `D15`. As in the menu, a channel chosen again gets back the level it was left with. |
 | `:TRIGger:EDGE:LEVel[?]` | Volts. |
 | `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `:TRIGger:RUNT:ALEVel` / `:BLEVel`. A threshold past the other one is refused with `-224`, as `:MEASure:SETup:MAX` / `MIN`. |
 | `:TRIGger:SOURce2[?]` | Secondary CH/ref source for applicable OOS trigger types. |
@@ -99,11 +99,11 @@ Choose a level inside the actual waveform range. Use `*OPC?` only when willing t
 ### Channel settings
 
 The settings of the Channel menu, their `:CHANnel<n>` commands and their keys in a setup file. They are declared once,
-in `ui/src/settings/channel.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A command sets
-channel `<n>`, a key `ch<n>.*` channel n; `fine_v` and `v_expand_gnd` hold for every channel. A value `:UNITs`,
-`:VERNier` or `:EXPand` does not take is refused with `-224`, one of the others with `-113`. The scale, offset,
-coupling, probe, bias, deskew and label (above and below) are written by hand.
+in `ui/model/src/settings/channel.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A command sets
+channel `<n>`, a key `ch<n>.*` channel n; `fine_v` and `v_expand_gnd` hold for every channel. A value a command
+does not take is refused with `-224`. The scale, offset, coupling, probe, bias, deskew and label (above and below) are
+written by hand.
 
 <!-- settings:channel:begin -->
 | Command | Takes | Setup key | Channel menu | What it does |
@@ -116,12 +116,27 @@ coupling, probe, bias, deskew and label (above and below) are written by hand.
 | `:CHANnel<n>:EXPand[?]` | `GND`, `CENTer`; the query answers `GND` or `CENT` | `v_expand_gnd` | Expand around | Vertical expansion reference supported by the model, one switch for every channel: a change of scale keeps the ground line or the screen centre in place. |
 <!-- settings:channel:end -->
 
+### Time base settings
+
+The time base settings of one value each, their `:TIMebase` commands and their keys in a setup file. They are declared
+once, in `ui/model/src/settings/timebase.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`. The scale, the delay, the fine switch and the zoom are written by hand
+(above and below).
+
+<!-- settings:timebase:begin -->
+| Command | Takes | Setup key | Horizontal menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:TIMebase:HREFerence:MODE[?]` | `CENTer`, `LB` or `LEFT`, `RB` or `RIGHt`, `TRIGger`; the query answers `CENT`, `LB`, `RB` or `TRIG` | `h_expand` | Expand around | The point a change of the time scale keeps in place: the centre of the screen, its left or right edge, or the trigger. |
+| `:TIMebase:ROLL[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `auto_roll` | Auto Roll | Rolls the trace at slow time scales while this is on; the acquisition source can still keep it from rolling. |
+<!-- settings:timebase:end -->
+
 ### Trigger settings
 
 The values of the Trigger menu, their `:TRIGger` commands and their keys in a setup file. They are declared once, in
-`ui/src/settings/trigger.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value a
-command does not take is refused with `-113`.
+`ui/model/src/settings/trigger.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`.
 
 <!-- settings:trigger:begin -->
 | Command | Takes | Setup key | Trigger menu | What it does |
@@ -138,8 +153,10 @@ command does not take is refused with `-113`.
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `trig_t2` | Upper limit | The upper time limit of Inside and Outside. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_std` | Standard | The video standard of the video trigger. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_sync` | Sync | What the video trigger fires on: every line, line n, odd or even fields, every field. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `video_line` | Line | The line Line n fires on; the menu keeps it from 1 to 10 below half the lines of the standard. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `win_mode` | Trigger on | When the window trigger fires: the signal enters the window, leaves it, or stays inside. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `nth_idle` | Idle time | The quiet time before the edges the Nth edge trigger counts. |
+| none | OOS has no `:TRIGger` subtree of this trigger type yet | `nth_n` | Edge no. | The edge after the idle time that fires the Nth edge trigger; the menu keeps it from 1 to 65535. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `setup` | Setup | The setup time the setup/hold trigger checks the data against the clock edge. |
 | none | OOS has no `:TRIGger` subtree of this trigger type yet | `hold` | Hold | The hold time the setup/hold trigger checks the data against after the clock edge. |
 <!-- settings:trigger:end -->
@@ -147,9 +164,9 @@ command does not take is refused with `-113`.
 ### Acquisition settings
 
 The settings of the Acquire menu, their `:ACQuire` commands and their keys in a setup file. They are declared once,
-in `ui/src/settings/acquisition.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value
-`:TYPE` or `:AVERages` does not take is refused with `-224`, one of the others with `-113`. The memory depth
+in `ui/model/src/settings/acquisition.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value
+a command does not take is refused with `-224`. The memory depth
 (`:ACQuire:MDEPth`, above) and the segment count (`:ACQuire:ULTRa:MAXFrame`, below) are written by hand.
 
 <!-- settings:acquisition:begin -->
@@ -175,7 +192,7 @@ in `ui/src/settings/acquisition.rs`; this table is written from there
 | `:WAVeform:DATA?` | IEEE definite-length binary block; ASCII format also uses a block. |
 | `:DISPlay:DATA? [BMP|PNG]` | IEEE block containing a screenshot; default 24-bit BMP. |
 
-For CH inputs, NORM reads the interpolated display record; RAW uses retained native acquisition memory when available, including points outside the screen. If no native record exists, it falls back to the available processed record. References use their native arrays in all three modes, restricted by the chosen transfer page. Do not assume `:ACQ:SRAT?` describes a reference: read its preamble. RAW is permitted while running in OOS; stock Rigol stop-only transfer assumptions differ. Multiple queries while running can observe different accepted captures; Stop first when metadata and data must match.
+For CH inputs, NORM reads the interpolated display record, after a STOP also when the view of a deep record is drawn from the stored record read again while the raw frame of the STOP stays the record measured; RAW uses retained native acquisition memory when available, including points outside the screen. If no native record exists, it falls back to the available processed record. References use their native arrays in all three modes, restricted by the chosen transfer page. Do not assume `:ACQ:SRAT?` describes a reference: read its preamble. RAW is permitted while running in OOS; stock Rigol stop-only transfer assumptions differ. Multiple queries while running can observe different accepted captures; Stop first when metadata and data must match.
 
 Preamble fields:
 
@@ -292,13 +309,13 @@ Additional OOS families accept item names defined by their analysis page/source 
 | Inverter | `:INVerter:ITEM? <item>[,sources...]`: configured inverter result, numeric or text. |
 | Double pulse | `:DPT:ITEM? <item>[,V,I[,G]]`: e.g. `VPEAK`, `IPEAK`, `EON`, `EOFF`, `TDON`, `TR`, `TDOFF`, `TF`, `QRR`. |
 | Bandwidth | `:BANDwidth:ITEM? <item>[,source]`: `RISE`, `BW`, `OVER`. Estimator limits apply. |
-| Bode | `:BODE:MODE[?] LOOP|PSRR|IMPedance`, `:BODE:RUN ON|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"`. RUN can control the configured generator/acquisition. |
+| Bode | `:BODE:MODE[?] LOOP|PSRR|IMPedance`, `:BODE:UNIT[?] DB|RATio`, `:BODE:AMPLitude[?] <Vpp>`, `:BODE:RUN ON|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"`. RUN can control the configured generator/acquisition. |
 
 See [reference analysis](reference-analysis.md) for sampling, model-derived jitter, physical alignment and C-PHY limits. These extensions are not stock Rigol/DPOJET compatibility claims.
 
 The settings of the Bode page, the command of the mode and their keys in a setup file. They are declared once, in
-`ui/src/settings/bode.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
-`ui/`), and a test fails when the two differ. A value the command does not take is refused with `-224`. A key of two
+`ui/model/src/settings/bode.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
+`ui/model/`), and a test fails when the two differ. A value the command does not take is refused with `-224`. A key of two
 words names a field of a setup line of several values (`bode` (start) is the start field of the `bode` line). The
 input, the output, the generator with its address and `:BODE:GENerator`, and the sync channel are written by hand.
 
@@ -306,20 +323,22 @@ input, the output, the generator with its address and `:BODE:GENerator`, and the
 | Command | Takes | Setup key | Bode menu | What it does |
 | --- | --- | --- | --- | --- |
 | `:BODE:MODE[?]` | `LOOP`, `PSRR`, `IMPedance` | `bode_mode` | Mode | What a sweep stores in the middle field of each point: the gain of a control loop in dB, the power-supply rejection (the negated gain) in dB, or for an impedance the linear ratio of output to input, not ohms. A free sweep always measures the gain. |
+| `:BODE:UNIT[?]` | `DB`, `RATio` | `bode_unit` | Gain unit | How the plot, the cursor and the title show the gain: in dB, 20 log10(Vout/Vin), or as the linear ratio Vout/Vin (for PSRR Vin/Vout), whatever the mode measures. The CSV file and `:BODE:DATA?` keep what the mode stores. The menu changes it on an odd step. |
+| none | a choice of the menu: `:BODE:AMPLitude` is always Vpp | `bode_amp_unit` | Amp unit | Whether the menu shows and the number pad takes the amplitude peak to peak or as RMS, Vrms = Vpp / (2 sqrt 2) for the sine of the sweep. The generator gets Vpp either way. The menu changes it on an odd step. |
 | none | none yet: the page is set in its menu and by a setup file | `bode` (start) | Start freq | The first frequency of the sweep. The menu steps 1-2-5 and keeps it at or below half the stop. |
 | none | none yet: the page is set in its menu and by a setup file | `bode` (stop) | Stop freq | The last frequency of the sweep. The menu steps 1-2-5 and keeps it at or above twice the start. |
-| none | none yet: the page is set in its menu and by a setup file | `bode` (points) | Points | The number of frequencies of the sweep, logarithmically spaced. The menu steps by 5 from 5 to 200; a setup line keeps 2 to 1000. |
-| none | none yet: the page is set in its menu and by a setup file | `bode` (amp) | Amplitude | The amplitude the generator puts out, peak to peak. The menu steps 1-2-5 from 10 mVpp to 20 Vpp. |
+| none | none yet: the page is set in its menu and by a setup file | `bode` (points) | Points | The number of frequencies of the sweep, spaced as Sweep sets: logarithmically or linearly. The menu steps by 5 from 5 to 200; a setup line keeps 2 to 1000. |
+| `:BODE:AMPLitude[?]` | a number from 0.01 to 20 | `bode` (amp) | Amplitude | The amplitude the generator puts out, peak to peak, 10 mVpp to 20 Vpp. The menu shows it in Vpp or Vrms (Amp unit) and steps by 10 mV up to 100 mV and by 50 mV above; a tap on the value opens the number pad for any value in that range. The command takes and answers Vpp. |
 | none | set with the address by `:BODE:GENerator` | `bode_link` | Connection | How an external generator is reached: on the network at its address, or on the USB-A port. The menu changes it on an odd step. |
 | none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (time) | Sweep time | How long the generator takes for one sweep. The menu steps 1-2-5 from 1 ms to 500 s. |
-| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (log) | Sweep | Whether the generator sweeps the frequency linearly or logarithmically over the sweep time. The menu changes it on an odd step. |
+| none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (log) | Sweep | Whether the frequencies of the sweep are spaced linearly (equal steps) or logarithmically (equal ratio), and the frequency axis of the plot with them; with the free sweep also how the generator sweeps over the sweep time. The menu changes it on an odd step. |
 | none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (edge) | Sync edge | The edge of the sync channel that marks the start of a sweep. The menu changes it on an odd step. |
 | none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (level) | Sync level | The level of the sync edge. The menu steps by 0.1 V from -20 V to 20 V. |
 | none | none yet: the page is set in its menu and by a setup file | `bode_sweep` (ref) | Ref level | The level the gain is measured against when the free sweep has no input channel, in dBV. The menu steps by 1 dB from -80 to 40 dBV. |
 <!-- settings:bode:end -->
 
 The settings of the spectrum page and their keys in a setup file. No command sets them yet. They are declared once,
-in `ui/src/settings/spectrum.rs`, and this table is written from there like the one above. The source, the span, the
+in `ui/model/src/settings/spectrum.rs`, and this table is written from there like the one above. The source, the span, the
 RBW and the harmonics of the pane are written by hand.
 
 <!-- settings:spectrum:begin -->
@@ -336,7 +355,7 @@ RBW and the harmonics of the pane are written by hand.
 | none | none yet: the page is set in its menu and by a setup file | `spec_margin` | Limit margin | How far above the trace (its highest level nearby) Limit from trace puts the limit line, 0 to 60 dB. |
 <!-- settings:spectrum:end -->
 
-The settings of the eye and jitter page and their keys in a setup file, declared in `ui/src/settings/eye.rs`. No command
+The settings of the eye and jitter page and their keys in a setup file, declared in `ui/model/src/settings/eye.rs`. No command
 sets them yet. The source, the bit rate, the rail and the clock are written by hand.
 
 <!-- settings:eye:begin -->
@@ -351,7 +370,7 @@ sets them yet. The source, the bit rate, the rail and the clock are written by h
 | none | none yet: the page is set in its menu and by a setup file | `eye_more` (hp) | Highpass | The 30 kHz high-pass on the common mode before its peak-to-peak is measured. |
 <!-- settings:eye:end -->
 
-The settings of the power analysis and their keys in a setup file, declared in `ui/src/settings/power.rs`. No command
+The settings of the power analysis and their keys in a setup file, declared in `ui/model/src/settings/power.rs`. No command
 sets them yet. The voltage, the current, the input, the clock and the reference of the rail are written by hand.
 
 <!-- settings:power:begin -->
@@ -382,8 +401,8 @@ Cursor changes preserve capture statistics and an armed Single. Track values use
 ### DVM and counter settings
 
 The switches and modes of the DVM and the counter, their commands and their place in a setup file. They are declared
-once, in `ui/src/settings/meters.rs`; these tables are written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value a
+once, in `ui/model/src/settings/meters.rs`; these tables are written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
 command does not take is refused with `-224`. Each meter keeps its settings in one setup line,
 `dvm = <on> <source> <mode>` and `counter = <on> <source> <mode> <digits>` (the modes by their place in the list);
 the sources (above) are written by hand.
@@ -458,8 +477,8 @@ Built-in generator commands use `:SOURce[<n>]:...` for a generator available on 
 Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THReshold[?]`, `:LA:POINts?`, `:LA:PREamble?`, `:LA:DATA?`. DATA is an IEEE block of little-endian u16 words, bit n representing Dn. LA availability is model-dependent.
 
 The switch of the logic analyser, its command and its place in a setup file. It is declared once, in
-`ui/src/settings/la.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
-`ui/`), and a test fails when the two differ. On a model without the LA port every `:LA` command is refused with
+`ui/model/src/settings/la.rs`; this table is written from there (`OOS_BLESS=1 cargo test --locked -q settings::tests` in
+`ui/model/`), and a test fails when the two differ. On a model without the LA port every `:LA` command is refused with
 `-241`; a value the command does not take is refused with `-224`. The LA keeps its settings in one setup line,
 `la = <on> <lines> <preset D0-7> <preset D8-15> <user D0-7> <user D8-15> <height>`; the lines and the thresholds
 (above) are written by hand.
@@ -472,7 +491,7 @@ The switch of the logic analyser, its command and its place in a setup file. It 
 
 `:IDENtify?` returns the app's signal identification. Calibration commands `:CALibrate:STARt 0..4[,ZERO]`, `:CALibrate:STATus?`, `:CALibrate:CANCel` operate the self-calibration workflow; start requires the appropriate disconnected-input setup. They are not passive diagnostic reads.
 
-`:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
+`:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/store/src/lib.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
 
 | Command | Meaning |
 | --- | --- |
@@ -494,10 +513,11 @@ sessions on a unit. Their answers are no stable interface. On a computer, withou
 | `:SYSTem:DEBug:MASK:COLumns? [<a>[,<b>]]` | For each column a..b (default 0..9) of the loaded mask table its limits, and the lowest and highest code of the newest record in that column, as the software computes them, not read from the unit; `off` without the mask unit, `no table` without a table. |
 | `:SYSTem:DEBug:DVM?` | The DVM block's latest raw reading next to the software DVM; `off,sw=<V>` without one. Result layout and units verified on the unit (DHO804, 2026-11-13; fields and lanes again on a DHO924S, 2026-11-16), the latch assumed ([dvm.md](fork/dvm.md)). |
 | `:SYSTem:DEBug:DVM:LANE[?] 0..3|AUTO` | Makes the DVM block read one lane (a pair of ADC cores) while one channel is acquired; `AUTO`, the default, leaves the choice to it. That every lane carries the channel is verified on the unit (DHO924S, 2026-11-16, [dvm.md](fork/dvm.md)). The interpreter refuses another value with `-224`. |
+| `:SYSTem:DEBug:CORes? [<ch>[,<cores>[,<Hz>...]]]` | The error budget of the interleaved ADC cores on channel `ch`'s native record (default 1; its first 32768 samples; never the screen record) for `cores` cores (default 8; 4 with two channels, 2 with three or four, adc-mode.md 6), from a sine on that channel (`oos_dsp::interleave::budget`, issue #335): `f=<Hz>,amp=<V>,cores=<m>,sinad=<dB>,matched=<dB>,offset=<dBc>,gain=<dBc>,timing=<dBc>,harmonics=<dBc>,noise=<dBc>`, `,extra=<Hz>:<dBc>` for each frequency given (the generator's image at 156.25 MHz - f; `NaN` when it aliases onto the fundamental), then for each core `;<offset V>,<gain>,<time s>`. `matched` is SINAD with the cores' patterns taken off. `none` without a native record or a sine. With `:ACQuire:CORes MATC` the offsets are already matched; `RAW` shows them as they come. Verified on the unit (DHO924S, 2026-11-21; the results in [adc-mode.md](protocols/adc-mode.md) 6.1); `tools/adc-budget.py` runs it over frequencies and V/div. |
 
 ## Errors and compatibility limits
 
-Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue holds at most 20 bounded messages; overflow is -350. Errors latch their event bit once; draining old errors does not relatch it. Unsupported or failed queries reply with specific error text as well as queuing it, even when full. Legitimate pending `*OPC?` keeps its deferred response. Typical errors include -113 undefined header, -224 invalid parameter, -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.
+Read `:SYSTem:ERRor?` until `0,"No error"`. Each read removes one queued error. The queue holds at most 20 bounded messages; overflow is -350. Errors latch their event bit once; draining old errors does not relatch it. Unsupported or failed queries reply with specific error text as well as queuing it, even when full. Legitimate pending `*OPC?` keeps its deferred response. Typical errors include -113 undefined header (the header is not known), -224 invalid parameter (a known header with a value it does not take, the value in the message), -230 unavailable analysis, -241 missing hardware, -256 missing file, and -350 queue overflow. Action queries such as `:RUN?`, `:STOP?`, `:SING?`, `*CLS?` and `*RST?` are unsupported and do not execute the action.
 
 A Rigol script commonly needs adjustments when it assumes stock `*IDN?`, big-endian WORD assumptions, vendor-specific setup files, a full status/SRQ system, arbitrary trigger-specific subtrees, or references as physical ADC inputs. Check errors and actual readbacks after configuration. TekScope's `REMOTE:RUNStop`, `REMOTE:ACQMethod`, DATA/WFMOutpre/CURVe dialect is not implemented by these Rigol-style headers.
 
@@ -534,7 +554,7 @@ These commands are implemented by the same model and acquisition router above. T
 | `:CHANnel<n>:BIAS[?]` | Software channel zero-bias correction. This is not a calibration procedure. |
 | `:CHANnel<n>:LABel:SHOW[?]`, `:LABel:CONTent[?]` | Label visibility and text. |
 | `:ACQuire:ULTRa:MAXFrame[?]` | Supported segmented frame count. This does not claim the stock UltraAcquire capture rate. |
-| `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, without the menu's steps; the interpreter sets a larger one than 100000 to 100000, `OFF` or `0` switches it off, another value is refused with `-113`. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |
+| `:ACQuire:SEGMents[?] <n>|OFF` | Segmented recording (OOS): the segment count, without the menu's steps; the interpreter sets a larger one than 100000 to 100000, `OFF` or `0` switches it off, another value is refused with `-224`. The query answers the count, `0` when off. Where segments are recorded is `:ACQuire:SEGMents:HARDware` (acquisition settings above). |
 | `:ACQuire:SEGMents:INTerval[?] <s>` | Hardware segments: the pause after each segment in seconds; the interpreter keeps it within 0 to 10. Not yet verified on hardware ([upstream-audit.md](fork/upstream-audit.md)). |
 | `:ACQuire:SEGMents:TIMes?` | Hardware segments: the trigger time of each recorded segment since the first one, comma-separated seconds, `9.9E37` for a segment without a time stamp; empty before segments are recorded. Not yet verified on hardware ([upstream-audit.md](fork/upstream-audit.md)). |
 | `:DISPlay:VIEW[?] <n>` | Display > Views (OOS): show view n, 1 through the view count; the query answers the view shown. |
@@ -542,9 +562,7 @@ These commands are implemented by the same model and acquisition router above. T
 | `:DISPlay:VIEW:MONitor[?] <n>` | The view an HDMI monitor shows in the Layout, 0 the panel's own; another than 0 needs at least two views. A value past the view count is refused with `-224`. |
 | `:TIMebase:DELay:ENABle[?]`, `:SCALe[?]`, `:OFFSet[?]` | Zoom enable, seconds/div and physical center time. |
 | `:TIMebase:VERNier[?]` | Boolean fine horizontal control. |
-| `:TIMebase:HREFerence:MODE[?]` | Horizontal expansion reference. |
 | `:TIMebase:MODE[?]` | Main/zoom/XY mode supported by the model. |
-| `:TIMebase:ROLL[?]` | Model roll setting; acquisition source restrictions still apply. |
 | `:TIMebase:XY:ENABle[?]`, `:X[?]`, `:Y[?]`, `:Z[?]` | XY display and channel roles; `NONE` disables the optional Z input. |
 | `:REFerence:COLor[?]`, `:RESet` | Selected/explicit slot color and reference display-scale reset. Recorded samples and native timing are retained. |
 
@@ -553,8 +571,8 @@ Display configuration is not proof of hardware acquisition capability. Force ali
 ### Display settings
 
 The settings of the Display menu, their `:DISPlay` commands and their keys in a setup file. They are declared once,
-in `ui/src/settings/display.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ.
+in `ui/model/src/settings/display.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ.
 
 <!-- settings:display:begin -->
 | Command | Takes | Setup key | Display menu | What it does |
@@ -564,10 +582,28 @@ in `ui/src/settings/display.rs`; this table is written from there
 | `:DISPlay:GRID[?]` | `FULL`, `HALF`, `NONE` | `grid` | Grid | The graticule: every division line, a lighter one, or none. |
 | `:DISPlay:GBRightness[?]` | a whole number from 0 to 100, set within 10 to 100 % | `grid_bright` | Grid bright. | Brightness of the graticule; a value below 10 sets 10. |
 | `:DISPlay:RULers[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `grid_frame` | Grid frame | A frame around the graticule with ticks every fifth of a division; none with the grid off. |
+| none | a choice of the screen's layout, not of the measurement | `density` | Density | On the Windows page: what the screen shows around the plot, the bars and cards, the plot alone, the plot over a lower pane or two stacked traces, or four panes; a change sets the windows and the lower pane up again. A setup without it takes it from its windows and pane. |
+| none | a choice of the screen's layout, not of the measurement | `pane` | Lower | On the Windows page with Split: what shows under the plot, two stacked traces or a pane of the spectrum, the results, the events, the trend or the bus view. |
 | `:DISPlay:COLor[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `color_grade` | Colour grade | Colours the persistence by how often a point was hit. |
 | `:DISPlay:TYPE[?]` | `DOTS`, `VECTors`; the query answers `DOTS` or `VECT` | `dots` | Dots | Draws every sample as a dot instead of joining them with lines. |
 | none | a choice of the screen's layout, not of the measurement | `bar` | Bottom bar | The bottom bar as cards or as one compact line. |
+| none | a choice of the screen's layout, not of the measurement | `hdmi` | HDMI | What a monitor on the HDMI port shows: the panel, the waveform alone, or a layout of its own; the menu steps to the end of the list and stops. |
+| none | a choice of the screen's layout, not of the measurement | `text_size` | Text size | The size of the text on the screen; the menu steps to the end of the list and stops. |
 <!-- settings:display:end -->
+
+### The bus on the plot
+
+The bus drawn on the plot (the Bus menu) has no remote commands. Its settings and their keys in a setup file are
+declared once, in `ui/model/src/settings/bus.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ.
+
+<!-- settings:bus:begin -->
+| Command | Takes | Setup key | Bus menu | What it does |
+| --- | --- | --- | --- | --- |
+| none | a trace of the screen, not of the decoders | `bus_on` | Bus | Draws the bus on the plot: the words of I2C from a clock and a data line, in hex. |
+| none | a trace of the screen, not of the decoders | `bus_pos` | Position | Where the bus is drawn, in divisions above the centre; the menu steps by a tenth of a division. |
+| none | a trace of the screen, not of the decoders | `bus_rw` | R/W bit | Whether the address byte shows the read/write bit or only the seven bits of the address. |
+<!-- settings:bus:end -->
 
 ### Measurement settings and statistics
 
@@ -583,7 +619,18 @@ in `ui/src/settings/display.rs`; this table is written from there
 | `:MEASure:OUTSide[?]` | `ABOVe|BELow|BOTH` outside-level measurement selection. |
 | `:MEASure:NPERiods[?]` | Configured period count for relevant measurements. |
 | `:MEASure:EDGes[?]` | `CLOCk|DATA` edge measurement mode. |
-| `:MEASure:INDicator[?]` | Measurement labels; `:CURSor:MEASure:INDicator[?]` is an alias. |
+
+How the measurements show, their `:MEASure` commands and their keys in a setup file. They are declared once, in
+`ui/model/src/settings/measure.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value a
+command does not take is refused with `-224`.
+
+<!-- settings:measure:begin -->
+| Command | Takes | Setup key | Measure settings menu | What it does |
+| --- | --- | --- | --- | --- |
+| `:MEASure:INDicator[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `meas_labels` | Labels on trace | Draws the labels of the measurements on the trace; `:CURSor:MEASure:INDicator[?]` is the same switch. |
+| none | a choice of the screen's layout, not of the measurement | `strip_dock` | Dock | Where the strip of results docks to the plot; the menu steps to the end of the list and stops. |
+<!-- settings:measure:end -->
 
 Statistics count accepted observations. A stopped reference can have a valid current value with count0 after reset. Worker completion, polling and panning do not by themselves add observations. The existing SCREEN/NONE gate and per-row settings still determine each result; OPC does not wait for background analysis.
 
@@ -614,8 +661,8 @@ Decoder headers preserve the existing `DECode` source schema, including referenc
 ### Math settings
 
 The settings of the selected math channel that are one value each, their `:MATH<n>` commands and their keys in a
-setup file. They are declared once, in `ui/src/settings/math.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A command sets
+setup file. They are declared once, in `ui/model/src/settings/math.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A command sets
 math channel `<n>`, the setup key the selected one (the others are `m<N>.win`, `m<N>.fc`, `m<N>.bw`). A value a
 command does not take is refused with `-224`.
 
@@ -634,8 +681,8 @@ Track cursor B now has its own CH/ref source: `:CURSor:TRACk:SOURce1[?]` and `:S
 Mask commands are `:MASK:ENABle[?]`, `:SOURce[?]`, `:X[?]`, `:Y[?]`, `:CREate`, `:RESet`, `:OPERate[?]`, `:FAILed?`, `:PASSed?`, `:TOTal?`. Mask sources are physical CH roles, not reference or Math inputs. A mask needs accepted channel data; enabling a page or querying a counter does not prove a valid mask or physical pass/fail result.
 
 The switches of the mask test, their command and their keys in a setup file. They are declared once, in
-`ui/src/settings/mask.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value the
+`ui/model/src/settings/mask.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value the
 command does not take is refused with `-224`. The source and the tolerances are written by hand.
 
 <!-- settings:mask:begin -->
@@ -649,8 +696,8 @@ command does not take is refused with `-224`. The source and the tolerances are 
 Histogram commands are `:HISTogram:ENABle[?]`, `:TYPE[?]`, `:SOURce[?]`, `:HISTogram:STATistics:RESult?`. Supported sources are CH roles; histogram results describe the rendered display-density distribution and current view/zoom, not an exact full-native-record population. Empty results carry invalid sentinels where no figure exists. This is the same histogram shown in the UI.
 
 The histogram's direction, its command and its key in a setup file. It is declared once, in
-`ui/src/settings/histogram.rs`; this table is written from there
-(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/`), and a test fails when the two differ. A value the
+`ui/model/src/settings/histogram.rs`; this table is written from there
+(`OOS_BLESS=1 cargo test --locked -q settings::tests` in `ui/model/`), and a test fails when the two differ. A value the
 command does not take is refused with `-224`. `:HISTogram:ENABle` and the source are written by hand.
 
 <!-- settings:histogram:begin -->

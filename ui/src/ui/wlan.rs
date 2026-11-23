@@ -5,7 +5,7 @@
 //! and forgetting WLAN networks through a USB stick (docs/wlan.md). `/bin/oos-wlan`
 //! runs the driver, wpa_supplicant and DHCP; a worker thread here talks to wpa_supplicant, so that nothing waits on
 //! the radio in the frame loop. Passwords come from the on-screen keyboard (`Osk`) and only their derived key leaves
-//! this file.
+//! this file. `Network` keeps what the main loop last read of the interfaces, for this page and the top bar.
 
 use super::service::Service;
 use super::*;
@@ -51,6 +51,26 @@ pub(super) struct Link {
     pub status: Status,
     pub signal: Option<i32>,
     pub saved: Vec<Saved>,
+}
+
+/// The network as the main loop last read it (ADR 0062): what the top bar, the network page and the remote services
+/// show.
+#[derive(Default)]
+pub struct Network {
+    /// IPv4 address shown in the top bar ("" = no network)
+    pub addr: String,
+    /// its interface (eth0, wlan0)
+    pub iface: String,
+    /// all interfaces with an address: name, address
+    pub ifs: Vec<(String, String)>,
+    /// no DHCP answer at the start: the fixed address of rcS
+    pub fixed: bool,
+    /// a cable in the LAN port with a link
+    pub eth_link: bool,
+    /// one more autonegotiation for a link at 10 Mbit/s; the main loop drives it (ethlink.rs)
+    pub eth: crate::ethlink::Retry,
+    /// a WLAN stick is plugged in (its interface exists)
+    pub(super) wlan_stick: bool,
 }
 
 #[derive(Default)]
@@ -317,12 +337,12 @@ impl Ui {
 
     /// Text rows of the network page.
     pub(super) fn net_value(&self, it: Item) -> String {
-        let addr = |n: &str| self.net_ifs.iter().find(|i| i.0 == n).map(|i| i.1.as_str());
+        let addr = |n: &str| self.net.ifs.iter().find(|i| i.0 == n).map(|i| i.1.as_str());
         let file = |p: &str| std::fs::read_to_string(p).map(|t| t.trim().to_string()).unwrap_or_default();
         match it {
             Item::NetEth => {
                 let link = file("/sys/class/net/eth0/carrier") == "1";
-                let speed = self.eth.speed.map_or("link up".to_string(), |s| format!("{} Mbit/s", s));
+                let speed = self.net.eth.speed.map_or("link up".to_string(), |s| format!("{} Mbit/s", s));
                 match (addr("eth0"), link) {
                     (Some(a), true) => format!("{} \u{b7} {}", a, speed),
                     (Some(a), false) => format!("{} \u{b7} no cable", a),
@@ -333,8 +353,8 @@ impl Ui {
             Item::NetMac => Some(file("/sys/class/net/eth0/address")).filter(|m| !m.is_empty()).unwrap_or("-".into()),
             // same as the Remote services page (`remote_value`): the web remote may be switched off
             Item::NetWeb if !self.sys.remote_web => "off".into(),
-            Item::NetWeb if self.net.is_empty() => "not connected".into(),
-            Item::NetWeb => format!("http://{}:8080", self.net),
+            Item::NetWeb if self.net.addr.is_empty() => "not connected".into(),
+            Item::NetWeb => format!("http://{}:8080", self.net.addr),
             Item::NetPorts => "SCPI 5555, VXI-11, SSH 22 (password or key)".into(),
             _ => {
                 let l = &self.wlan.link;
@@ -1187,12 +1207,14 @@ mod tests {
     #[test]
     fn network_page_says_what_is_there() {
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.tap(950, 20);
+        // the box is as wide as what it shows: its middle, not a fixed place
+        let n = ui.net_box();
+        ui.tap(n.x + n.w / 2, n.y + n.h / 2);
         assert!(ui.menu_open && ui.menu == MenuId::Network);
         assert_eq!(ui.value(Item::NetWeb), "not connected");
         assert_eq!(ui.net_value(Item::NetWlan), "no stick");
-        (ui.net, ui.net_if) = ("192.168.177.64".into(), "eth0".into());
-        ui.net_ifs = vec![("eth0".into(), "192.168.177.64".into())];
+        (ui.net.addr, ui.net.iface) = ("192.168.177.64".into(), "eth0".into());
+        ui.net.ifs = vec![("eth0".into(), "192.168.177.64".into())];
         assert_eq!(ui.value(Item::NetWeb), "http://192.168.177.64:8080");
         assert!(ui.net_value(Item::NetEth).starts_with("192.168.177.64"));
         ui.wlan.link = Link { stick: true, ctrl: true, ..Link::default() };
@@ -1203,8 +1225,9 @@ mod tests {
         let d = ui.dlg_layout().unwrap();
         let row = d.rows.iter().find(|r| r.it == Item::NetWlan).unwrap();
         assert!(ui.fonts().m.width(&ui.net_value(Item::NetWlan)) <= row.ctrl.w, "{}", ui.net_value(Item::NetWlan));
-        ui.tap(950, 20);
-        assert!(!ui.menu_open);
+        let n = ui.net_box();
+        ui.tap(n.x + n.w / 2, n.y + n.h / 2);
+        assert!(!ui.menu_open, "a second tap on the box closes its page");
     }
 
     #[test]
@@ -1259,11 +1282,11 @@ mod tests {
                 ui.wlan.busy = None;
             }
             match next() % 5 {
-                0 => ui.key([0xba, 0xbb, 0xbc, 0xaa, 0xab, 0xac, 0x0f, 0x08][next() as usize % 8]),
+                0 => ui.key([0xba, 0xbb, 0xbc, 0xaa, 0xab, 0xac, 0x0f, key::NAV_FWD][next() as usize % 8]),
                 _ => ui.tap((next() % PANEL_W as u64) as i32, (next() % PANEL_H as u64) as i32),
             }
             ui.dialog = None;
-            ui.power_dlg = false;
+            ui.power.open = false;
             if i % 500 == 0 {
                 ui.render(&mut cv);
             }

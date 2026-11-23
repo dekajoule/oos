@@ -39,9 +39,13 @@ own. **From 0.1.8** the live picture can be a JPEG made by the scope's video enc
 to PNG): about 75 KB a picture against 115 KB, at under a third of the processor time of a PNG; text is a little less
 sharp, and screenshots stay PNG.
 
+**From 0.1.15** the BMP picture, the screenshot of the MCP tool `screenshot` and the update page are made off the
+frame loop as well. While two large answers are being sent at once, the next one gets "busy, try again" (503); the
+page asks again by itself, a script of your own should too.
+
 ## Ethernet
 
-Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web remote.
+Tap the network box at the top right: it shows the addresses of Ethernet and WLAN and the address of the web remote. The box itself shows only its name and a green dot (or a dash without a link) by default, so a picture of the screen does not pass the address on; **System > Network > Show address** shows the address in the box.
 
 **From 0.1.12 the scope has a name:** `http://dho924s-123456.local:8080` (model and serial number) reaches it on any computer that speaks mDNS (macOS, Linux with Avahi, Windows 10 and later), also when it only has a link-local address on a cable straight to the computer. Computers that browse find the web remote, SCPI and VXI-11 (DNS-SD). **System > Network > Remote services** switches mDNS off and changes the Name, which is also the host name the scope sends to DHCP, so a router lists it. When another device has the name already, the scope takes `<name>-2`.
 

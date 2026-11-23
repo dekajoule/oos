@@ -292,6 +292,7 @@ impl Ui {
             Item::NetEth,
             Item::NetRetry10,
             Item::NetMac,
+            Item::NetShowAddr,
             Item::Open(MenuId::Remote),
             Item::NetPorts,
             Item::NetWlan,
@@ -355,7 +356,7 @@ impl Ui {
             Item::Stock,
         ];
         // overclocking loses samples at the full rate: only with `adc.overclock = on` (overclock.rs)
-        if !overclock::shown(overclock::switch_on(), self.clock_next) {
+        if !overclock::shown(overclock::switch_on(), self.overclock.hz) {
             v.retain(|&i| i != Item::Overclock);
         }
         v
@@ -407,7 +408,7 @@ impl Ui {
     pub(super) fn main_groups(&self) -> Vec<(&'static str, Vec<Item>)> {
         use Item::*;
         let mut disp = vec![Open(MenuId::Display), Open(MenuId::Horizontal), NavHist];
-        if self.hist_pos.is_some() {
+        if self.history.pos.is_some() {
             disp.extend([NavBack, NavFwd]);
         }
         // System > Features: what is left out is not offered

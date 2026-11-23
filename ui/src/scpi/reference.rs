@@ -5,7 +5,7 @@
 //! `IMPort`, `SAVE`, `SHOW`, `DISPlay` and `CLEar` of the slots R1..R10. A new `:REFerence` command goes into `ref_cmd`
 //! here, with its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, num, parse_bool, parse_ch, parse_slot, Scpi};
+use super::{e, kw, num, parse_bool, parse_ch, parse_slot, t, Scpi};
 use crate::model::*;
 use crate::ui::Ui;
 
@@ -27,18 +27,20 @@ fn ref_color_index(s: &str) -> Option<usize> {
 }
 
 impl Scpi {
-    /// `1,CHAN1` is slot 1 and the rest `CHAN1`. A bare `ON` stays on the current slot. A bad slot number is an error.
     /// Rigol's five reference colors. The screen's fifth color is violet; `ORANge` selects it because that is Rigol's fifth name.
     fn ref_color_name(i: usize) -> &'static str {
         ["GRAY", "RED", "GRE", "BLUE", "ORAN"][i.min(4)]
     }
 
-    fn ref_pair(&mut self, ui: &Ui, arg: &str) -> (Option<usize>, String) {
+    /// `1,CHAN1` is slot 1 and the rest `CHAN1`. Without a comma, `arg` is the value for the selected slot when
+    /// `bare_is_value` (a command that sets one: `:VSCale 2`, `:SHOW ON`), and otherwise the slot (a query, `:RESet`);
+    /// a word that is no slot there stays on the selected slot. A bad slot number is an error.
+    fn ref_pair(&mut self, ui: &Ui, arg: &str, bare_is_value: bool) -> (Option<usize>, String) {
         let arg = arg.trim();
         let (slot, rest) = if let Some((a, b)) = arg.split_once(',') {
             (parse_slot(a), b.trim().trim_matches('"').to_string())
-        } else if arg.is_empty() {
-            (Some(ui.ref_slot()), String::new())
+        } else if bare_is_value || arg.is_empty() {
+            (Some(ui.ref_slot()), arg.trim_matches('"').to_string())
         } else if let Some(i) = parse_slot(arg) {
             (Some(i), String::new())
         } else if arg.starts_with(|c: char| c.is_ascii_digit()) || arg.to_ascii_uppercase().starts_with('R') {
@@ -56,26 +58,17 @@ impl Scpi {
     }
 
     pub(super) fn ref_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         if kw(n0, "SLOT") {
             if query {
                 return t(&format!("R{}", ui.ref_slot() + 1));
             }
-            return match parse_slot(arg) {
-                Some(i) => {
-                    ui.ref_slot_set(i);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_slot(arg), |ui, i| {
+                ui.ref_slot_set(i);
+            });
         }
         if kw(n0, "SHOW") || kw(n0, "DISPlay") {
-            let (slot, rest) = self.ref_pair(ui, arg);
+            let (slot, rest) = self.ref_pair(ui, arg, !query);
             let slot = slot?;
             if query {
                 return t(if ui.ref_shown_slot(slot) == Some(true) { "1" } else { "0" });
@@ -116,14 +109,10 @@ impl Scpi {
             return self.ref_label(ui, query, arg);
         }
         if kw(n0, "RESet") && !query {
-            let (slot, _) = self.ref_pair(ui, arg);
+            let (slot, _) = self.ref_pair(ui, arg, false);
             let slot = slot?;
-            if ui.ref_reset_scale(slot) {
-                ui.mark_changed();
-            } else {
-                self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-            }
-            return None;
+            let ok = ui.ref_reset_scale(slot);
+            return self.ref_changed(ui, ok);
         }
         if kw(n0, "COLor") {
             return self.ref_color_cmd(ui, query, arg);
@@ -154,8 +143,7 @@ impl Scpi {
 
     /// `:REFerence:SOURce`: the channel a save of a slot copies.
     fn ref_source(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
             return t(&format!("CHAN{}", ui.ref_source_of(slot) + 1));
@@ -174,78 +162,68 @@ impl Scpi {
 
     /// `:REFerence:VSCale|VOFFset` (`n0`) of a slot.
     fn ref_scale(&mut self, ui: &mut Ui, n0: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let scale = kw(n0, "VSCale");
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
             let v = if scale { ui.ref_vscale(slot) } else { ui.ref_voffset(slot) };
-            return match v {
-                Some(v) => t(&e(v as f64)),
-                None => {
-                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                    None
-                }
-            };
+            return self.ref_answer(v.map(|v| e(v as f64)));
         }
         let Some(v) = num(&rest) else {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         };
         let ok = if scale { ui.ref_vscale_set(slot, v) } else { ui.ref_voffset_set(slot, v) };
-        if ok {
-            ui.mark_changed();
-        } else {
-            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-        }
-        None
+        self.ref_changed(ui, ok)
     }
 
     /// `:REFerence:LABel:CONTent` of a slot.
     fn ref_label(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
-            return match ui.ref_label(slot) {
-                Some(s) => t(&s),
-                None => {
-                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                    None
-                }
-            };
+            return self.ref_answer(ui.ref_label(slot));
         }
-        if ui.ref_label_set(slot, rest) {
-            ui.mark_changed();
-        } else {
-            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-        }
-        None
+        let ok = ui.ref_label_set(slot, rest);
+        self.ref_changed(ui, ok)
     }
 
     /// `:REFerence:COLor` of a slot.
     fn ref_color_cmd(&mut self, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
-        let (slot, rest) = self.ref_pair(ui, arg);
+        let (slot, rest) = self.ref_pair(ui, arg, !query);
         let slot = slot?;
         if query {
-            return match ui.ref_color(slot) {
-                Some(i) => t(Self::ref_color_name(i)),
-                None => {
-                    self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
-                    None
-                }
-            };
+            return self.ref_answer(ui.ref_color(slot).map(|i| Self::ref_color_name(i).to_string()));
         }
         let Some(i) = ref_color_index(&rest) else {
             self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
             return None;
         };
-        if ui.ref_color_set(slot, i) {
-            ui.mark_changed();
-        } else {
-            self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
+        let ok = ui.ref_color_set(slot, i);
+        self.ref_changed(ui, ok)
+    }
+
+    /// The answer of a query of a slot: `None` when the slot holds no reference, refused with -230.
+    fn ref_answer(&mut self, text: Option<String>) -> Option<Vec<u8>> {
+        match text {
+            Some(s) => t(&s),
+            None => self.ref_empty(),
         }
+    }
+
+    /// The end of a change of a slot: `ok` when the slot holds a reference, which marks the model changed; else the
+    /// change is refused with -230.
+    fn ref_changed(&mut self, ui: &mut Ui, ok: bool) -> Option<Vec<u8>> {
+        if ok {
+            ui.mark_changed();
+            return None;
+        }
+        self.ref_empty()
+    }
+
+    /// -230: the slot holds no reference.
+    fn ref_empty(&mut self) -> Option<Vec<u8>> {
+        self.push_err("-230,\"Data corrupt or stale\" reference is empty".into());
         None
     }
 

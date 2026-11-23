@@ -3,7 +3,7 @@
 
 //! Line codes, logic, FIR, and 4-level slicing used by math channels, measurements and the decoder.
 
-use crate::decode::{opt_baud, Kind, Packet};
+use crate::decode::{opt_baud, usbpd_crc32, Kind, Packet};
 use crate::edges::edges;
 use crate::eye;
 use crate::protocols::ModuleInfo;
@@ -269,7 +269,32 @@ fn bits_to_bytes(bits: &[(f64, bool)]) -> Vec<(f64, f64, u8)> {
     out
 }
 
-fn ethernet_fields(bytes: &[(f64, f64, u8)], out: &mut Vec<Packet>) {
+/// The shortest Ethernet frame, from its destination address to its check.
+const ETHERNET_MIN: usize = 64;
+
+/// The frame check of an Ethernet frame, from its `bytes` (the frame starts behind the delimiter at `first`): the last
+/// four bytes of the frame, with `ok` where the CRC-32 over the rest is that check. A byte's times are the middle edges
+/// of its first and last bit, so two bytes back to back are one bit time apart: the frame ends where two bytes are more
+/// than 1.5 `bit` times apart (a pause of more than half a bit on the line), or with the bytes where the record goes on
+/// for 4 bit times behind the middle of the last bit. A frame the record cuts off has no check, and nor has one shorter
+/// than a frame can be. `bit`: the bit time in samples, `len`: the samples of the record.
+fn ethernet_check(bytes: &[(f64, f64, u8)], first: usize, bit: f64, len: usize) -> Option<Packet> {
+    let frame = &bytes[first..];
+    let n = frame.windows(2).position(|w| w[1].0 - w[0].1 > 1.5 * bit).map_or(frame.len(), |k| k + 1);
+    let whole = n < frame.len() || frame[n - 1].1 + 4.0 * bit < len as f64 - 1.0;
+    if !whole || n < ETHERNET_MIN {
+        return None;
+    }
+    let raw: Vec<u8> = frame[..n].iter().map(|b| b.2).collect();
+    // the check is sent with its least significant byte first
+    let sent = u32::from_le_bytes([raw[n - 4], raw[n - 3], raw[n - 2], raw[n - 1]]);
+    let ok = usbpd_crc32(&raw[..n - 4]) == sent;
+    Some(Packet::new(Kind::Crc, frame[n - 4].0, frame[n - 1].1, sent, ok))
+}
+
+/// The fields of an Ethernet frame in `bytes`, appended to `out`; with `check` (the bit time and the length of the
+/// record, in samples) the frame check as well.
+fn ethernet_fields(bytes: &[(f64, f64, u8)], check: Option<(f64, usize)>, out: &mut Vec<Packet>) {
     // look for SFD 0xD5 after 0x55s
     let sfd = bytes.iter().position(|b| b.2 == 0xd5);
     let Some(i) = sfd else { return };
@@ -294,6 +319,9 @@ fn ethernet_fields(bytes: &[(f64, f64, u8)], out: &mut Vec<Packet>) {
         let dip = b(30) << 24 | b(31) << 16 | b(32) << 8 | b(33);
         out.push(Packet::field("IP", bytes[i + 27].0, bytes[i + 30].1, sip, true));
         out.push(Packet::field("DIP", bytes[i + 31].0, bytes[i + 34].1, dip, true));
+    }
+    if let Some((bit, len)) = check {
+        out.extend(ethernet_check(bytes, i + 1, bit, len));
     }
 }
 
@@ -322,7 +350,10 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
             let t = e[i].t * dt;
             if (t - t_mid).abs() <= 0.35 * bit_t {
                 bits.push((e[i].t, e[i].rising));
-                t_mid += bit_t;
+                // the next middle is a bit time from this one: every bit has its edge, and the clock follows it. A
+                // clock that ran on from the first edge was a cell off before a long packet ended (seen on a unit:
+                // a frame of 10BASE-T, 880 bits, with a wrong byte and a wrong checksum)
+                t_mid = t + bit_t;
             } else if t > t_mid + 0.35 * bit_t {
                 t_mid += bit_t;
                 continue;
@@ -336,7 +367,7 @@ pub fn manchester(v: &[f32], dt: f64, bitrate: f64, thr: f32, hyst: f32) -> Vec<
     let bits = if b.len() > a.len() { b } else { a };
     let bytes = bits_to_bytes(&bits);
     let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| Packet::new(Kind::Data, s, e, v as u32, true)).collect();
-    ethernet_fields(&bytes, &mut out);
+    ethernet_fields(&bytes, Some((bit_t / dt, v.len())), &mut out);
     out
 }
 
@@ -390,7 +421,7 @@ pub fn mlt3(v: &[f32], dt: f64, bitrate: f64, _thr: f32, hyst: f32) -> Vec<Packe
     }
     let bytes = bits_to_bytes(&bits);
     let mut out: Vec<Packet> = bytes.iter().map(|&(s, e, v)| Packet::new(Kind::Data, s, e, v as u32, true)).collect();
-    ethernet_fields(&bytes, &mut out);
+    ethernet_fields(&bytes, None, &mut out);
     out
 }
 
@@ -465,6 +496,44 @@ mod tests {
         assert_eq!(b.len(), 40);
     }
 
+    /// An Ethernet frame of 10BASE-T has its frame check: marked where the CRC-32 of the frame is another, and none
+    /// where the record has no quiet line behind the frame or the frame is shorter than one can be.
+    #[test]
+    fn an_ethernet_frame_in_manchester_has_its_check() {
+        // (addresses of the kind a station gives itself, none of a real one)
+        let mut frame: Vec<u8> = vec![0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
+        frame.extend([0x08, 0x00]);
+        frame.extend((0..46u8).map(|i| i.wrapping_mul(7)));
+        let fcs = usbpd_crc32(&frame);
+        frame.extend(fcs.to_le_bytes());
+        let mut changed = frame.clone();
+        changed[14] ^= 0x02;
+        // a record of one frame: 16 samples a bit, a one rising in the middle, the first bit of a byte the least
+        // significant, quiet line before and `tail` samples after it
+        let checks = |f: &[u8], tail: usize| -> Vec<(u32, bool)> {
+            let mut v = vec![0.0f32; 64];
+            let bytes = [0x55u8; 7].iter().chain([0xd5u8].iter()).chain(f.iter());
+            for one in bytes.flat_map(|b| (0..8).map(move |k| b >> k & 1 == 1)) {
+                v.extend(std::iter::repeat_n(if one { 0.0 } else { 1.0 }, 8));
+                v.extend(std::iter::repeat_n(if one { 1.0 } else { 0.0 }, 8));
+            }
+            v.extend(std::iter::repeat_n(0.0, tail));
+            let p = manchester(&v, 1.0, 1.0 / 16.0, 0.5, 0.05);
+            p.iter().filter(|x| x.kind == Kind::Crc).map(|x| (x.value, x.ok)).collect()
+        };
+        assert_eq!(checks(&frame, 64), [(fcs, true)]);
+        assert_eq!(checks(&changed, 64), [(fcs, false)]);
+        // the record ends with the frame: the check is not known to be its last four bytes
+        assert_eq!(checks(&frame, 0), []);
+        // shorter than a frame can be
+        assert_eq!(checks(&frame[..40], 64), []);
+        // a frame of the same bytes with no check asked for (MLT-3's) has none
+        let bytes: Vec<(f64, f64, u8)> = (0..80).map(|k| (k as f64 * 16.0, k as f64 * 16.0 + 7.0, 0u8)).collect();
+        let mut out = Vec::new();
+        ethernet_fields(&bytes, None, &mut out);
+        assert!(out.iter().all(|x| x.kind != Kind::Crc));
+    }
+
     #[test]
     fn manchester_reads_a_known_byte() {
         // 0xD5 = 10101011 LSB first, 802.3 cells, 1 = LH
@@ -485,6 +554,34 @@ mod tests {
         let p = manchester(&v, dt, 1.0 / bit_t, 0.5, 0.05);
         assert!(p.iter().any(|x| x.kind == Kind::Data && x.value == 0xd5), "{:?}", p);
         let _ = t;
+    }
+
+    /// A long packet whose sender's clock is not the rate set: 1500 bytes at 200 ppm above it, the tolerance of two
+    /// Ethernet stations against each other. The clock follows the edge in the middle of every bit, and every byte
+    /// is read. A clock that ran on from the first edge was 2.4 bits off at the end.
+    #[test]
+    fn manchester_follows_the_clock_of_a_long_packet() {
+        let bytes: Vec<u8> = (0..1500u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+        let bits: Vec<bool> = bytes.iter().flat_map(|b| (0..8).map(move |k| b >> k & 1 == 1)).collect();
+        // 16 samples a bit at the rate set; the line is 200 ppm faster
+        let bit = 16.0 / 1.0002;
+        let n = (bits.len() as f64 * bit) as usize;
+        let mut v = vec![0.0f32; 48];
+        v.extend((0..n).map(|i| {
+            let x = i as f64 / bit;
+            // a one: low, then high (802.3)
+            let (one, second) = (bits[(x as usize).min(bits.len() - 1)], x.fract() >= 0.5);
+            if one == second {
+                1.0
+            } else {
+                0.0
+            }
+        }));
+        v.extend(std::iter::repeat_n(0.0, 48));
+        let p = manchester(&v, 1.0, 1.0 / 16.0, 0.5, 0.05);
+        let got: Vec<u8> = p.iter().filter(|x| x.kind == Kind::Data).map(|x| x.value as u8).collect();
+        let same = got.iter().zip(&bytes).take_while(|(a, b)| a == b).count();
+        assert_eq!((got.len(), same), (bytes.len(), bytes.len()), "the first wrong byte is number {same}");
     }
 
     #[test]

@@ -8,6 +8,46 @@
 
 use super::*;
 
+/// The measurements in the background (`Ui::measure_in_background`, ADR 0062): the worker, while there is one; the
+/// record shown is still to be measured (`want`); new results for the statistics, the trend and the counter (`new`);
+/// per channel, whether the measurement sent (`env_sent`) and the one shown (`env`) ran on min/max pairs
+/// (`framestats::needs_samples` are then not available).
+#[derive(Default)]
+pub(super) struct MeasBackground {
+    pub worker: Option<MeasWorker>,
+    pub want: bool,
+    pub new: bool,
+    pub env_sent: [bool; NCH],
+    pub env: [bool; NCH],
+    /// the record a background measurement is wanted of (`want`), when it must not be the newest at the time the
+    /// worker is free: with raw deep reads (deepmeas.rs) the newest is then often a pair record, held
+    pub pending: Option<Record>,
+    /// counts what makes a background result still out wrong (a clear, a measurement made here at once), a result
+    /// sent before is dropped; a new record does not count (in Run one comes nearly every frame, and every result
+    /// would be dropped). The setup files and SCPI count it too
+    pub n: u64,
+}
+
+/// History playback (ADR 0062): the last acquired records, newest last, and the one viewed. At most `HISTORY` records,
+/// or as many as the segments of a software segmented recording when that is more (`step_commit`).
+#[derive(Default)]
+pub(super) struct History {
+    pub recs: std::collections::VecDeque<Record>,
+    /// position in `recs` while viewing it (None = live)
+    pub pos: Option<usize>,
+}
+
+/// Segmented recording (ADR 0062): the records since the acquisition started (in software); for hardware segments the
+/// recording number told to the thread, its state, the segment shown (browsing) and the trigger times read back.
+#[derive(Default)]
+pub(super) struct Segments {
+    pub n: usize,
+    pub run: u64,
+    pub view: Option<crate::wave::SegView>,
+    pub pos: Option<usize>,
+    pub times: Vec<Option<f64>>,
+}
+
 impl Ui {
     /// The last record for the web page, as Storage > CSV writes it. A long record is refused rather than cut: making
     /// the text runs in the frame loop, and a file that looks complete but is not would be worse.
@@ -43,7 +83,8 @@ impl Ui {
 
     #[cfg(test)]
     pub(crate) fn measurement_statistics_snapshot_for_test(&self) -> Vec<(u64, [u64; 4])> {
-        self.mstat
+        self.results
+            .rows
             .iter()
             .map(|stat| (stat.n, [stat.sum.to_bits(), stat.sumsq.to_bits(), stat.min.to_bits(), stat.max.to_bits()]))
             .collect()
@@ -65,27 +106,28 @@ impl Ui {
     }
 
     /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
-    /// stop or a history view) while the record shown is of live-compression pairs, or of a deep record's pairs with raw
-    /// deep measurements on.
+    /// stop or a history view) of a normal acquisition on the hardware. The records go on until the thread holds: the
+    /// record shown is then the newest it read, the one it reads again for the views after the STOP (#24; before, a
+    /// batch finished after the STOP was read again, another acquisition than the one shown). For live-compression
+    /// pairs or a deep record's pairs with raw deep measurements on, that last frame is read once more raw.
     pub(super) fn stop_wants_final(&self) -> bool {
         let m = &self.m;
-        m.trig_mode != TrigMode::Single
+        self.src.is_hw()
+            && board().slow_mode(m) == crate::board::Slow::Off
+            && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && !(m.mask_on && m.mask_stop)
-            && self.hist_pos.is_none()
-            && self.seg_pos.is_none()
-            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| {
-                crate::compress::live(&r.frame)
-                    || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame))
-            })
+            && self.history.pos.is_none()
+            && self.seg.pos.is_none()
+            && self.last[0].as_ref().is_some_and(|r| r.raw.is_some())
     }
 
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
     pub(crate) fn ana_get(&self, c: usize, k: Meas) -> f64 {
-        if self.meas_env[c] && crate::framestats::needs_samples(k) {
+        if self.meas_bg.env[c] && crate::framestats::needs_samples(k) {
             f64::NAN
         } else {
-            self.ana[c].get(k)
+            self.measured.ch[c].get(k)
         }
     }
 
@@ -145,20 +187,32 @@ impl Ui {
     }
 
     /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
-    /// acquisition kept one, otherwise the screen record.
+    /// acquisition kept one, otherwise the screen record. The screen record after a STOP is the picture drawn: a view
+    /// read again as pairs while the raw frame of the STOP stays the record measured (`stop_picture`). NORMal gave the
+    /// raw window of the STOP there, 4 of the 40 ms a zoomed-out 50 M record shows (#552).
     fn channel_view(&self, c: usize, memory: bool) -> Option<(&[f32], f64, f64)> {
-        let rec = self.last[0].as_ref()?;
         if memory {
-            if let Some(raw) = rec.raw.as_ref().filter(|r| !r.frame.envelope) {
-                if let Some(v) = raw.frame.ch.get(c) {
-                    if !v.is_empty() && raw.frame.dt.is_finite() && raw.frame.dt > 0.0 {
-                        return Some((v.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt));
-                    }
-                }
+            if let Some(view) = self.native_view(c) {
+                return Some(view);
             }
         }
+        let rec = if memory { None } else { self.stop_picture() }.or(self.last[0].as_ref())?;
         let v = rec.ch.get(c)?;
         (!v.is_empty()).then_some((v.as_slice(), rec.dt, rec.t0))
+    }
+
+    /// The native record of channel `c` (the acquisition's samples, no envelope), its dt and t0. None without one.
+    fn native_view(&self, c: usize) -> Option<(&[f32], f64, f64)> {
+        let raw = self.last[0].as_ref()?.raw.as_ref().filter(|r| !r.frame.envelope)?;
+        let v = raw.frame.ch.get(c)?;
+        (!v.is_empty() && raw.frame.dt.is_finite() && raw.frame.dt > 0.0)
+            .then(|| (v.as_slice(), raw.frame.dt, raw.t0 - raw.i0 as f64 * raw.frame.dt))
+    }
+
+    /// The first `max` samples of channel `c`'s native record and its dt, never the screen record (`:SYSTem:DEBug:CORes?`).
+    pub fn channel_raw(&self, c: usize, max: usize) -> Option<(Vec<f32>, f64)> {
+        let (v, dt, _) = self.native_view(c)?;
+        Some((v[..v.len().min(max)].iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect(), dt))
     }
 
     /// How many points `channel_page` can walk. Zero when that source has no record.
@@ -236,11 +290,11 @@ impl Ui {
     /// Hardware segments: tells the thread about RUN/STOP, takes the times when the read-back is done, stops when every
     /// segment is on the screen, shows a segment asked for.
     pub(super) fn seg_poll(&mut self, running: bool) {
-        let Some(v) = self.src.seg_sync(self.seg_run, running) else { return };
-        let was = self.seg_view.map(|x| x.phase);
-        self.seg_view = Some(v);
+        let Some(v) = self.src.seg_sync(self.seg.run, running) else { return };
+        let was = self.seg.view.map(|x| x.phase);
+        self.seg.view = Some(v);
         if v.phase == crate::board::SegPhase::Done && was != Some(crate::board::SegPhase::Done) {
-            self.seg_times = self.src.seg_times();
+            self.seg.times = self.src.seg_times();
             if running && !v.queued {
                 self.m.run = RunState::Stop;
                 self.toast(&format!("{} segments recorded", v.recorded));
@@ -250,7 +304,7 @@ impl Ui {
             self.toast(&format!("{} segments recorded", v.recorded));
         }
         if let Some((k, rec)) = self.src.seg_shown(&self.m) {
-            self.seg_pos = Some(k as usize);
+            self.seg.pos = Some(k as usize);
             self.last[0] = Some(rec);
             self.cleared = false;
             self.measure_last();
@@ -259,8 +313,8 @@ impl Ui {
 
     /// "Segment k/N", the trigger time since the first trigger and the step from the previous segment.
     pub(super) fn seg_label(&self, i: usize) -> String {
-        let n = self.seg_view.map_or(0, |v| v.recorded);
-        let t = |k: usize| self.seg_times.get(k).copied().flatten();
+        let n = self.seg.view.map_or(0, |v| v.recorded);
+        let t = |k: usize| self.seg.times.get(k).copied().flatten();
         let mut s = format!("Segment {}/{}", i + 1, n);
         if let Some(x) = t(i) {
             s += &format!(" \u{b7} {}", si(x, "s"));
@@ -273,7 +327,8 @@ impl Ui {
 
     /// Hardware segments: the trigger times since the first trigger, comma separated, in seconds (9.9E37: no stamp).
     pub fn seg_times_text(&self) -> String {
-        self.seg_times
+        self.seg
+            .times
             .iter()
             .map(|t| t.map_or("9.9E37".to_string(), |x| format!("{:e}", x)))
             .collect::<Vec<_>>()
@@ -283,31 +338,31 @@ impl Ui {
     /// Hardware segments: shows segment `i` (played from the FPGA memory), stopping the acquisition.
     pub(super) fn seg_show(&mut self, i: usize) {
         self.m.run = RunState::Stop;
-        self.seg_pos = Some(i);
+        self.seg.pos = Some(i);
         self.src.seg_request(i as u32);
         self.toast(&self.seg_label(i));
     }
 
-    /// Shows record `hist_pos + d` of the history (d = 0: the newest), stopping the acquisition.
+    /// Shows record `history.pos + d` of the history (d = 0: the newest), stopping the acquisition.
     pub(super) fn history_step(&mut self, d: i32) {
         // hardware segments: any of them, played on demand
         if let Some(v) =
-            self.seg_view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0)
+            self.seg.view.filter(|v| self.seg_hw_on() && v.phase == crate::board::SegPhase::Done && v.recorded > 0)
         {
             let n = v.recorded as i32;
-            let cur = self.seg_pos.unwrap_or(n as usize - 1) as i32;
+            let cur = self.seg.pos.unwrap_or(n as usize - 1) as i32;
             let i = if d == 0 { n - 1 } else { (cur + d).clamp(0, n - 1) };
             return self.seg_show(i as usize);
         }
-        let n = self.history.len();
+        let n = self.history.recs.len();
         if n == 0 {
             return self.toast("History empty");
         }
         self.m.run = RunState::Stop;
-        let cur = self.hist_pos.unwrap_or(n - 1) as i32;
+        let cur = self.history.pos.unwrap_or(n - 1) as i32;
         let i = if d == 0 { n as i32 - 1 } else { (cur + d).clamp(0, n as i32 - 1) } as usize;
-        self.hist_pos = Some(i);
-        self.last[0] = Some(self.history[i].clone());
+        self.history.pos = Some(i);
+        self.last[0] = Some(self.history.recs[i].clone());
         self.measure_last();
         self.toast(&format!("History {}/{}", i + 1, n));
     }
@@ -329,21 +384,21 @@ impl Ui {
             })
             .collect();
         let done = measure_channels(&work);
-        self.meas_env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
+        self.meas_bg.env_sent = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
         self.meas_set(done);
-        self.meas_n += 1;
-        self.meas_want = false;
+        self.meas_bg.n += 1;
+        self.meas_bg.want = false;
     }
 
     /// Statistics of measurements made on every frame by the deposit workers (framestats.rs) into the Measure page's
     /// statistics, once these exist (the first measured record starts them).
     pub(super) fn mstat_fold(&mut self, folds: &crate::framestats::Folds) {
-        if self.mstat.len() < self.m.meas.len() {
+        if self.results.rows.len() < self.m.meas.len() {
             return;
         }
         for (key, f) in folds.iter().filter(|x| x.1.n > 0) {
             if let Some(i) = self.m.meas.iter().position(|e| *e == (key.0, WaveId::Ch(key.1))) {
-                let st = &mut self.mstat[i];
+                let st = &mut self.results.rows[i];
                 if st.n == 0 {
                     (st.min, st.max) = (f.min, f.max);
                 }
@@ -376,37 +431,37 @@ impl Ui {
     }
 
     fn meas_set(&mut self, done: Vec<(usize, Stats, oos_dsp::measure::Analysis)>) {
-        self.meas_env = self.meas_env_sent;
+        self.meas_bg.env = self.meas_bg.env_sent;
         for c in 0..NCH {
-            (self.stats[c], self.ana[c]) = (Stats::default(), Default::default());
+            (self.measured.stats[c], self.measured.ch[c]) = (Stats::default(), Default::default());
         }
         for (c, st, an) in done {
-            (self.stats[c], self.ana[c]) = (st, std::sync::Arc::new(an));
+            (self.measured.stats[c], self.measured.ch[c]) = (st, std::sync::Arc::new(an));
         }
     }
 
     /// From now on the measurements of new records are made in the background (the frame loop on the unit).
     pub fn measure_in_background(&mut self) {
-        self.meas_bg = MeasWorker::start();
+        self.meas_bg.worker = MeasWorker::start();
     }
 
     /// The background's side, every frame: takes a finished result, and gives it the record shown when it wants one.
     pub(super) fn meas_poll(&mut self) {
-        let Some(w) = self.meas_bg.as_mut() else { return };
+        let Some(w) = self.meas_bg.worker.as_mut() else { return };
         if let Ok((n, done)) = w.rx.try_recv() {
             w.busy = false;
-            if n == self.meas_n {
+            if n == self.meas_bg.n {
                 // of the record shown when it was sent: in Run a few frames old, the newest result there is
                 self.meas_set(done);
-                self.meas_new = true;
+                self.meas_bg.new = true;
             }
         }
-        let w = self.meas_bg.as_mut().expect("worker");
-        if w.busy || !self.meas_want {
+        let w = self.meas_bg.worker.as_mut().expect("worker");
+        if w.busy || !self.meas_bg.want {
             return;
         }
-        self.meas_want = false;
-        let pending = self.meas_pending.take();
+        self.meas_bg.want = false;
+        let pending = self.meas_bg.pending.take();
         let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
         // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
         if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame)) {
@@ -426,15 +481,15 @@ impl Ui {
                 }
             })
             .collect();
-        let w = self.meas_bg.as_mut().expect("worker");
-        if w.tx.send((self.meas_n, job)).is_ok() {
+        let w = self.meas_bg.worker.as_mut().expect("worker");
+        if w.tx.send((self.meas_bg.n, job)).is_ok() {
             w.busy = true;
-            self.meas_env_sent = env;
+            self.meas_bg.env_sent = env;
         } else {
             // the thread is gone: measure here again
-            self.meas_bg = None;
+            self.meas_bg.worker = None;
             self.measure_last();
-            self.meas_new = true;
+            self.meas_bg.new = true;
         }
     }
 
@@ -499,7 +554,7 @@ impl Ui {
 
     /// The level line is on: shortly after the trigger level changed (`LEVEL_LINE_S`).
     pub(super) fn level_line_on(&self) -> bool {
-        self.level_changed > 0.0 && self.now - self.level_changed < LEVEL_LINE_S
+        self.seen.level_changed > 0.0 && self.now - self.seen.level_changed < LEVEL_LINE_S
     }
 
     /// Level shown at the trigger marker: the pattern level of the source for pattern/duration, else the level.

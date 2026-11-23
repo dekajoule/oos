@@ -8,8 +8,9 @@
 //! to VOP-big only, so the two never compete for a CRTC.
 
 use crate::gfx::Canvas;
-use std::ffi::CString;
-use std::io;
+use std::fs::File;
+use std::io::{self, Read};
+use std::os::fd::{AsRawFd, IntoRawFd};
 
 const fn iowr(nr: u32, size: usize) -> libc::c_ulong {
     ((3u32 << 30) | ((size as u32) << 16) | ((b'd' as u32) << 8) | nr) as libc::c_ulong
@@ -33,7 +34,7 @@ struct CardRes {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ModeInfo {
     clock: u32,
     hdisplay: u16,
@@ -84,7 +85,7 @@ struct GetEncoder {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Crtc {
     set_connectors_ptr: u64,
     count_connectors: u32,
@@ -161,9 +162,9 @@ struct PrimeHandle {
 }
 const PRIME_HANDLE_TO_FD: libc::c_ulong = iowr(0x2D, std::mem::size_of::<PrimeHandle>());
 
-fn ioc<T>(fd: i32, req: libc::c_ulong, arg: &mut T) -> io::Result<()> {
+fn ioc<T>(fd: &File, req: libc::c_ulong, arg: &mut T) -> io::Result<()> {
     loop {
-        let r = unsafe { libc::ioctl(fd, req as _, arg as *mut T) };
+        let r = unsafe { libc::ioctl(fd.as_raw_fd(), req as _, arg as *mut T) };
         if r == 0 {
             return Ok(());
         }
@@ -184,7 +185,8 @@ struct Buf {
 }
 
 pub struct Display {
-    fd: i32,
+    /// the DRM file; closed by `close` (a monitor), kept open until the process ends by `keep_open` (the panel)
+    fd: File,
     pub width: i32,
     pub height: i32,
     crtc_id: u32,
@@ -213,9 +215,9 @@ const CONNECTOR_DSI: u32 = 16;
 /// a type and a length (u32 each) and their data.
 fn flip_events(buf: &[u8]) -> u32 {
     let (mut at, mut n) = (0, 0);
-    while at + 8 <= buf.len() {
-        let typ = u32::from_ne_bytes(buf[at..at + 4].try_into().unwrap());
-        let len = u32::from_ne_bytes(buf[at + 4..at + 8].try_into().unwrap()) as usize;
+    while let Some(h) = buf.get(at..at + 8) {
+        let typ = u32::from_ne_bytes([h[0], h[1], h[2], h[3]]);
+        let len = u32::from_ne_bytes([h[4], h[5], h[6], h[7]]) as usize;
         if len < 8 {
             break;
         }
@@ -226,34 +228,69 @@ fn flip_events(buf: &[u8]) -> u32 {
 }
 
 impl Display {
+    /// The panel's output. On an error the DRM file stays open until the process ends, as it always did: oos-ui ends
+    /// then (`open_display`).
     pub fn open(path: &str) -> io::Result<Display> {
-        let c = CString::new(path).unwrap();
-        let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
+        // O_RDWR | O_CLOEXEC
+        let fd = File::options().read(true).write(true).open(path)?;
         // the panel first: a monitor on HDMI at start must not take the scope's own screen
         match Display::on_fd(fd, Some(CONNECTOR_DSI), 0) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Display::on_fd(fd, None, 0),
+            Err((e, fd)) if e.kind() == io::ErrorKind::NotFound => Display::on_fd(fd, None, 0),
             r => r,
         }
+        .map_err(|(e, fd)| {
+            let _ = fd.into_raw_fd();
+            e
+        })
     }
 
     /// A connected HDMI monitor as a second output on this display's DRM file, on another CRTC; NotFound if none.
+    /// The copy of the descriptor is closed again on an error.
     pub fn hdmi(&self) -> io::Result<Display> {
-        let fd = unsafe { libc::fcntl(self.fd, libc::F_DUPFD_CLOEXEC, 0) };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let r = Display::on_fd(fd, Some(CONNECTOR_HDMIA), self.crtc_id);
-        if r.is_err() {
-            unsafe { libc::close(fd) };
-        }
-        r
+        // F_DUPFD_CLOEXEC from 3 on: the lowest free number, as 0 to 2 are always open (std opens /dev/null for any
+        // that is not at the start, and oos-ui never closes them)
+        let fd = self.fd.try_clone()?;
+        Display::on_fd(fd, Some(CONNECTOR_HDMIA), self.crtc_id).map_err(|(e, _closed)| e)
     }
 
-    /// The first connected connector (of type `want`, if given) with modes, on a CRTC other than `avoid`.
-    fn on_fd(fd: i32, want: Option<u32>, avoid: u32) -> io::Result<Display> {
+    /// The output on `fd` (`find`), its buffers made and its mode set; on an error the buffers made are freed and
+    /// `fd` is given back.
+    fn on_fd(fd: File, want: Option<u32>, avoid: u32) -> Result<Display, (io::Error, File)> {
+        let (conn_id, mode, crtc_id, saved) = match Display::find(&fd, want, avoid) {
+            Ok(found) => found,
+            Err(e) => return Err((e, fd)),
+        };
+        let (w, h) = (mode.hdisplay as u32, mode.vdisplay as u32);
+        let mut d = Display {
+            fd,
+            width: w as i32,
+            height: h as i32,
+            crtc_id,
+            conn_id,
+            mode,
+            saved,
+            bufs: Vec::new(),
+            front: 0,
+            prev: 0,
+            flips_out: 0,
+            flips_late: 0,
+            use_flip: true,
+            fit: None,
+        };
+        // on any error the buffers made so far are freed again (the HDMI search retries)
+        match d.alloc().and_then(|_| d.set_crtc(0)) {
+            Ok(()) => Ok(d),
+            Err(e) => {
+                d.saved = None;
+                d.restore();
+                Err((e, d.fd))
+            }
+        }
+    }
+
+    /// The first connected connector (of type `want`, if given) with modes, on a CRTC other than `avoid`: the
+    /// connector, its mode, the CRTC and the CRTC's state before.
+    fn find(fd: &File, want: Option<u32>, avoid: u32) -> io::Result<(u32, ModeInfo, u32, Option<Crtc>)> {
         let mut res = CardRes::default();
         ioc(fd, GETRESOURCES, &mut res)?;
         let mut crtcs = vec![0u32; res.count_crtcs as usize];
@@ -275,7 +312,7 @@ impl Display {
             if gc.connection != 1 || gc.count_modes == 0 || want.is_some_and(|t| t != gc.connector_type) {
                 continue;
             }
-            let mut modes = vec![unsafe { std::mem::zeroed::<ModeInfo>() }; gc.count_modes as usize];
+            let mut modes = vec![ModeInfo::default(); gc.count_modes as usize];
             let mut encoders = vec![0u32; gc.count_encoders as usize];
             let mut props = vec![0u32; gc.count_props as usize];
             let mut pvals = vec![0u64; gc.count_props as usize];
@@ -334,40 +371,13 @@ impl Display {
                 io::Error::new(io::ErrorKind::NotFound, "no connected display")
             }
         })?;
-        let mut saved: Crtc = unsafe { std::mem::zeroed() };
-        saved.crtc_id = crtc_id;
+        let mut saved = Crtc { crtc_id, ..Default::default() };
         let saved = if ioc(fd, GETCRTC, &mut saved).is_ok() { Some(saved) } else { None };
-
-        let (w, h) = (mode.hdisplay as u32, mode.vdisplay as u32);
-        let mut d = Display {
-            fd,
-            width: w as i32,
-            height: h as i32,
-            crtc_id,
-            conn_id,
-            mode,
-            saved,
-            bufs: Vec::new(),
-            front: 0,
-            prev: 0,
-            flips_out: 0,
-            flips_late: 0,
-            use_flip: true,
-            fit: None,
-        };
-        // on any error the buffers made so far are freed again (the HDMI search retries)
-        match d.alloc().and_then(|_| d.set_crtc(0)) {
-            Ok(()) => Ok(d),
-            Err(e) => {
-                d.saved = None;
-                d.restore();
-                Err(e)
-            }
-        }
+        Ok((conn_id, mode, crtc_id, saved))
     }
 
     fn alloc(&mut self) -> io::Result<()> {
-        let (fd, w, h) = (self.fd, self.width as u32, self.height as u32);
+        let (fd, w, h) = (&self.fd, self.width as u32, self.height as u32);
         // three: the GPU fills the third while one is shown and the next waits for its flip (System > Graphics)
         for _ in 0..3 {
             let mut cd = CreateDumb { width: w, height: h, bpp: 32, ..Default::default() };
@@ -398,7 +408,7 @@ impl Display {
                     cd.size as usize,
                     libc::PROT_READ | libc::PROT_WRITE,
                     libc::MAP_SHARED,
-                    fd,
+                    fd.as_raw_fd(),
                     md.offset as libc::off_t,
                 )
             };
@@ -430,14 +440,14 @@ impl Display {
             mode_valid: 1,
             mode: self.mode,
         };
-        ioc(self.fd, SETCRTC, &mut c)
+        ioc(&self.fd, SETCRTC, &mut c)
     }
 
     /// Waits up to 100 ms for the events of the flips asked for. A late one stays counted (`flips_out`) and is read
     /// the next time, so it never passes for the flip after it.
     fn wait_flip(&mut self) {
         while self.flips_out > 0 {
-            let mut p = libc::pollfd { fd: self.fd, events: libc::POLLIN, revents: 0 };
+            let mut p = libc::pollfd { fd: self.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
             if unsafe { libc::poll(&mut p, 1, 100) } <= 0 {
                 self.flips_late += 1;
                 if self.flips_late.is_power_of_two() {
@@ -446,11 +456,11 @@ impl Display {
                 return;
             }
             let mut buf = [0u8; 256];
-            let n = unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-            if n <= 0 {
-                return;
-            }
-            self.flips_out = self.flips_out.saturating_sub(flip_events(&buf[..n as usize]));
+            let n = match (&self.fd).read(&mut buf) {
+                Ok(n) if n > 0 => n,
+                _ => return,
+            };
+            self.flips_out = self.flips_out.saturating_sub(flip_events(&buf[..n]));
         }
     }
 
@@ -474,7 +484,7 @@ impl Display {
         use std::os::fd::FromRawFd;
         let b = self.bufs.get(i).ok_or_else(|| io::Error::other("no such buffer"))?;
         let mut p = PrimeHandle { handle: b.handle, flags: (libc::O_CLOEXEC | libc::O_RDWR) as u32, fd: -1 };
-        ioc(self.fd, PRIME_HANDLE_TO_FD, &mut p)?;
+        ioc(&self.fd, PRIME_HANDLE_TO_FD, &mut p)?;
         // SAFETY: the kernel just made this descriptor for us
         Ok((unsafe { std::os::fd::OwnedFd::from_raw_fd(p.fd) }, b.pitch as i32))
     }
@@ -501,7 +511,7 @@ impl Display {
         if self.use_flip {
             let mut pf =
                 PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: PAGE_FLIP_EVENT, reserved: 0, user_data: 0 };
-            match ioc(self.fd, PAGE_FLIP, &mut pf) {
+            match ioc(&self.fd, PAGE_FLIP, &mut pf) {
                 Ok(()) => {
                     self.flips_out += 1;
                     (self.prev, self.front) = (self.front, back);
@@ -531,7 +541,8 @@ impl Display {
         }
         let back = self.free();
         let b = &self.bufs[back];
-        let fit = self.fit.as_ref().unwrap();
+        // made just above when there was none
+        let Some(fit) = self.fit.as_ref() else { return };
         let stride = (b.pitch / 4) as usize;
         let dst = unsafe { std::slice::from_raw_parts_mut(b.map, b.size / 4) };
         fit.scale(&cv.px, dst, stride);
@@ -548,7 +559,7 @@ impl Display {
     fn flip_quiet(&mut self, back: usize) {
         let b = &self.bufs[back];
         let mut pf = PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: 0, reserved: 0, user_data: 0 };
-        match ioc(self.fd, PAGE_FLIP, &mut pf) {
+        match ioc(&self.fd, PAGE_FLIP, &mut pf) {
             Ok(()) => (self.prev, self.front) = (self.front, back),
             Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {}
             Err(_) => {
@@ -563,10 +574,10 @@ impl Display {
     pub fn connected(&self) -> bool {
         let mut gc = GetConnector { connector_id: self.conn_id, ..Default::default() };
         // count_modes 0 asks the kernel to probe; GETCONNECTOR with modes_ptr set and count_modes 1 does not
-        let mut mode = unsafe { std::mem::zeroed::<ModeInfo>() };
+        let mut mode = ModeInfo::default();
         gc.modes_ptr = &mut mode as *mut ModeInfo as u64;
         gc.count_modes = 1;
-        ioc(self.fd, GETCONNECTOR, &mut gc).is_ok() && gc.connection == 1
+        ioc(&self.fd, GETCONNECTOR, &mut gc).is_ok() && gc.connection == 1
     }
 
     /// Turns the output off and frees it (HDMI unplugged or oos-ui ending).
@@ -582,10 +593,16 @@ impl Display {
             mode_valid: 0,
             mode: self.mode,
         };
-        let _ = ioc(self.fd, SETCRTC, &mut c);
+        let _ = ioc(&self.fd, SETCRTC, &mut c);
         self.saved = None;
         self.restore();
-        unsafe { libc::close(self.fd) };
+        drop(self.fd);
+    }
+
+    /// oos-ui ending (after `restore`): the DRM file stays open until the process ends, as it always did, and the
+    /// rest is freed.
+    pub fn keep_open(self) {
+        let _ = self.fd.into_raw_fd();
     }
 
     pub fn restore(&mut self) {
@@ -595,15 +612,15 @@ impl Display {
                 let mut conn = self.conn_id;
                 s.set_connectors_ptr = &mut conn as *mut u32 as u64;
                 s.count_connectors = 1;
-                let _ = ioc(self.fd, SETCRTC, &mut s);
+                let _ = ioc(&self.fd, SETCRTC, &mut s);
             }
         }
         for b in self.bufs.drain(..) {
             unsafe { libc::munmap(b.map as *mut libc::c_void, b.size) };
             let mut fb = b.fb;
-            let _ = ioc(self.fd, RMFB, &mut fb);
+            let _ = ioc(&self.fd, RMFB, &mut fb);
             let mut h = b.handle;
-            let _ = ioc(self.fd, DESTROY_DUMB, &mut h);
+            let _ = ioc(&self.fd, DESTROY_DUMB, &mut h);
         }
     }
 }

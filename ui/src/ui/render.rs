@@ -30,7 +30,7 @@ impl Ui {
         }
         l.under.no_clip();
         l.under.clear(BG);
-        let g = self.grid;
+        let g = self.plot.grid;
         if self.m.zoom && !self.xy {
             let (o, _) = Self::split_zoom(g);
             self.draw_grid(l.under, o);
@@ -54,11 +54,11 @@ impl Ui {
                 cv.round(Rect::new(edge - 3, o.y + o.h / 2 - 12, 7, 24), 3, ACCENT, 255);
             }
             cv.no_clip();
-            for &lane in &self.wins {
+            for &lane in &self.plot.wins {
                 self.draw_grid(l.under, lane);
             }
         } else {
-            for &w in &self.wins {
+            for &w in &self.plot.wins {
                 self.draw_grid(l.under, w);
             }
         }
@@ -73,21 +73,21 @@ impl Ui {
         } else {
             // Every detail lane draws its own sources. The shared zoom overview
             // was drawn above; detail maps use the same lane dimensions.
-            for i in 0..self.wins.len() {
-                self.cur_win = i;
-                self.area = self.wins[i];
+            for i in 0..self.plot.wins.len() {
+                self.plot.cur_win = i;
+                self.plot.area = self.plot.wins[i];
                 if !self.m.zoom {
                     self.draw_mask(l.under);
-                    self.traces(l, self.area, false, false);
+                    self.traces(l, self.plot.area, false, false);
                 } else {
-                    self.traces(l, self.area, true, false);
+                    self.traces(l, self.plot.area, true, false);
                 }
                 let cv = l.over();
                 self.draw_hist(cv);
                 self.draw_zones(cv);
-                if self.wins.len() > 1 || i == 0 || self.stacked() {
+                if self.plot.wins.len() > 1 || i == 0 || self.stacked() {
                     if self.waves_on() {
-                        self.draw_refs_at(cv, self.waves_plot(self.area), self.view(), false);
+                        self.draw_refs_at(cv, self.waves_plot(self.plot.area), self.view(), false);
                     } else {
                         self.draw_refs(cv);
                     }
@@ -111,8 +111,8 @@ impl Ui {
                     self.draw_waves_board(cv);
                 }
             }
-            self.cur_win = 0;
-            self.area = self.wave_area();
+            self.plot.cur_win = 0;
+            self.plot.area = self.wave_area();
         }
         let cv = l.over();
         if self.m.zoom && !self.xy && !self.view_on() {
@@ -134,7 +134,7 @@ impl Ui {
         self.draw_auto_bar(cv);
         self.draw_strip(cv);
         // Full on the external display is the plot and the strip. The statistics card and a lower pane stay on the panel.
-        if self.hdmi_snap_want && self.m.density == Density::Full {
+        if self.hdmi.snap_want && self.m.density == Density::Full {
             self.capture_hdmi(l);
         }
         let cv = l.over();
@@ -146,7 +146,7 @@ impl Ui {
         self.draw_table(cv);
         // waveform on the external display: the band between the bars, before the bars and the menus go over it
         // (the GPU puts it together from the layers itself)
-        if self.hdmi_snap_want && self.m.density != Density::Full {
+        if self.hdmi.snap_want && self.m.density != Density::Full {
             self.capture_hdmi(l);
         }
         let cv = l.over();
@@ -160,15 +160,18 @@ impl Ui {
         self.draw_overlay(cv);
         self.workspace_draw(cv);
         self.draw_pointer(cv);
-        self.frames += 1;
+        self.counts.frames += 1;
     }
 
     /// The traces of a plot window: drawn now on one canvas, a job for the GPU with layers. `zoom`: the zoom
     /// window's maps.
     /// `all_sources`: every channel that is on (the zoom overview), else only those of the window being drawn.
     fn traces(&self, l: &mut Layers, area: Rect, zoom: bool, all_sources: bool) {
-        let (ph, vmax, vmax_cg) =
-            if zoom { (&self.phz, &self.vmaxz, self.vmaxz_cg) } else { (&self.ph, &self.vmax, self.vmax_cg) };
+        let (ph, vmax, vmax_cg) = if zoom {
+            (&self.phz, &self.grade.vmaxz, self.grade.vmaxz_cg)
+        } else {
+            (&self.ph, &self.grade.vmax, self.grade.vmax_cg)
+        };
         if l.over.is_none() {
             return self.draw_traces(l.under, area, ph, vmax, vmax_cg, all_sources);
         }
@@ -216,18 +219,26 @@ impl Ui {
     fn render_view_layers_as_is(&mut self, l: &mut Layers) {
         let keep = (
             self.scr,
-            self.grid,
-            std::mem::take(&mut self.wins),
-            self.area,
-            self.cur_win,
-            self.frames,
-            self.hdmi_snap_want,
+            self.plot.grid,
+            std::mem::take(&mut self.plot.wins),
+            self.plot.area,
+            self.plot.cur_win,
+            self.counts.frames,
+            self.hdmi.snap_want,
         );
         self.scr = Screen { w: l.under.w, h: l.under.h };
-        (self.view_pass, self.hdmi_snap_want) = (true, false);
+        (self.plot.view_pass, self.hdmi.snap_want) = (true, false);
         self.render_layers(l);
-        self.view_pass = false;
-        (self.scr, self.grid, self.wins, self.area, self.cur_win, self.frames, self.hdmi_snap_want) = keep;
+        self.plot.view_pass = false;
+        (
+            self.scr,
+            self.plot.grid,
+            self.plot.wins,
+            self.plot.area,
+            self.plot.cur_win,
+            self.counts.frames,
+            self.hdmi.snap_want,
+        ) = keep;
     }
 
     /// Graticule in the classic scope style: dotted division lines (Full), a solid frame (Full, Light) and solid
@@ -316,7 +327,7 @@ impl Ui {
     /// keeps clear of the channel markers at the left edge.
     fn draw_axes(&self, cv: &mut Canvas) {
         let f = self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         let c = if self.m.ch[self.m.active].on && self.shows(self.m.active) {
             Some(self.m.active)
         } else {
@@ -336,11 +347,11 @@ impl Ui {
             let offset = base_offset - center * base_vpd;
             let span = (VDIV / 2.0 * vpd).abs() + offset.abs();
             let mut taken: Vec<Rect> = vec![Rect::new(a.x, a.y, a.w, 20), Rect::new(a.x, a.y + a.h - 22, a.w, 22)];
-            if self.m.mask_on && self.mask.is_some() && self.shows(self.m.mask_src) {
+            if self.m.mask_on && self.mask_sw.mask.is_some() && self.shows(self.m.mask_src) {
                 taken.push(Rect::new(a.x, a.y + 22, a.w, 28));
             }
             let bands = (0..DECODERS)
-                .filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.cur_win))
+                .filter(|&k| self.m.dec_is_on(k) && self.dec_band_win(k) == Some(self.plot.cur_win))
                 .count() as i32;
             if bands > 0 {
                 taken.push(Rect::new(a.x, a.y + a.h - 50 - (bands - 1) * DEC_BAND, a.w, bands * DEC_BAND));
@@ -367,7 +378,7 @@ impl Ui {
                 backed_text(cv, &f.s, x, y + 4, &s, scale(color, 210));
             }
         }
-        if self.stacked() && self.cur_win + 1 < self.wins.len() {
+        if self.stacked() && self.plot.cur_win + 1 < self.plot.wins.len() {
             return;
         }
         let (tdiv, delay) = self.view();
@@ -459,25 +470,27 @@ impl Ui {
     /// The counts the picture is graded against (`picture_ref`), per channel and for colour grade; whether the main and
     /// the zoom map are near saturation.
     pub(super) fn grade_refs(&mut self) -> (bool, bool) {
-        let n = self.pic_frames;
+        let n = self.grade.frames;
         let (mut full, mut fullz) = (false, false);
         for c in 0..NCH {
             if self.m.ch[c].on {
                 let mx = self.ph.map[c].iter().copied().max().unwrap_or(0) as u32;
-                self.vmax[c] = picture_ref(self.vmax[c], &mut self.per_frame[c], mx, n);
+                self.grade.vmax[c] = picture_ref(self.grade.vmax[c], &mut self.grade.per_frame[c], mx, n);
                 full |= mx > 0xc000;
                 if self.m.zoom {
                     let mz = self.phz.map[c].iter().copied().max().unwrap_or(0) as u32;
-                    self.vmaxz[c] = picture_ref(self.vmaxz[c], &mut self.per_framez[c], mz, n);
+                    self.grade.vmaxz[c] = picture_ref(self.grade.vmaxz[c], &mut self.grade.per_framez[c], mz, n);
                     fullz |= mz > 0xc000;
                 }
             }
         }
         if self.m.color_grade {
             let on: [bool; NCH] = std::array::from_fn(|c| self.m.ch[c].on);
-            self.vmax_cg = picture_ref(self.vmax_cg, &mut self.per_frame_cg[0], self.ph.merged_max(on), n);
+            self.grade.vmax_cg =
+                picture_ref(self.grade.vmax_cg, &mut self.grade.per_frame_cg[0], self.ph.merged_max(on), n);
             if self.m.zoom {
-                self.vmaxz_cg = picture_ref(self.vmaxz_cg, &mut self.per_frame_cg[1], self.phz.merged_max(on), n);
+                self.grade.vmaxz_cg =
+                    picture_ref(self.grade.vmaxz_cg, &mut self.grade.per_frame_cg[1], self.phz.merged_max(on), n);
             }
         }
         (full, fullz)
@@ -567,6 +580,37 @@ impl Ui {
                     *d = lut[((s >> shift) as usize).min(1023)];
                 }
             }
+        }
+    }
+}
+
+/// The counts the traces are graded against (`Ui::grade_refs`), each followed by `picture_ref`. ADR 0062.
+pub(super) struct Grade {
+    /// the brightest pixel per channel of the main and of the zoom map
+    pub vmax: [u32; NCH],
+    pub vmaxz: [u32; NCH],
+    /// the brightest pixel of the merged maps (colour grade), main / zoom view
+    pub vmax_cg: u32,
+    pub vmaxz_cg: u32,
+    /// minimum persistence: the frames in the picture on screen, and the brightest pixel per frame behind `vmax`,
+    /// `vmaxz`, `vmax_cg`, `vmaxz_cg`
+    pub frames: u32,
+    pub per_frame: [u32; NCH],
+    pub per_framez: [u32; NCH],
+    pub per_frame_cg: [u32; 2],
+}
+
+impl Default for Grade {
+    fn default() -> Grade {
+        Grade {
+            vmax: [1; NCH],
+            vmaxz: [1; NCH],
+            vmax_cg: 1,
+            vmaxz_cg: 1,
+            frames: 0,
+            per_frame: [1; NCH],
+            per_framez: [1; NCH],
+            per_frame_cg: [1; 2],
         }
     }
 }

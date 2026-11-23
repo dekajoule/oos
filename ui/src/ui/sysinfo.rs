@@ -9,6 +9,13 @@
 use super::*;
 use crate::board::{board, Board};
 
+/// The page's state (ADR 0062): its rows while open (shown instead of the dialog lines), and when they were made.
+#[derive(Default)]
+pub(super) struct Page {
+    pub rows: Option<[Vec<Row>; 3]>,
+    pub t: f64,
+}
+
 pub(super) enum Row {
     /// section heading
     Head(String),
@@ -71,17 +78,6 @@ fn cpu_hz(n: usize) -> Option<f64> {
         .map(|khz| khz * 1e3)
 }
 
-/// SI value with up to 5 digits and no trailing zeros ("312.5 MSa/s", "31.25 Mpts", "1.25 GSa/s").
-fn exact(v: f64, unit: &str) -> String {
-    let s = si_digits(v, unit, 5);
-    match s.split_once(' ') {
-        Some((num, rest)) if num.contains('.') => {
-            format!("{} {}", num.trim_end_matches('0').trim_end_matches('.'), rest)
-        }
-        _ => s,
-    }
-}
-
 fn bytes(b: u64) -> String {
     si_short(b as f64, "B")
 }
@@ -100,8 +96,8 @@ fn temp_col(t: f32, warn: f32, limit: f32) -> Rgb {
 impl Ui {
     /// Opens the page (System > System info).
     pub(super) fn sysinfo_open(&mut self) {
-        self.sysinfo = Some(self.sysinfo_rows());
-        self.sysinfo_t = self.now;
+        self.sysinfo.rows = Some(self.sysinfo_rows());
+        self.sysinfo.t = self.now;
         // the dialog marker: every path that closes a dialog (tap, key) closes the page too
         self.dialog = Some(Vec::new());
     }
@@ -109,10 +105,10 @@ impl Ui {
     /// Per frame: refresh once a second while open; forget the page once its dialog was closed.
     pub(super) fn sysinfo_poll(&mut self) {
         if self.dialog.is_none() {
-            self.sysinfo = None;
-        } else if self.sysinfo.is_some() && self.now - self.sysinfo_t >= 1.0 {
-            self.sysinfo = Some(self.sysinfo_rows());
-            self.sysinfo_t = self.now;
+            self.sysinfo.rows = None;
+        } else if self.sysinfo.rows.is_some() && self.now - self.sysinfo.t >= 1.0 {
+            self.sysinfo.rows = Some(self.sysinfo_rows());
+            self.sysinfo.t = self.now;
         }
     }
 
@@ -162,12 +158,12 @@ impl Ui {
             None => kv("FPGA", "-"),
         });
         a.push(kv("Uptime", uptime().unwrap_or("-".into())));
-        a.push(if self.net.is_empty() {
+        a.push(if self.net.addr.is_empty() {
             kvc("Network", "not connected", DIM)
         } else {
-            kv("Network", self.net.clone())
+            kv("Network", self.net.addr.clone())
         });
-        a.push(kv("Source", format!("{}  {:.0} fps", self.src.name(), self.fps)));
+        a.push(kv("Source", format!("{}  {:.0} fps", self.src.name(), self.counts.fps)));
         a
     }
 
@@ -188,17 +184,17 @@ impl Ui {
             let same = l.max_srate[i] == base.max_srate[i] && l.max_mem[i] == base.max_mem[i];
             d.push(kvc(
                 name,
-                format!("{}  {}", exact(l.max_srate[i], "Sa/s"), exact(l.max_mem[i] as f64, "pts")),
+                format!("{}  {}", si_trimmed(l.max_srate[i], "Sa/s", 5), si_trimmed(l.max_mem[i] as f64, "pts", 5)),
                 mark(same),
             ));
         }
         if c.la {
-            let la = l.max_mem_la.iter().map(|&x| exact(x as f64, "")).collect::<Vec<_>>().join("/");
+            let la = l.max_mem_la.iter().map(|&x| si_trimmed(x as f64, "", 5)).collect::<Vec<_>>().join("/");
             d.push(kvc("With LA", format!("{} pts", la.replace(' ', "")), mark(l.max_mem_la == base.max_mem_la)));
         }
         if c.has_gen() {
             let (g, n) = (l.afg_max_hz, base.afg_max_hz);
-            d.push(kvc("Generator sine", exact(g.sine, "Hz"), mark(g.sine == n.sine)));
+            d.push(kvc("Generator sine", si_trimmed(g.sine, "Hz", 5), mark(g.sine == n.sine)));
             d.push(kvc(
                 "square / pulse",
                 format!("{} / {}", si_short(g.square, "Hz"), si_short(g.pulse, "Hz")),
@@ -206,21 +202,21 @@ impl Ui {
             ));
             d.push(kvc("ramp", si_short(g.ramp, "Hz"), mark(g.ramp == n.ramp)));
         }
-        d.push(kv("ADC clock", exact(l.adc_clock_hz, "Hz")));
-        if self.clock_next != l.adc_clock_hz {
-            d.push(kvc("after power off and on", exact(self.clock_next, "Hz"), AMBER));
+        d.push(kv("ADC clock", si_trimmed(l.adc_clock_hz, "Hz", 5)));
+        if self.overclock.hz != l.adc_clock_hz {
+            d.push(kvc("after power off and on", si_trimmed(self.overclock.hz, "Hz", 5), AMBER));
         }
         if c.has_gen() {
-            d.push(kv("Generator clock", exact(l.afg_clock_hz, "Hz")));
+            d.push(kv("Generator clock", si_trimmed(l.afg_clock_hz, "Hz", 5)));
         }
         d.push(Row::Head("Acquisition now".into()));
         d.push(kv("Channels on", format!("{} of {}", self.m.n_on(), n_ch())));
         let (sr, depth) = self.src.rate_depth(&self.m);
         d.push(kv("Sample rate", si_short(sr, "Sa/s")));
         d.push(kv("Record", si_short(depth as f64, "pts")));
-        d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));
-        d.push(kv("Waveforms", fmt_count(self.wfm_total as f64)));
-        let (acq, used, dropped) = crate::drawpipe::counters().read();
+        d.push(kv("Waveforms/s", format!("{:.0}", self.counts.wfm_rate)));
+        d.push(kv("Waveforms", fmt_count(self.counts.wfm_total as f64)));
+        let (acq, used, dropped) = crate::board::pipe::counters().read();
         if acq > 0 {
             d.push(kv(
                 "Frames used",
@@ -232,13 +228,13 @@ impl Ui {
                 ),
             ));
             // short time bases measure the interpolated record: those frames stay out of the statistics
-            let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
+            let measured = crate::board::pipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
             d.push(kv(
                 "Frames in statistics",
                 format!("{} of {} (not at short time bases)", fmt_count(measured as f64), fmt_count(used as f64)),
             ));
         }
-        d.push(kv("Screen", format!("{:.0} fps", self.fps)));
+        d.push(kv("Screen", format!("{:.0} fps", self.counts.fps)));
         if p.experimental() {
             d.push(Row::Head("Experimental limits".into()));
             d.extend(p.overrides.iter().map(|o| Row::Note(o.clone(), AMBER)));
@@ -251,7 +247,7 @@ impl Ui {
     }
 
     pub(super) fn draw_sysinfo(&self, cv: &mut Canvas) {
-        let Some(cols) = &self.sysinfo else { return };
+        let Some(cols) = &self.sysinfo.rows else { return };
         let f = self.fonts();
         let scr = self.scr.rect();
         cv.blend(scr, rgb(0, 0, 0), 140);
@@ -380,8 +376,8 @@ mod tests {
     fn opens_refreshes_and_closes_like_a_dialog() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.activate(Item::SysInfo);
-        assert!(ui.sysinfo.is_some() && ui.dialog.is_some());
-        let rows = ui.sysinfo.as_ref().unwrap();
+        assert!(ui.sysinfo.rows.is_some() && ui.dialog.is_some());
+        let rows = ui.sysinfo.rows.as_ref().unwrap();
         // unit, temperatures, limits; the default platform is the DHO924S with the standard limits
         assert!(rows.iter().all(|c| !c.is_empty()));
         assert!(rows[0].iter().any(|r| matches!(r, Row::Kv(k, v, _) if k == "Model" && v.contains("DHO924S"))));
@@ -393,14 +389,14 @@ mod tests {
         // any key closes it; the next frame forgets the rows
         ui.key(key::RUNSTOP);
         ui.step(0.02);
-        assert!(ui.dialog.is_none() && ui.sysinfo.is_none());
+        assert!(ui.dialog.is_none() && ui.sysinfo.rows.is_none());
     }
 
     #[test]
-    fn exact_values() {
-        assert_eq!(exact(312.5e6, "Sa/s"), "312.5 MSa/s");
-        assert_eq!(exact(1.25e9, "Hz"), "1.25 GHz");
-        assert_eq!(exact(156.25e6, "Hz"), "156.25 MHz");
-        assert_eq!(exact(125e6, "pts"), "125 Mpts");
+    fn trimmed_values() {
+        assert_eq!(si_trimmed(312.5e6, "Sa/s", 5), "312.5 MSa/s");
+        assert_eq!(si_trimmed(1.25e9, "Hz", 5), "1.25 GHz");
+        assert_eq!(si_trimmed(156.25e6, "Hz", 5), "156.25 MHz");
+        assert_eq!(si_trimmed(125e6, "pts", 5), "125 Mpts");
     }
 }

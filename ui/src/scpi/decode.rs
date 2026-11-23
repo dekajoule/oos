@@ -6,9 +6,9 @@
 //! `INPut`, `EVENts?`, `BUSY?`, `CPHY:RATE`). A new decoder command goes into `bus_cmd` or `decode_cmd` here, with
 //! its line in docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{block, e, kw, nearest_index, num, parse_bool, parse_wave, suffix, Scpi};
+use super::{block, e, kw, nearest_index, num, num64, parse_bool, parse_wave, suffix, t, Scpi};
 use crate::model::*;
-use crate::protocols::PROTOS;
+use crate::protocols::{Decoder, PROTOS};
 use crate::ui::Ui;
 
 pub(super) fn bus_index(tok: &str) -> Option<usize> {
@@ -64,8 +64,8 @@ fn put_bus_wave(ui: &mut Ui, slot: usize, protocol: Proto, role: usize, source: 
     } else {
         ui.m.dec_la_in = false;
         match role {
-            0 => ui.m.dec_src = source.unwrap(),
-            1 => ui.m.dec_src2 = source.unwrap(),
+            0 => ui.m.dec_src = source.unwrap_or(ui.m.dec_src),
+            1 => ui.m.dec_src2 = source.unwrap_or(ui.m.dec_src2),
             2 => ui.m.dec_cs = source,
             _ => unreachable!(),
         }
@@ -121,7 +121,6 @@ fn parse_proto(arg: &str) -> Option<Proto> {
 impl Scpi {
     /// One of the four decoders. RS232 is the screen's UART. The event table is one window for every bus.
     pub(super) fn bus_cmd(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         let cfg = ui.m.dec_slot(k);
         if n.len() == 1 && kw(n0, "MODE") {
@@ -172,24 +171,14 @@ impl Scpi {
             if query {
                 return t(if ui.decode_table_on() { "1" } else { "0" });
             }
-            return match parse_bool(arg) {
-                Some(on) => {
-                    ui.set_decode_table(on);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_bool(arg), |ui, on| ui.set_decode_table(on));
         }
         if n.len() == 1 && kw(n0, "THReshold") {
             if query {
                 return t(&e(cfg.thr as f64));
             }
             let num = arg.split(',').next_back().unwrap_or("").trim();
-            let Some(v) = num.parse::<f64>().ok().filter(|v| v.is_finite()) else {
+            let Some(v) = num64(num) else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
@@ -213,18 +202,7 @@ impl Scpi {
             return self.bus_spi_source(ui, k, n, query, arg);
         }
         if n.len() == 2 && kw(n0, "SPI") && kw(n[1], "DBITs") {
-            if query {
-                return t(&format!("{}", cfg.bits));
-            }
-            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (4..=32).contains(v)) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            with_bus(ui, k, |m| {
-                m.dec_proto = Proto::SPI;
-                m.dec_bits = v;
-            });
-            return None;
+            return self.bus_bits(ui, k, Proto::SPI, 4..=32, query, arg);
         }
         self.push_err(format!("-113,\"Undefined header\" :BUS{}:{}", k + 1, n.join(":")));
         None
@@ -232,7 +210,6 @@ impl Scpi {
 
     /// `:BUS<n>:DATA?`: the decoder's protocol and its rows of the event table.
     fn bus_data(&mut self, ui: &Ui, k: usize) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         let events = match ui.decode_events_result() {
             Ok(events) => events,
@@ -253,7 +230,6 @@ impl Scpi {
 
     /// `:BUS<n>:IIC:SCLK|SDA:SOURce` (`n` without the root).
     fn bus_iic_source(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         let clock = kw(n[1], "SCLK");
         if query {
@@ -271,7 +247,6 @@ impl Scpi {
 
     /// `:BUS<n>:SPI:SCLK|MOSI|SS:SOURce` (`n` without the root); SS takes OFF.
     fn bus_spi_source(&mut self, ui: &mut Ui, k: usize, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         let role = if kw(n[1], "SCLK") {
             1
@@ -305,7 +280,6 @@ impl Scpi {
     }
 
     fn bus_rs232(&mut self, ui: &mut Ui, k: usize, which: &str, query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let cfg = ui.m.dec_slot(k);
         if kw(which, "TX") || kw(which, "RX") {
             let role = usize::from(kw(which, "RX"));
@@ -325,7 +299,7 @@ impl Scpi {
             if query {
                 return t(&format!("{}", crate::decode::BAUDS[cfg.baud.min(crate::decode::BAUDS.len() - 1)] as u64));
             }
-            let Some(v) = arg.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) else {
+            let Some(v) = num64(arg).filter(|v| *v > 0.0) else {
                 self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
                 return None;
             };
@@ -364,20 +338,34 @@ impl Scpi {
             return None;
         }
         if kw(which, "DBITs") {
-            if query {
-                return t(&format!("{}", cfg.bits));
-            }
-            let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| (5..=9).contains(v)) else {
-                self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                return None;
-            };
-            with_bus(ui, k, |m| {
-                m.dec_proto = Proto::UART;
-                m.dec_bits = v;
-            });
-            return None;
+            return self.bus_bits(ui, k, Proto::UART, 5..=9, query, arg);
         }
         self.push_err(format!("-113,\"Undefined header\" :BUS{}:RS232:{}", k + 1, which));
+        None
+    }
+
+    /// `:BUS<n>:SPI:DBITs` and `:BUS<n>:RS232:DBITs`: the word length of bus `k`, which a command sets to one of
+    /// `bits` with the protocol `proto`.
+    fn bus_bits(
+        &mut self,
+        ui: &mut Ui,
+        k: usize,
+        proto: Proto,
+        bits: std::ops::RangeInclusive<u32>,
+        query: bool,
+        arg: &str,
+    ) -> Option<Vec<u8>> {
+        if query {
+            return t(&format!("{}", ui.m.dec_slot(k).bits));
+        }
+        let Some(v) = arg.trim().parse::<u32>().ok().filter(|v| bits.contains(v)) else {
+            self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+            return None;
+        };
+        with_bus(ui, k, |m| {
+            m.dec_proto = proto;
+            m.dec_bits = v;
+        });
         None
     }
 

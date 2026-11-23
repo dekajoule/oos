@@ -1,9 +1,9 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Tests of the acquisition per frame: live raw and pair records with their background measurements, STOP with the
-//! final raw frame, Clear and RUN after STOP, the trace brightness per picture, hardware trigger status, hardware
-//! segments, the fast path for queued frames and hardware averaging. Other tests of the screen are in `tests.rs`.
+//! Tests of the acquisition per frame: live raw and pair records with their background measurements, the trace
+//! brightness per picture, hardware trigger status, hardware segments, the fast path for queued frames and hardware
+//! averaging. STOP and SINGLE are in `stop_tests.rs`, other tests of the screen in `tests.rs`.
 
 // Break it catches (unit 2026-11-13, 1 ms/div 10 M, meas.deep_raw = on): the background measurement measuring the
 // newest record when the worker gets free. Raw deep records come once a second between pair records (held), so it
@@ -46,7 +46,7 @@ fn live_raw_at(tdiv: f64) {
         // a new value each round: a measurement that stays at the last one is caught too
         let high = 2.0 + round as f32;
         // the worker is still on the previous record when the raw one comes, and pair records follow
-        ui.meas_bg.as_mut().unwrap().busy = true;
+        ui.meas_bg.worker.as_mut().unwrap().busy = true;
         seq += 1;
         shared.lock().unwrap().queue.push_back(frame(seq, false, raw(high)));
         // one batch of one frame each at 2 and 5 ms/div: the next pair record is queued before the UI looks
@@ -60,7 +60,7 @@ fn live_raw_at(tdiv: f64) {
             shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
             ui.step(0.02);
         }
-        ui.meas_bg.as_mut().unwrap().busy = false;
+        ui.meas_bg.worker.as_mut().unwrap().busy = false;
         for _ in 0..50 {
             ui.step(0.02);
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -100,20 +100,20 @@ fn clear_drops_the_record_waiting_for_the_worker() {
         let t = std::time::Instant::now();
         loop {
             ui.step(0.02);
-            if (!ui.meas_bg.as_ref().unwrap().busy && !ui.meas_want) || t.elapsed().as_secs() > 20 {
+            if (!ui.meas_bg.worker.as_ref().unwrap().busy && !ui.meas_bg.want) || t.elapsed().as_secs() > 20 {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     };
     // a raw deep record waits for the busy worker
-    ui.meas_bg.as_mut().unwrap().busy = true;
+    ui.meas_bg.worker.as_mut().unwrap().busy = true;
     shared.lock().unwrap().queue.push_back(frame(1, false, 10_000_000, 2.0));
     ui.step(0.02);
-    assert!(ui.meas_pending.is_some());
+    assert!(ui.meas_bg.pending.is_some());
     ui.clear_display();
     // the worker is free and a shallow record comes: it is the one measured
-    ui.meas_bg.as_mut().unwrap().busy = false;
+    ui.meas_bg.worker.as_mut().unwrap().busy = false;
     shared.lock().unwrap().queue.push_back(frame(2, false, 100_000, 4.0));
     wait(&mut ui);
     // a deep pair record: its measurement stays that of the last record measured
@@ -210,25 +210,25 @@ fn live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame() {
     steps(&mut ui, 2);
     let avg = ui.meas(0, Meas::Vavg);
     assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
-    let counted = ui.mstat.first().map_or(0, |s| s.n);
+    let counted = ui.results.rows.first().map_or(0, |s| s.n);
     for seq in 2..5 {
         shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
         steps(&mut ui, 2);
         assert_eq!(ui.meas(0, Meas::Vavg), avg);
         assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
     }
-    assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+    assert_eq!(ui.results.rows.first().map_or(0, |s| s.n), counted);
     // STOP on a pair record: the final raw frame is asked for and shown
     ui.m.run = RunState::Stop;
     steps(&mut ui, 1);
-    assert!(ui.stop_final.is_some() && shared.lock().unwrap().final_req == 1);
+    assert!(ui.stop.final_until.is_some() && shared.lock().unwrap().final_req == 1);
     {
         let mut g = shared.lock().unwrap();
         g.queue.push_back(frame(5, false, raw.iter().map(|x| 2.0 * x).collect()));
         g.final_ack = 1;
     }
     steps(&mut ui, 2);
-    assert!(ui.stop_final.is_none());
+    assert!(ui.stop.final_until.is_none());
     assert_eq!(
         ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope)),
         Some((5, false))
@@ -253,326 +253,6 @@ fn protocol_watch_and_xy_ask_for_raw_frames() {
     ui.xy = false;
     ui.step(0.02);
     assert!(!shared.lock().unwrap().needs_raw);
-}
-
-// Break it catches (docs/fork/stop-exact.md): a STOP that keeps the pair record on screen while the measurements
-// show an older raw record, a final frame not taken or taken after the stop, frames after it taken, the hardware
-// left arming in STOP or held in RUN, a STOP waiting forever, a plain STOP of a shallow record waiting at all
-#[test]
-fn stop_shows_the_final_raw_frame_of_a_deep_record() {
-    use super::*;
-    crate::deepmeas::force(Some(true));
-    let shared: crate::board::HwShared = Default::default();
-    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-    ui.m.run = RunState::Run;
-    for c in 1..NCH {
-        ui.m.ch[c].on = false;
-    }
-    ui.m.meas = vec![(Meas::Vavg, WaveId::Ch(0))];
-    ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
-    let window = ui.m.time_per_div() as f64 * HDIV as f64;
-    let n = 40_000usize;
-    let frame = |seq: u64, envelope: bool, acq: usize, v: Vec<f32>| crate::board::Frame {
-        seq,
-        dt: window * 1.2 / n as f64,
-        pre: n / 2,
-        ch: [v, Vec::new(), Vec::new(), Vec::new()],
-        envelope,
-        acq: (1e9, acq),
-        ..Default::default()
-    };
-    let raw = |top: f32| -> Vec<f32> { (0..n).map(|i| if (i / 50) % 4 == 0 { top } else { 0.0 }).collect() };
-    let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 1.0 }).collect();
-    let steps = |ui: &mut Ui, k: usize| {
-        for _ in 0..k {
-            ui.step(0.02);
-        }
-    };
-    shared.lock().unwrap().queue.push_back(frame(1, true, 10_000_000, pairs.clone()));
-    steps(&mut ui, 3);
-    assert!(!shared.lock().unwrap().hold);
-    // STOP on a pair record: the thread is held and asked for the final frame, the UI waits for it
-    ui.m.run = RunState::Stop;
-    steps(&mut ui, 2);
-    {
-        let g = shared.lock().unwrap();
-        assert!(g.hold && g.final_req == 1);
-    }
-    assert!(
-        ui.stop_final.is_some()
-            && ui.last[0].as_ref().is_some_and(|r| r.raw.as_ref().is_some_and(|x| x.frame.envelope))
-    );
-    // the thread: the last frame of the batch in progress, then the newest frame raw, then the answer
-    {
-        let mut g = shared.lock().unwrap();
-        g.queue.push_back(frame(2, true, 10_000_000, pairs.clone()));
-        g.queue.push_back(frame(3, false, 10_000_000, raw(2.0)));
-        g.final_ack = 1;
-    }
-    steps(&mut ui, 2);
-    assert!(ui.stop_final.is_none());
-    let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
-    assert_eq!(shown, Some((3, false)), "the final raw frame is the record shown");
-    let avg = ui.meas(0, Meas::Vavg);
-    assert!((avg - 0.5).abs() < 0.03, "mean of the record shown: {}", avg);
-    assert_eq!(ui.m.status, TrigStatus::Stop);
-    // frames after it stay unseen in STOP
-    shared.lock().unwrap().queue.push_back(frame(4, false, 10_000_000, raw(4.0)));
-    steps(&mut ui, 2);
-    assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
-    assert!(shared.lock().unwrap().hold);
-    // RUN: armed again
-    ui.m.run = RunState::Run;
-    steps(&mut ui, 1);
-    assert!(!shared.lock().unwrap().hold);
-    // no answer: the STOP ends after STOP_FINAL_WAIT anyway
-    shared.lock().unwrap().queue.clear();
-    shared.lock().unwrap().queue.push_back(frame(5, true, 10_000_000, pairs.clone()));
-    steps(&mut ui, 2);
-    ui.m.run = RunState::Stop;
-    steps(&mut ui, 2);
-    assert!(ui.stop_final.is_some());
-    steps(&mut ui, (STOP_FINAL_WAIT / 0.02) as usize + 2);
-    assert!(ui.stop_final.is_none() && ui.m.status == TrigStatus::Stop);
-    // a shallow record: STOP holds the thread at once, without a final frame
-    ui.m.run = RunState::Run;
-    steps(&mut ui, 1);
-    shared.lock().unwrap().queue.push_back(frame(6, false, 100_000, raw(1.0)));
-    steps(&mut ui, 2);
-    ui.m.run = RunState::Stop;
-    steps(&mut ui, 1);
-    assert!(ui.stop_final.is_none() && shared.lock().unwrap().hold && shared.lock().unwrap().final_req == 2);
-    crate::deepmeas::force(None);
-}
-
-// Break it catches (docs/fork/stop-exact.md): after the final raw frame of a deep record the view read again in
-// STOP (`stop_replay`, min/max pairs of the whole record) replaced the record measured, so Mean, RMS, Std dev and
-// AC RMS went to NaN one step after the STOP; a view counted in the statistics; a raw window read for a view far
-// zoomed in not measured; the raw record of the STOP not measured again once the view is pairs again
-#[test]
-fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
-    use super::*;
-    crate::deepmeas::force(Some(true));
-    let shared: crate::board::HwShared = Default::default();
-    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-    ui.m.run = RunState::Run;
-    for c in 1..NCH {
-        ui.m.ch[c].on = false;
-    }
-    let ch1 = WaveId::Ch(0);
-    let kinds = [Meas::Vavg, Meas::Vrms, Meas::StdDev, Meas::VrmsAc, Meas::Vmax];
-    ui.m.meas = kinds.iter().map(|&k| (k, ch1)).collect();
-    ui.m.meas2.clear();
-    ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
-    let window = ui.m.time_per_div() as f64 * HDIV as f64;
-    let n = 40_000usize;
-    let frame = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
-        seq,
-        dt: window * 1.2 / n as f64,
-        pre: n / 2,
-        ch: [v, Vec::new(), Vec::new(), Vec::new()],
-        envelope,
-        acq: (1e9, 10_000_000),
-        ..Default::default()
-    };
-    // what the thread answers for a view in STOP: the stored record read again, trigger at the point given
-    let view = |seq: u64, envelope: bool, v: Vec<f32>| crate::board::Frame {
-        fixed_ti: Some((n / 2) as f64),
-        ..frame(seq, envelope, v)
-    };
-    // a square of a quarter duty, 2 V high: mean 0.5, RMS 1, std dev and AC RMS sqrt(0.75)
-    let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 2.0 } else { 0.0 }).collect();
-    let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 2.0 }).collect();
-    let steps = |ui: &mut Ui, k: usize| {
-        for _ in 0..k {
-            ui.step(0.02);
-        }
-    };
-    let check = |ui: &Ui, what: &str| {
-        let sd = 0.75f64.sqrt();
-        for (k, want) in kinds.into_iter().zip([0.5, 1.0, sd, sd, 2.0]) {
-            let v = ui.meas(0, k);
-            assert!((v - want).abs() < 0.03, "{}: {:?} {} instead of {}", what, k, v, want);
-        }
-    };
-    shared.lock().unwrap().queue.push_back(frame(1, true, pairs.clone()));
-    steps(&mut ui, 3);
-    ui.m.run = RunState::Stop;
-    steps(&mut ui, 2);
-    {
-        let mut g = shared.lock().unwrap();
-        g.queue.push_back(frame(2, false, raw.clone()));
-        g.final_ack = 1;
-    }
-    steps(&mut ui, 2);
-    assert!(ui.stop_final.is_none());
-    check(&ui, "the final raw frame");
-    let counted = ui.mstat[0].n;
-    assert!(counted > 0);
-    // the view of the STOP read again as pairs: drawn, while the raw frame stays the record measured
-    steps(&mut ui, 1);
-    assert!(shared.lock().unwrap().stop_view.is_some(), "the UI asks for the view read again");
-    shared.lock().unwrap().replay = Some(view(3, true, pairs.clone()));
-    steps(&mut ui, 2);
-    check(&ui, "the view read as pairs");
-    assert_eq!(ui.mstat[0].n, counted, "the view counted in the statistics");
-    let measured = |ui: &Ui| ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
-    let drawn = |ui: &Ui| ui.stop_picture().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
-    assert_eq!(measured(&ui), Some(2));
-    assert_eq!(drawn(&ui), Some((3, true)), "the pairs read for the view are drawn");
-    // zoomed in and out (a new time base clears the statistics, as any setting): the screen part of the raw frame
-    for d in [-1, 1] {
-        ui.adjust(Item::HScale, d);
-        steps(&mut ui, 1);
-        shared.lock().unwrap().replay = Some(view(4, true, pairs.clone()));
-        steps(&mut ui, 2);
-        check(&ui, "a new view read as pairs");
-        assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
-        assert_eq!(measured(&ui), Some(2));
-        assert_eq!(drawn(&ui), Some((4, true)));
-    }
-    // far zoomed in the thread reads every sample of the view: that window is the record measured, as before
-    ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
-    steps(&mut ui, 1);
-    shared.lock().unwrap().replay = Some(view(5, false, vec![3.0; n]));
-    steps(&mut ui, 2);
-    assert_eq!(measured(&ui), Some(5));
-    assert_eq!(drawn(&ui), None, "the raw window is drawn as the record shown");
-    assert!((ui.meas(0, Meas::Vavg) - 3.0).abs() < 1e-3, "mean of the raw window {}", ui.meas(0, Meas::Vavg));
-    // zoomed out again: pairs, measured from the raw frame of the STOP again
-    ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
-    steps(&mut ui, 1);
-    shared.lock().unwrap().replay = Some(view(6, true, pairs.clone()));
-    steps(&mut ui, 2);
-    assert_eq!((measured(&ui), drawn(&ui)), (Some(2), Some((6, true))));
-    check(&ui, "pairs after the raw window");
-    assert!(ui.mstat.iter().all(|s| s.n == 0));
-    // RUN: the record of the STOP is let go
-    ui.m.run = RunState::Run;
-    shared.lock().unwrap().queue.push_back(frame(7, true, pairs.clone()));
-    steps(&mut ui, 2);
-    assert!(ui.stop_raw.is_none() && ui.stop_picture().is_none());
-    crate::deepmeas::force(None);
-}
-
-// Break it catches: the stored record read again in STOP (`stop_replay`) counted as a new record in the statistics,
-// the trend and the catalog, once at the STOP and once for every view after it
-#[test]
-fn stop_reads_the_record_again_without_counting_it() {
-    use super::*;
-    crate::deepmeas::force(Some(false));
-    let shared: crate::board::HwShared = Default::default();
-    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-    ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
-    ui.m.trig_level = 0.0;
-    ui.m.ch[0].offset = 0.0;
-    for c in 1..NCH {
-        ui.m.ch[c].on = false;
-    }
-    ui.m.meas = vec![(Meas::Vmax, WaveId::Ch(0))];
-    ui.m.meas2.clear();
-    let (n, dt) = (12_500usize, 0.8e-9);
-    let frame = |seq: u64, top: f32| {
-        let v: Vec<f32> = (0..n).map(|k| if (k + n / 2) % 1000 < 200 { top } else { -1.0 }).collect();
-        let ch = [v, Vec::new(), Vec::new(), Vec::new()];
-        crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
-    };
-    // what the thread answers for the view shown in STOP: the stored record read again
-    let replay = |seq: u64, top: f32| crate::board::Frame { fixed_ti: Some((n / 2) as f64), ..frame(seq, top) };
-    shared.lock().unwrap().queue.push_back(frame(1, 1.0));
-    ui.step(0.05);
-    assert_eq!(ui.mstat[0].n, 1);
-    ui.m.run = RunState::Stop;
-    ui.step(0.05);
-    assert!(shared.lock().unwrap().stop_view.is_some(), "the UI asks for the view read again");
-    shared.lock().unwrap().replay = Some(replay(2, 1.0));
-    ui.step(0.05);
-    assert_eq!(ui.mstat[0].n, 1, "the record of the STOP counted again");
-    // a new view: the statistics start over, the record read again for it is shown and measured, not counted
-    for (k, top) in [(1, 1.5), (-1, 2.0)] {
-        ui.adjust(Item::HScale, k);
-        ui.step(0.05);
-        shared.lock().unwrap().replay = Some(replay(3, top));
-        ui.step(0.05);
-        assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
-        assert!((ui.meas(0, Meas::Vmax) - top as f64).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
-        assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
-    }
-    crate::deepmeas::force(None);
-}
-
-// Break it catches: Clear in STOP releasing the hold (the hold asked for a record shown): the thread armed while
-// stopped, overwrote the stored record and filled the queue, which the next RUN took; a source started in STOP
-// without its first record
-#[test]
-fn clear_in_stop_keeps_the_hardware_held() {
-    use super::*;
-    crate::deepmeas::force(Some(false));
-    let shared: crate::board::HwShared = Default::default();
-    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-    ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
-    for c in 1..NCH {
-        ui.m.ch[c].on = false;
-    }
-    let (n, dt) = (12_500usize, 0.8e-9);
-    let frame = |seq: u64| {
-        let ch = [vec![0.5; n], Vec::new(), Vec::new(), Vec::new()];
-        crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
-    };
-    // started in STOP: not held until the first record is here
-    ui.m.run = RunState::Stop;
-    ui.step(0.05);
-    assert!(!shared.lock().unwrap().hold, "a source started in STOP gets its first record");
-    shared.lock().unwrap().queue.push_back(frame(1));
-    ui.step(0.05);
-    ui.step(0.05);
-    assert!(ui.last[0].is_some() && shared.lock().unwrap().hold);
-    ui.clear_display();
-    for _ in 0..3 {
-        ui.step(0.05);
-    }
-    assert!(ui.last[0].is_none() && shared.lock().unwrap().hold, "Clear in STOP released the hardware");
-    ui.m.run = RunState::Run;
-    ui.step(0.05);
-    assert!(!shared.lock().unwrap().hold);
-    crate::deepmeas::force(None);
-}
-
-// Break it catches: RUN after STOP taking a frame queued before the RUN (the batch in progress at the STOP) as the
-// first record of the run, before the thread dropped the queue on its next pass
-#[test]
-fn run_after_stop_takes_no_frame_from_before() {
-    use super::*;
-    crate::deepmeas::force(Some(false));
-    let shared: crate::board::HwShared = Default::default();
-    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
-    ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
-    for c in 1..NCH {
-        ui.m.ch[c].on = false;
-    }
-    let (n, dt) = (12_500usize, 0.8e-9);
-    let frame = |seq: u64| {
-        let ch = [vec![0.5; n], Vec::new(), Vec::new(), Vec::new()];
-        crate::board::Frame { seq, dt, pre: n / 2, ch, acq: (1.0 / dt, n), ..Default::default() }
-    };
-    let seq = |ui: &Ui| ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
-    shared.lock().unwrap().queue.push_back(frame(1));
-    ui.step(0.05);
-    ui.m.run = RunState::Stop;
-    ui.step(0.05);
-    assert!(shared.lock().unwrap().hold);
-    // the batch in progress at the STOP is read and queued; the UI takes nothing in STOP
-    shared.lock().unwrap().queue.push_back(frame(2));
-    ui.step(0.05);
-    assert_eq!(seq(&ui), Some(1));
-    ui.m.run = RunState::Run;
-    ui.step(0.05);
-    assert_eq!(seq(&ui), Some(1), "a frame acquired before the RUN became the first record of the run");
-    // what the thread acquires after the RUN is taken
-    shared.lock().unwrap().queue.push_back(frame(3));
-    ui.step(0.05);
-    assert_eq!(seq(&ui), Some(3));
-    crate::deepmeas::force(None);
 }
 
 // Break it catches (deepmeas.rs): with raw deep reads on, a pair record measured between two raw ones (Mean back
@@ -618,7 +298,7 @@ fn deep_raw_records_carry_the_measurements_between_pair_records() {
     step(&mut ui);
     let avg = ui.meas(0, Meas::Vavg);
     assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
-    let counted = ui.mstat.first().map_or(0, |s| s.n);
+    let counted = ui.results.rows.first().map_or(0, |s| s.n);
     // pair records keep the raw record's values, the statistics do not count them
     for seq in 3..6 {
         push(seq, true, pairs(1.5));
@@ -626,7 +306,7 @@ fn deep_raw_records_carry_the_measurements_between_pair_records() {
         assert_eq!(ui.meas(0, Meas::Vavg), avg);
         assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
     }
-    assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+    assert_eq!(ui.results.rows.first().map_or(0, |s| s.n), counted);
     // off: pair records are measured (mean-type NaN, max of the pairs)
     crate::deepmeas::force(Some(false));
     push(6, true, pairs(1.5));
@@ -677,7 +357,7 @@ fn hardware_pictures_look_the_same_whatever_the_frames_per_picture() {
             }
         }
         ui.step(0.033);
-        let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+        let (lut, sh, _) = ui.trace_lut(ui.grade.vmax[0]);
         ui.ph.map[0].iter().map(|&c| if c == 0 { 0 } else { lut[((c as u32) >> sh).min(1023) as usize] }).collect()
     };
     let first = picture(&mut ui, 3);
@@ -748,9 +428,9 @@ fn equal_frames_give_equal_brightness_whatever_their_number() {
         for _ in 0..n {
             ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
         }
-        ui.pic_frames = n;
+        ui.grade.frames = n;
         ui.grade_refs();
-        let (lut, sh, _) = ui.trace_lut(ui.vmax[0]);
+        let (lut, sh, _) = ui.trace_lut(ui.grade.vmax[0]);
         // as `draw_traces`: an empty pixel stays dark
         ui.ph.map[0].iter().map(|&k| if k == 0 { 0 } else { lut[((k as u32) >> sh).min(1023) as usize] }).collect()
     };
@@ -762,12 +442,12 @@ fn equal_frames_give_equal_brightness_whatever_their_number() {
     }
     // the plain grade (longer persistence) is what pumped: one frame after sixteen is graded against 16 times its
     // counts
-    ui.pic_frames = 0;
+    ui.grade.frames = 0;
     ui.m.persist = 1;
     let _ = picture(&mut ui, 16);
-    ui.pic_frames = 0;
+    ui.grade.frames = 0;
     ui.grade_refs();
-    let bright = |ui: &super::Ui| ui.vmax[0];
+    let bright = |ui: &super::Ui| ui.grade.vmax[0];
     let before = bright(&ui);
     ui.ph.clear();
     ui.ph.draw_ex(0, &ui.m.clone(), (tdiv, 0.0), -window / 2.0, window / 3600.0, &v, 24, None, false);
@@ -781,7 +461,7 @@ fn equal_frames_give_equal_brightness_whatever_their_number() {
 fn background_measurements_follow_a_running_record() {
     let mut u = crate::ui::testkit::demo_ui();
     u.measure_in_background();
-    let n = |u: &super::Ui| u.mstat.iter().map(|s| s.n).max().unwrap_or(0);
+    let n = |u: &super::Ui| u.results.rows.iter().map(|s| s.n).max().unwrap_or(0);
     for _ in 0..120 {
         u.step(1.0 / 30.0);
         std::thread::sleep(std::time::Duration::from_millis(3));
@@ -816,7 +496,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
         ui.step(0.02);
     }
     assert_eq!(ui.m.run, RunState::Run);
-    assert_eq!(ui.seg_view.unwrap().recorded, 40);
+    assert_eq!(ui.seg.view.unwrap().recorded, 40);
     // read back: 100 stamps 10 us apart, the frames went through the queue; done once the queue is empty
     {
         let mut g = shared.lock().unwrap();
@@ -841,7 +521,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
     };
     shared.lock().unwrap().seg.shown = Some((98, f));
     ui.step(0.02);
-    assert_eq!(ui.seg_pos, Some(98));
+    assert_eq!(ui.seg.pos, Some(98));
     assert!(ui.last[0].is_some());
     assert!(shared.lock().unwrap().seg.shown.is_none());
     // the table and SCPI have every stamp
@@ -854,7 +534,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
     ui.m.run = RunState::Run;
     ui.step(0.02);
     assert_eq!(shared.lock().unwrap().seg.run, 2);
-    assert!(ui.seg_times.is_empty());
+    assert!(ui.seg.times.is_empty());
 }
 
 // Break it catches: the software limit applied to hardware segments, or the hardware limit to the software history.
@@ -891,6 +571,11 @@ fn segment_counts_follow_the_limit_of_the_set_up() {
     ui.m.seg_hw = true;
     ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
     assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
+    // 100 M points: no segment of that size fits below 256 MiB, so the software history records them (no hardware
+    // recording of zero frames)
+    ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-3).abs() < 1e-9).unwrap();
+    ui.m.mdepth = mdepths().iter().position(|d| d.1 == 100_000_000).unwrap();
+    assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
 }
 
 #[test]
@@ -907,7 +592,7 @@ fn segment_scpi() {
     q(&mut ui, ":ACQ:SEGM:INT -3");
     q(&mut ui, ":ACQ:SEGM OFF");
     assert_eq!((ui.m.segments, ui.m.seg_ivl), (0, 0.0));
-    ui.seg_times = vec![Some(0.0), None, Some(2e-3)];
+    ui.seg.times = vec![Some(0.0), None, Some(2e-3)];
     assert_eq!(q(&mut ui, ":ACQ:SEGM:TIM?"), "0e0,9.9E37,2e-3");
 }
 /// Fast display path: every queued hardware frame is drawn, the newest also becomes the record.
@@ -945,7 +630,7 @@ fn fast_path_draws_every_queued_frame() {
     ui.m.ch[0].offset = 0.0;
     assert!(ui.fast_ok());
     ui.step(0.05);
-    assert_eq!(ui.wfm_total, 10);
+    assert_eq!(ui.counts.wfm_total, 10);
     assert!(shared.lock().unwrap().queue.is_empty());
     assert_eq!(ui.m.status, TrigStatus::Triggered);
     // the zero crossing sits at the centre of the plot in every frame: the centre column is lit at the middle row
@@ -1028,8 +713,8 @@ fn fast_path_on_several_cores_draws_as_one_by_one() {
         // measured, which under load (tests in parallel) is less
         let take = ui.fast_max() + 1;
         ui.step(0.05);
-        assert_eq!(ui.wfm_total, 41);
-        assert_eq!(ui.records, 1);
+        assert_eq!(ui.counts.wfm_total, 41);
+        assert_eq!(ui.counts.records, 1);
         assert!(shared.lock().unwrap().queue.is_empty());
         // the thread is told how many of a batch to decode; the record path wants them all
         assert_eq!(shared.lock().unwrap().take, take);
@@ -1149,19 +834,19 @@ fn statistics_take_every_frame_of_the_fast_path() {
     // the first record sets up the rows
     shared.lock().unwrap().queue.push_back(frame(0));
     ui.step(0.05);
-    assert_eq!(ui.mstat.len(), 5);
-    assert_eq!(ui.mstat[0].n, 1);
+    assert_eq!(ui.results.rows.len(), 5);
+    assert_eq!(ui.results.rows[0].n, 1);
     // 20 more: 19 by the fast path, the newest as the record
     shared.lock().unwrap().queue.extend((1..=20).map(frame));
     ui.step(0.05);
-    assert_eq!(ui.mstat[0].n, 21, "Pk-pk over every frame");
-    assert_eq!(ui.mstat[4].n, 2, "Freq only over the records");
+    assert_eq!(ui.results.rows[0].n, 21, "Pk-pk over every frame");
+    assert_eq!(ui.results.rows[4].n, 2, "Freq only over the records");
     // the largest Pk-pk is that of frame 20 (amplitude 3), the smallest that of frame 0
     assert!(
-        (ui.mstat[0].max - 6.0).abs() < 0.01 && (ui.mstat[0].min - 2.0).abs() < 0.01,
+        (ui.results.rows[0].max - 6.0).abs() < 0.01 && (ui.results.rows[0].min - 2.0).abs() < 0.01,
         "{} {}",
-        ui.mstat[0].min,
-        ui.mstat[0].max
+        ui.results.rows[0].min,
+        ui.results.rows[0].max
     );
     // a frame's fold gives the values of the measurements on the same samples
     let f = frame(7);
@@ -1199,7 +884,7 @@ fn statistics_of_the_fast_path_leave_out_what_pairs_cannot_give() {
         let ch = [v, Vec::new(), Vec::new(), Vec::new()];
         crate::board::Frame { seq, dt, pre: n / 2, ch, envelope, acq: (1.0 / dt, depth), ..Default::default() }
     };
-    let counts = |ui: &Ui| ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>();
+    let counts = |ui: &Ui| ui.results.rows.iter().map(|s| s.n).collect::<Vec<_>>();
     // deep pairs: the newest is the record (Max measured), the fast path draws the other nine
     shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000));
     ui.step(0.05);
@@ -1365,7 +1050,7 @@ fn batch_mode_uses_every_record_at_1_ms_per_div() {
         }
         f.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&f.ch[c]));
         ui.step(1.0 / 30.0);
-        let (w0, mut fed) = (ui.wfm_total, 0u64);
+        let (w0, mut fed) = (ui.counts.wfm_total, 0u64);
         for step in 0..87u64 {
             // 38 frames in 29 screens: one or two a screen
             for _ in 0..(38 * (step + 1) / 29 - 38 * step / 29) {
@@ -1375,7 +1060,7 @@ fn batch_mode_uses_every_record_at_1_ms_per_div() {
             ui.step(1.0 / 30.0);
         }
         let left = shared.lock().unwrap().queue.len() as u64;
-        assert_eq!(ui.wfm_total - w0 + left, fed, "mask {:#x}: records used", mask);
+        assert_eq!(ui.counts.wfm_total - w0 + left, fed, "mask {:#x}: records used", mask);
     }
 }
 
@@ -1427,5 +1112,143 @@ fn a_setting_changed_while_running_keeps_the_picture_until_the_next_record() {
         let next = ui.ph.map[0].clone();
         assert!(next.iter().any(|&c| c != 0), "persistence {persist}: the new record is drawn");
         assert!(next != picture, "persistence {persist}: the new record is the picture");
+    }
+}
+
+// Break it catches (#548, a DHO924S on 0.1.15): a new time base while running and waiting for a trigger kept the picture
+// of the old one. A record that filled the screen at 0.2 ms/div still filled it at 10 ms/div, a 1 kHz sine looked like
+// 20 Hz. The held record is drawn again at its own times: it takes the middle fiftieth of the screen.
+#[test]
+fn a_new_time_base_while_waiting_draws_the_held_record_at_its_own_times() {
+    use super::*;
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.run = RunState::Run;
+    for c in 1..NCH {
+        ui.m.ch[c].on = false;
+    }
+    ui.m.meas.clear();
+    ui.m.meas2.clear();
+    let at = |t: f32| tscales().iter().position(|&x| x >= t * 0.999).unwrap();
+    (ui.m.tscale, ui.m.tfine) = (at(2e-4), 1.0);
+    ui.step(0.033);
+    let window = ui.m.time_per_div() as f64 * HDIV as f64;
+    let n = 100_000usize;
+    let v: Vec<f32> = (0..n).map(|k| if (k / 500) % 2 == 1 { 0.3 } else { 0.0 }).collect();
+    shared.lock().unwrap().queue.push_back(crate::board::Frame {
+        seq: 1,
+        stamp: ui.m.hw_stamp,
+        dt: window / n as f64,
+        pre: n / 2,
+        ch: [v, Vec::new(), Vec::new(), Vec::new()],
+        ..Default::default()
+    });
+    ui.step(0.033);
+    let (w, h) = (ui.ph.w, ui.ph.h);
+    let columns = |ui: &Ui| (0..w).filter(|&x| (0..h).any(|y| ui.ph.map[0][y * w + x] != 0)).collect::<Vec<_>>();
+    let wide = columns(&ui);
+    assert!(wide.len() > w * 9 / 10, "the record fills the screen at 0.2 ms/div: {} of {w}", wide.len());
+    ui.m.tscale = at(1e-2);
+    ui.settings_changed();
+    for _ in 0..3 {
+        ui.step(0.033);
+    }
+    let narrow = columns(&ui);
+    let (lo, hi) = (*narrow.first().unwrap(), *narrow.last().unwrap());
+    assert!(hi - lo <= w / 25, "the record takes the middle fiftieth at 10 ms/div: columns {lo}..{hi} of {w}");
+    assert!(lo > w * 2 / 5 && hi < w * 3 / 5, "in the middle: columns {lo}..{hi} of {w}");
+    // the zoom switched on while waiting (no setting marked changed): its pane gets the held record too
+    ui.set_zoom(true);
+    for _ in 0..3 {
+        ui.step(0.033);
+    }
+    assert!(ui.phz.map[0].iter().any(|&c| c != 0), "the zoom pane shows the held record");
+}
+
+// Break it catches (#441, a DHO802 on 0.1.14, 100 ms persistence): the picture aged every screen step whether a record
+// had come or not. With records slower than the persistence time (slow time bases, deep memory) the newest record
+// faded out before the next one, and the trace pulsed. It ages when the next record comes, by the time since the last
+// one; with a record every step that is what it did before. The zoom picture the same way.
+#[test]
+fn timed_persistence_fades_a_record_from_the_next_one_on() {
+    for zoom in [false, true] {
+        timed_persistence_with(zoom);
+    }
+}
+
+fn timed_persistence_with(zoom: bool) {
+    use super::*;
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.run = RunState::Run;
+    ui.m.zoom = zoom;
+    ui.m.persist = PERSIST.iter().position(|p| p.1 == 0.1).unwrap();
+    let persist = PERSIST[ui.m.persist].1 as f64;
+    for c in 1..NCH {
+        ui.m.ch[c].on = false;
+    }
+    ui.m.meas.clear();
+    ui.m.meas2.clear();
+    let push = |ui: &Ui, seq: u64| {
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 100_000usize;
+        let v: Vec<f32> = (0..n).map(|k| if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }).collect();
+        shared.lock().unwrap().queue.push_back(crate::board::Frame {
+            seq,
+            stamp: ui.m.hw_stamp,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        });
+    };
+    // the main and the zoom picture of CH1
+    let maps = |ui: &Ui| [ui.ph.map[0].clone(), ui.phz.map[0].clone()];
+    // the pictures `before` aged for `t` seconds, and one record (`one`) drawn into them
+    let aged = |before: &[Vec<u16>; 2], one: &[Vec<u16>; 2], t: f64| -> [Vec<u16>; 2] {
+        std::array::from_fn(|i| {
+            let mut p = Phosphor::new(1, 1);
+            p.map[0] = before[i].clone();
+            p.decay((-t / persist).exp() as f32);
+            p.map[0].iter().zip(&one[i]).map(|(a, b)| a.saturating_add(*b)).collect()
+        })
+    };
+    let dt = 0.033;
+    ui.step(dt);
+    push(&ui, 1);
+    ui.step(dt);
+    let one = maps(&ui);
+    assert!(one[0].iter().any(|&c| c != 0), "zoom {zoom}: the record is in the picture");
+    assert_eq!(one[1].iter().any(|&c| c != 0), zoom, "the record is in the zoom picture with zoom only");
+    // slow records, one every half second: the newest stays as it was drawn until the next comes
+    let mut seq = 1;
+    let mut picture = one.clone();
+    for _ in 0..3 {
+        let mut waited = 0.0;
+        for _ in 0..15 {
+            ui.step(dt);
+            waited += dt;
+            assert!(maps(&ui) == picture, "zoom {zoom}: the newest record faded before the next one came");
+        }
+        seq += 1;
+        push(&ui, seq);
+        ui.step(dt);
+        waited += dt;
+        // the one before has aged by the half second since it came
+        let want = aged(&picture, &one, waited);
+        assert!(
+            maps(&ui) == want,
+            "zoom {zoom}, slow records: the picture is not the last one aged by the time between"
+        );
+        picture = want;
+    }
+    // fast records, one every step: aged by one step each, as before
+    for _ in 0..10 {
+        seq += 1;
+        push(&ui, seq);
+        ui.step(dt);
+        let want = aged(&picture, &one, dt);
+        assert!(maps(&ui) == want, "zoom {zoom}, fast records: the picture is not the last one aged by one step");
+        picture = want;
     }
 }

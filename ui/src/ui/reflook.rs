@@ -19,6 +19,15 @@ pub(super) enum RefLook {
     Waves,
 }
 
+/// The settings of the added measurements (ADR 0062).
+#[derive(Default)]
+pub(super) struct OwnMeas {
+    /// the settings of each added measurement; missing keys follow the shared measure menu
+    pub rows: std::collections::HashMap<(Meas, WaveId), MeasOwn>,
+    /// the settings dialog is open on this index of `m.meas`
+    pub dialog: Option<u16>,
+}
+
 /// Settings that belong to one added measurement. Unset fields follow the shared measure menu.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeasOwn {
@@ -49,6 +58,20 @@ impl MeasOwn {
             side_set: false,
             n_set: false,
             data_set: false,
+        }
+    }
+
+    /// The settings in force: its own where set, the shared measure menu's otherwise.
+    pub(super) fn effective(self, m: &Model) -> Self {
+        let shared = Self::shared(m);
+        Self {
+            low: if self.refs_set { self.low } else { shared.low },
+            high: if self.refs_set { self.high } else { shared.high },
+            idle: if self.idle_set { self.idle } else { shared.idle },
+            side: if self.side_set { self.side } else { shared.side },
+            n: if self.n_set { self.n } else { shared.n },
+            data: if self.data_set { self.data } else { shared.data },
+            ..self
         }
     }
 }
@@ -89,7 +112,7 @@ impl Ui {
                 self.relayout();
             }
             RefLook::TakeOver => {
-                if !self.offline {
+                if !self.offline.on {
                     self.remember_live();
                     self.set_offline(true);
                 }
@@ -99,7 +122,7 @@ impl Ui {
                 self.solo_reference(slot);
             }
             RefLook::Waves => {
-                if !self.offline {
+                if !self.offline.on {
                     self.remember_live();
                     self.set_offline(true);
                 }
@@ -118,7 +141,7 @@ impl Ui {
                 r.on = i == slot;
             }
         }
-        self.offline_ref = slot;
+        self.offline.slot = slot;
     }
 
     /// Every loaded reference with samples stays on screen.
@@ -131,14 +154,14 @@ impl Ui {
     }
 
     pub(super) fn waves_on(&self) -> bool {
-        self.look == RefLook::Waves && !self.view_on() && !self.xy && self.wins.len() <= 1
+        self.look == RefLook::Waves && !self.view_on() && !self.xy && self.plot.wins.len() <= 1
     }
 
     pub(super) fn waves_board_rect(&self) -> Option<Rect> {
         if !self.waves_on() {
             return None;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         if g.w < 200 || g.h < 80 {
             return None;
         }
@@ -166,7 +189,7 @@ impl Ui {
     /// A set cell inherits the first added row of this kind unless it has its own row.
     pub(super) fn set_cell(&self, kind: Meas, slot: usize) -> f64 {
         let id = WaveId::Ref(slot);
-        let owner = if self.meas_own.contains_key(&(kind, id)) || self.m.meas.contains(&(kind, id)) {
+        let owner = if self.meas_own.rows.contains_key(&(kind, id)) || self.m.meas.contains(&(kind, id)) {
             id
         } else {
             let Some(&(_, source)) = self.m.meas.iter().find(|e| e.0 == kind) else { return f64::NAN };
@@ -420,21 +443,21 @@ impl Ui {
     pub(super) fn ensure_meas_own(&mut self) {
         let fresh = MeasOwn::shared(&self.m);
         for &(k, id) in &self.m.meas.clone() {
-            self.meas_own.entry((k, id)).or_insert(fresh);
+            self.meas_own.rows.entry((k, id)).or_insert(fresh);
         }
     }
 
     pub(super) fn open_meas_cfg(&mut self, index: usize) {
         if index >= self.m.meas.len() {
-            self.meas_cfg = None;
+            self.meas_own.dialog = None;
             return;
         }
         self.ensure_meas_own();
-        self.meas_cfg = Some(index as u16);
+        self.meas_own.dialog = Some(index as u16);
     }
 
     pub(super) fn cfg_geom(&self) -> Option<CfgGeom> {
-        let index = self.meas_cfg? as usize;
+        let index = self.meas_own.dialog? as usize;
         let (k, _) = *self.m.meas.get(index)?;
         let extras = match k {
             Meas::Rise | Meas::Fall => 1,
@@ -493,10 +516,10 @@ impl Ui {
     }
 
     pub(super) fn draw_meas_cfg(&self, cv: &mut Canvas) {
-        let Some(g) = self.cfg_geom() else { return };
-        let index = self.meas_cfg.unwrap() as usize;
+        let (Some(g), Some(index)) = (self.cfg_geom(), self.meas_own.dialog) else { return };
+        let index = index as usize;
         let Some(&(k, id)) = self.m.meas.get(index) else { return };
-        let own = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
+        let own = self.meas_own.rows.get(&(k, id)).map_or_else(|| MeasOwn::shared(&self.m), |o| o.effective(&self.m));
         let f = &self.fonts();
         cv.framed(g.panel, 8, 2, ACCENT, 7, DLG_BG);
         cv.text(&f.mb, g.panel.x + 16, g.panel.y + 26, &format!("{} settings", k.name()), TEXT);
@@ -506,9 +529,8 @@ impl Ui {
         self.cfg_caption(cv, g.panel, 1, "Reference");
         let source = Rect::new(g.source_m.x, g.source_m.y, g.source_p.x + g.source_p.w - g.source_m.x, g.source_m.h);
         self.draw_stepper(cv, g.source_m, g.source_p, source, &self.wave_name(id));
-        let (low, high) = if own.refs_set { (own.low, own.high) } else { (self.m.meas_lpct, self.m.meas_hpct) };
         btn(cv, g.refs, BTN, BTN_BORDER);
-        cv.text_in(&f.mb, g.refs, 1, &format!("{:.0}/{:.0}", low * 100.0, high * 100.0), TEXT);
+        cv.text_in(&f.mb, g.refs, 1, &format!("{:.0}/{:.0}", own.low * 100.0, own.high * 100.0), TEXT);
         if matches!(k, Meas::Rise | Meas::Fall) {
             self.cfg_caption(cv, g.panel, 2, "Edges used");
             let text = self.meas_edge_coverage_caption(id, k);
@@ -516,26 +538,22 @@ impl Ui {
         }
         if let (Some(mi), Some(pl)) = (g.idle_m, g.idle_p) {
             self.cfg_caption(cv, g.panel, 2, "Idle");
-            let idle = if own.idle_set { own.idle } else { self.m.meas_idle };
-            let text = if idle > 0.0 { si_short(idle, "s") } else { "period".into() };
+            let text = if own.idle > 0.0 { si_short(own.idle, "s") } else { "period".into() };
             self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &text);
         }
         if let Some(side) = g.side {
             self.cfg_caption(cv, g.panel, 2, "Outside");
-            let which = if own.side_set { own.side } else { self.m.meas_out };
             btn(cv, side, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, side, 1, &format!("{:?}", which), TEXT);
+            cv.text_in(&f.mb, side, 1, &format!("{:?}", own.side), TEXT);
         }
         if let (Some(mi), Some(pl)) = (g.n_m, g.n_p) {
             self.cfg_caption(cv, g.panel, 2, "N periods");
-            let n = if own.n_set { own.n } else { self.m.meas_n };
-            self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &n.to_string());
+            self.draw_stepper(cv, mi, pl, Rect::new(mi.x, mi.y, pl.x + pl.w - mi.x, mi.h), &own.n.to_string());
         }
         if let Some(edges) = g.edges {
             self.cfg_caption(cv, g.panel, 3, "Edges");
-            let data = if own.data_set { own.data } else { self.m.meas_data };
             btn(cv, edges, BTN, BTN_BORDER);
-            cv.text_in(&f.mb, edges, 1, if data { "Data" } else { "Clock" }, TEXT);
+            cv.text_in(&f.mb, edges, 1, if own.data { "Data" } else { "Clock" }, TEXT);
         }
     }
 
@@ -573,11 +591,11 @@ impl Ui {
     pub(super) fn meas_cfg_tap(&mut self, x: i32, y: i32) -> bool {
         let Some(g) = self.cfg_geom() else { return false };
         if !g.panel.contains(x, y) {
-            self.meas_cfg = None;
+            self.meas_own.dialog = None;
             return true;
         }
         if g.close.contains(x, y) {
-            self.meas_cfg = None;
+            self.meas_own.dialog = None;
             return true;
         }
         if g.source_m.contains(x, y) {
@@ -603,7 +621,7 @@ impl Ui {
     }
 
     fn cfg_entry(&mut self) -> Option<(usize, Meas, WaveId)> {
-        let index = self.meas_cfg? as usize;
+        let index = self.meas_own.dialog? as usize;
         let (k, id) = *self.m.meas.get(index)?;
         self.ensure_meas_own();
         Some((index, k, id))
@@ -621,10 +639,10 @@ impl Ui {
             self.toast("That measurement is already on this source");
             return;
         }
-        let own = self.meas_own.remove(&(k, id));
+        let own = self.meas_own.rows.remove(&(k, id));
         self.m.meas[index].1 = next;
         if let Some(own) = own {
-            self.meas_own.insert((k, next), own);
+            self.meas_own.rows.insert((k, next), own);
         }
         self.clear_measurement_statistics();
     }
@@ -649,83 +667,58 @@ impl Ui {
         }
         self.ensure_meas_own();
         let (k, id) = self.m.meas[index];
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
             own.low = low;
             own.high = high;
             own.refs_set = true;
+        }
+        self.clear_measurement_statistics();
+    }
+
+    /// Changes the dialog's measurement: `edit` gets the settings in force and writes its own row.
+    fn meas_cfg_edit(&mut self, edit: impl FnOnce(MeasOwn, &mut MeasOwn)) {
+        let Some((_, k, id)) = self.cfg_entry() else { return };
+        if let Some(own) = self.meas_own.rows.get_mut(&(k, id)) {
+            edit(own.effective(&self.m), own);
         }
         self.clear_measurement_statistics();
     }
 
     fn meas_cfg_refs(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self.meas_own.get(&(k, id)).copied().unwrap_or_else(|| MeasOwn::shared(&self.m));
-        let low = if cur.refs_set { cur.low } else { self.m.meas_lpct };
-        let (low, high) = if low < 0.15 { (0.2, 0.8) } else { (0.1, 0.9) };
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.low = low;
-            own.high = high;
+        self.meas_cfg_edit(|cur, own| {
+            (own.low, own.high) = if cur.low < 0.15 { (0.2, 0.8) } else { (0.1, 0.9) };
             own.refs_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 
     fn meas_cfg_idle(&mut self, d: i32) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self
-            .meas_own
-            .get(&(k, id))
-            .map(|o| if o.idle_set { o.idle } else { self.m.meas_idle })
-            .unwrap_or(self.m.meas_idle);
-        let v = super::tools::time_step(cur, d);
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.idle = v;
+        self.meas_cfg_edit(|cur, own| {
+            own.idle = super::tools::time_step(cur.idle, d);
             own.idle_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 
     fn meas_cfg_side(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
         let all = [oos_dsp::measure::Outside::Above, oos_dsp::measure::Outside::Below, oos_dsp::measure::Outside::Both];
-        let cur = self
-            .meas_own
-            .get(&(k, id))
-            .map(|o| if o.side_set { o.side } else { self.m.meas_out })
-            .unwrap_or(self.m.meas_out);
-        let i = all.iter().position(|&x| x == cur).unwrap_or(2);
-        let v = all[(i as i32 + 1).rem_euclid(all.len() as i32) as usize];
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.side = v;
+        self.meas_cfg_edit(|cur, own| {
+            let i = all.iter().position(|&x| x == cur.side).unwrap_or(2);
+            own.side = all[(i as i32 + 1).rem_euclid(all.len() as i32) as usize];
             own.side_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 
     fn meas_cfg_n(&mut self, d: i32) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur =
-            self.meas_own.get(&(k, id)).map(|o| if o.n_set { o.n } else { self.m.meas_n }).unwrap_or(self.m.meas_n);
-        let v = (cur as i32 + d).clamp(1, 32) as u32;
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.n = v;
+        self.meas_cfg_edit(|cur, own| {
+            own.n = (cur.n as i32 + d).clamp(1, 32) as u32;
             own.n_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 
     fn meas_cfg_edges(&mut self) {
-        let Some((_, k, id)) = self.cfg_entry() else { return };
-        let cur = self
-            .meas_own
-            .get(&(k, id))
-            .map(|o| if o.data_set { o.data } else { self.m.meas_data })
-            .unwrap_or(self.m.meas_data);
-        if let Some(own) = self.meas_own.get_mut(&(k, id)) {
-            own.data = !cur;
+        self.meas_cfg_edit(|cur, own| {
+            own.data = !cur.data;
             own.data_set = true;
-        }
-        self.clear_measurement_statistics();
+        });
     }
 }
 
@@ -777,7 +770,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut u = ui();
-        u.store_dir = dir.clone();
+        u.files.dir = dir.clone();
         put(&mut u, 1, square(1.0), true);
         assert!(u.m.ch[0].on && u.look == RefLook::Live);
         let held = (u.m.tscale, u.m.tfine, u.m.delay, u.m.ch[0].on);
@@ -786,14 +779,14 @@ mod tests {
             csv.push_str(&format!("{:.12e},{}\n", i as f64 * 1e-9, x));
         }
         std::fs::write(dir.join("ref1.csv"), csv).unwrap();
-        u.ref_sel = 0;
+        u.ref_page.sel = 0;
         u.activate(Item::RefImport);
         assert_eq!(u.look, RefLook::Live, "import adds a reference without changing the live acquisition");
-        assert!(!u.offline && u.m.ch[0].on, "import keeps the live channels");
+        assert!(!u.offline.on && u.m.ch[0].on, "import keeps the live channels");
         assert!(u.refs[0].as_ref().unwrap().on && u.refs[1].as_ref().unwrap().on);
         u.set_look(RefLook::TakeOver);
         assert_eq!(u.look, RefLook::TakeOver);
-        assert!(u.offline);
+        assert!(u.offline.on);
         assert!(u.m.ch.iter().all(|c| !c.on), "other channels are hidden");
         assert!(u.cards().0.iter().all(|c| c.w == 0));
         assert!(u.refs[0].as_ref().unwrap().on);
@@ -801,7 +794,7 @@ mod tests {
         assert!(u.m.time_per_div() > 0.0);
         u.set_look(RefLook::Live);
         assert_eq!(u.look, RefLook::Live);
-        assert!(!u.offline);
+        assert!(!u.offline.on);
         assert_eq!((u.m.tscale, u.m.tfine, u.m.delay, u.m.ch[0].on), held);
         assert!(u.refs[1].as_ref().unwrap().on);
         let _ = std::fs::remove_dir_all(&dir);
@@ -813,8 +806,8 @@ mod tests {
         put(&mut u, 0, square(1.0), true);
         put(&mut u, 1, square(3.0), true);
         u.m.meas.clear();
-        u.meas_own.clear();
-        u.meas_src = WaveId::Ref(0);
+        u.meas_own.rows.clear();
+        u.sources.a = WaveId::Ref(0);
         u.activate(Item::MeasAdd(Meas::Vpp));
         u.set_look(RefLook::Waves);
         assert_eq!(u.look, RefLook::Waves);
@@ -839,24 +832,24 @@ mod tests {
         u.step(0.25);
         assert!(u.replay.captures >= 1, "the set plays");
         u.set_look(RefLook::Live);
-        assert!(u.m.ch[0].on && !u.offline && u.waves_board_rect().is_none());
+        assert!(u.m.ch[0].on && !u.offline.on && u.waves_board_rect().is_none());
     }
 
     #[test]
     fn every_added_measurement_opens_its_own_settings() {
         let mut u = ui();
         u.m.meas.clear();
-        u.meas_own.clear();
+        u.meas_own.rows.clear();
         u.activate(Item::MeasAdd(Meas::Vpp));
         u.activate(Item::MeasAdd(Meas::Burst));
-        assert!(u.meas_own.contains_key(&(Meas::Vpp, WaveId::Ch(0))));
-        assert!(u.meas_own.contains_key(&(Meas::Burst, WaveId::Ch(0))));
+        assert!(u.meas_own.rows.contains_key(&(Meas::Vpp, WaveId::Ch(0))));
+        assert!(u.meas_own.rows.contains_key(&(Meas::Burst, WaveId::Ch(0))));
         u.key(key::MEASURE);
         let vpp = u.catalog_set_rect(Meas::Vpp).expect("a place to open Vpp settings");
         u.tap(vpp.x + vpp.w / 2, vpp.y + vpp.h / 2);
         let g = u.cfg_geom().expect("Vpp has a settings dialog");
         assert!(g.source_m.w > 0 && g.refs.w > 0 && g.idle_m.is_none());
-        u.meas_cfg = None;
+        u.meas_own.dialog = None;
         let mut opened = false;
         for _ in 0..12 {
             let view = u.catalog_view();
@@ -883,15 +876,15 @@ mod tests {
         let g = u.cfg_geom().expect("Burst has a settings dialog");
         assert!(g.refs.w > 0 && g.idle_m.is_some(), "Burst keeps its own idle");
         u.meas_cfg_tap(g.idle_p.unwrap().x + 4, g.idle_p.unwrap().y + 4);
-        let burst_idle = u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle;
-        let vpp_own = u.meas_own.get(&(Meas::Vpp, WaveId::Ch(0))).unwrap();
+        let burst_idle = u.meas_own.rows.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle;
+        let vpp_own = u.meas_own.rows.get(&(Meas::Vpp, WaveId::Ch(0))).unwrap();
         assert!(!vpp_own.idle_set);
-        assert!(u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle_set);
+        assert!(u.meas_own.rows.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle_set);
         assert_ne!(burst_idle, vpp_own.idle);
         // an own idle time above the 5 s of the steps goes down to 5 s, not to off
-        u.meas_own.get_mut(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle = 10.0;
+        u.meas_own.rows.get_mut(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle = 10.0;
         u.meas_cfg_tap(g.idle_m.unwrap().x + 4, g.idle_m.unwrap().y + 4);
-        assert_eq!(u.meas_own.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle, 5.0);
+        assert_eq!(u.meas_own.rows.get(&(Meas::Burst, WaveId::Ch(0))).unwrap().idle, 5.0);
     }
 
     #[test]
@@ -900,10 +893,10 @@ mod tests {
         put(&mut u, 0, edge(), true);
         put(&mut u, 1, edge(), true);
         u.m.meas.clear();
-        u.meas_own.clear();
-        u.meas_src = WaveId::Ref(0);
+        u.meas_own.rows.clear();
+        u.sources.a = WaveId::Ref(0);
         u.activate(Item::MeasAdd(Meas::Rise));
-        u.meas_src = WaveId::Ref(1);
+        u.sources.a = WaveId::Ref(1);
         u.activate(Item::MeasAdd(Meas::Rise));
         u.measure_refs();
         u.set_meas_refs(0, 0.1, 0.9);

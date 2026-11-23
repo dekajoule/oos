@@ -3,8 +3,8 @@
 
 //! Tests of the screen that are not about the acquisition or the menu dialog: measurements in the menus, decoders and
 //! the bus trigger, math, mask, histogram, analysers and views, Bode, storage, the trigger level line, SCPI of the
-//! acquisition and the axis labels. A test of acquisition goes into `acquisition_tests.rs`, one of the menus and keys
-//! into `menu_tests.rs`.
+//! acquisition and the axis labels. A test of acquisition goes into `acquisition_tests.rs` (of STOP and SINGLE into
+//! `stop_tests.rs`), one of the menus and keys into `menu_tests.rs`.
 
 use super::axis_label;
 
@@ -15,7 +15,7 @@ fn add_item_toggles_a_measurement() {
 
     let mut ui = crate::ui::testkit::demo_ui();
     ui.m.meas.clear();
-    ui.meas_src = WaveId::Ch(0);
+    ui.sources.a = WaveId::Ch(0);
     let (a, b) = (ALL_MEAS[0], ALL_MEAS[1]);
     ui.activate(Item::MeasAdd(a));
     ui.activate(Item::MeasAdd(b));
@@ -23,10 +23,10 @@ fn add_item_toggles_a_measurement() {
     ui.activate(Item::MeasAdd(a));
     assert_eq!(ui.m.meas, vec![(b, WaveId::Ch(0))]);
     // the same measurement of another channel is its own entry
-    ui.meas_src = WaveId::Ch(1);
+    ui.sources.a = WaveId::Ch(1);
     ui.activate(Item::MeasAdd(b));
     assert_eq!(ui.m.meas, vec![(b, WaveId::Ch(0)), (b, WaveId::Ch(1))]);
-    ui.meas_src = WaveId::Ch(0);
+    ui.sources.a = WaveId::Ch(0);
     ui.activate(Item::MeasAdd(b));
     assert_eq!(ui.m.meas, vec![(b, WaveId::Ch(1))]);
 }
@@ -308,9 +308,9 @@ fn zone_drawn_by_touch_filters_records() {
     ui.relayout();
     ui.open_menu(MenuId::Zone);
     ui.activate(Item::ZoneBox);
-    assert_eq!(ui.zone_arm, Some((0, false)));
+    assert_eq!(ui.zone_trig.arm, Some((0, false)));
     // a box in the top left corner of the plot (far above the demo signal)
-    let a = ui.area;
+    let a = ui.plot.area;
     let (x0, y0, x1, y1) = (a.x + 60, a.y + 20, a.x + 160, a.y + 60);
     ui.handle(Ev::Touch { id: 0, phase: Phase::Down, x: x0, y: y0 });
     ui.handle(Ev::Touch { id: 0, phase: Phase::Move, x: x1, y: y1 });
@@ -323,7 +323,7 @@ fn zone_drawn_by_touch_filters_records() {
     for _ in 0..5 {
         ui.step(0.02);
     }
-    assert!(ui.zone_drops > 0 && ui.last[0].is_none());
+    assert!(ui.zone_trig.drops > 0 && ui.last[0].is_none());
     // "must not intersect": records pass again
     ui.m.zones[0].inside = false;
     ui.step(0.02);
@@ -383,11 +383,11 @@ fn segmented_recording_stops_after_n_records() {
     for _ in 0..20 {
         ui.step(0.02);
     }
-    assert_eq!((ui.m.run, ui.seg_n, ui.history.len()), (RunState::Stop, 10, 10));
+    assert_eq!((ui.m.run, ui.seg.n, ui.history.recs.len()), (RunState::Stop, 10, 10));
     // RUN again: a new set
     ui.key(key::RUNSTOP);
     ui.step(0.02);
-    assert!(ui.seg_n <= 6 && ui.history.len() == ui.seg_n);
+    assert!(ui.seg.n <= 6 && ui.history.recs.len() == ui.seg.n);
 }
 
 #[test]
@@ -788,31 +788,31 @@ fn power_key_dialog() {
     use super::*;
     let mut ui = crate::ui::testkit::demo_ui();
     ui.key(key::POWER);
-    assert!(ui.power_dlg);
-    assert_eq!(ui.panel_tx, vec![crate::board::PanelCmd::CancelPowerDown]);
+    assert!(ui.power.open);
+    assert_eq!(ui.asks.panel, vec![crate::board::PanelCmd::CancelPowerDown]);
     // second press cancels, again with the cancel frame
     ui.key(key::POWER);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
-    assert_eq!(ui.panel_tx.len(), 2);
+    assert!(!ui.power.open && ui.power.action.is_none());
+    assert_eq!(ui.asks.panel.len(), 2);
     // tap on "Power off"
     ui.key(key::POWER);
     let b = ui.pwr_layout().1[0];
     ui.tap(b.x + b.w / 2, b.y + b.h / 2);
-    assert_eq!(ui.power_action, Some(PowerAction::Off));
-    assert!(!ui.power_dlg);
+    assert_eq!(ui.power.action, Some(PowerAction::Off));
+    assert!(!ui.power.open);
     // tap outside: nothing happens
-    ui.power_action = None;
+    ui.power.action = None;
     ui.key(key::POWER);
     ui.tap(5, 5);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     // any other key closes the dialog without acting
     ui.key(key::POWER);
     ui.key(key::RUNSTOP);
-    assert!(!ui.power_dlg && ui.power_action.is_none());
+    assert!(!ui.power.open && ui.power.action.is_none());
     let b = ui.pwr_layout().1[1];
     ui.key(key::POWER);
     ui.tap(b.x + 5, b.y + 5);
-    assert_eq!(ui.power_action, Some(PowerAction::Restart));
+    assert_eq!(ui.power.action, Some(PowerAction::Restart));
 }
 
 /// Every trigger type with its starting values triggers on the demo signals.
@@ -861,10 +861,10 @@ fn colour_grade_renders() {
         }
         ui.render(&mut cv);
         let pal = heat_palette();
-        let a = ui.area;
+        let a = ui.plot.area;
         let ph = if zoom { &ui.phz } else { &ui.ph };
         let mut direct = Canvas::new(W, H);
-        ui.draw_graded(&mut direct, a, ph, if zoom { ui.vmaxz_cg } else { ui.vmax_cg }, false);
+        ui.draw_graded(&mut direct, a, ph, if zoom { ui.grade.vmaxz_cg } else { ui.grade.vmax_cg }, false);
         let mut active = 0;
         for y in 0..ph.h {
             for x in 0..ph.w {
@@ -907,7 +907,7 @@ fn zoom_close_preserves_explicit_main_timebase_changes() {
         c,
         row
     );
-    let (o, z) = Ui::split_zoom(ui.grid);
+    let (o, z) = Ui::split_zoom(ui.plot.grid);
     assert!(c.y >= o.y + o.h && c.y + c.h <= z.y, "close {:?} between {:?} and {:?}", c, o, z);
     assert_ne!(cv.px[((c.y + c.h / 2) * W + c.x + c.w / 2) as usize], BG);
     ui.tap(c.x + c.w / 2, c.y + c.h / 2);
@@ -923,14 +923,14 @@ fn mask_test_counts_and_stops() {
     let mut ui = crate::ui::testkit::demo_ui();
     ui.step(0.033);
     ui.create_mask();
-    assert!(ui.m.mask_on && ui.mask.is_some());
+    assert!(ui.m.mask_on && ui.mask_sw.mask.is_some());
     for _ in 0..10 {
         ui.step(0.033);
     }
-    assert!(ui.mask_pass >= 30 && ui.mask_fail == 0, "pass {} fail {}", ui.mask_pass, ui.mask_fail);
+    assert!(ui.mask_sw.pass >= 30 && ui.mask_sw.fail == 0, "pass {} fail {}", ui.mask_sw.pass, ui.mask_sw.fail);
     ui.m.ch[3].on = true;
     ui.adjust(Item::MaskSrc, 3);
-    assert!(ui.mask.is_none() && !ui.m.mask_on);
+    assert!(ui.mask_sw.mask.is_none() && !ui.m.mask_on);
     ui.step(0.033);
     ui.m.mask_x = 0.04;
     ui.create_mask();
@@ -942,7 +942,7 @@ fn mask_test_counts_and_stops() {
         }
     }
     assert_eq!(ui.m.run, RunState::Stop);
-    assert_eq!(ui.mask_fail, 1);
+    assert_eq!(ui.mask_sw.fail, 1);
 }
 
 #[test]
@@ -966,25 +966,25 @@ fn mask_from_ref_invert_save_and_load() {
     use super::*;
     let dir = crate::ui::testkit::Scratch::new("mask");
     let mut ui = crate::ui::testkit::demo_ui();
-    ui.store_dir = dir.clone();
-    ui.store_dest = crate::store::StoreDest::Local;
+    ui.files.dir = dir.clone();
+    ui.files.dest = crate::store::StoreDest::Local;
     ui.step(0.033);
     let rec = ui.last[0].as_ref().unwrap();
     ui.refs[0] = Some(RefWave { label: "R1".into(), ..RefWave::test(rec.ch[0].clone(), rec.dt, rec.t0) });
     ui.activate(Item::MaskFromRef);
-    assert!(ui.m.mask_on && ui.mask.is_some());
+    assert!(ui.m.mask_on && ui.mask_sw.mask.is_some());
     ui.adjust(Item::MaskInvert, 1);
-    assert!(ui.m.mask_inv && ui.mask.as_ref().unwrap().invert);
+    assert!(ui.m.mask_inv && ui.mask_sw.mask.as_ref().unwrap().invert);
     ui.activate(Item::MaskSave);
     assert!(dir.join("mask-001.txt").is_file());
     assert!(dir.join("mask1.txt").is_file());
     let t = std::fs::read_to_string(dir.join("mask-001.txt")).unwrap();
     assert!(t.starts_with("# OOS mask\n") && t.contains("inv=1"));
     ui.activate(Item::MaskClear);
-    assert!(ui.mask.is_none() && !ui.m.mask_on);
+    assert!(ui.mask_sw.mask.is_none() && !ui.m.mask_on);
     ui.m.mask_inv = false;
     ui.activate(Item::MaskLoad);
-    assert!(ui.m.mask_on && ui.m.mask_inv && ui.mask_ref.as_ref().unwrap().len() > 2);
+    assert!(ui.m.mask_on && ui.m.mask_inv && ui.mask_sw.reference.as_ref().unwrap().len() > 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -993,21 +993,21 @@ fn fast_frame_save_and_load_and_local_dest() {
     use super::*;
     let dir = crate::ui::testkit::Scratch::new("ff");
     let mut ui = crate::ui::testkit::demo_ui();
-    ui.store_dir = dir.clone();
-    ui.store_dest = crate::store::StoreDest::Local;
+    ui.files.dir = dir.clone();
+    ui.files.dest = crate::store::StoreDest::Local;
     for _ in 0..4 {
         ui.step(0.033);
     }
-    assert!(ui.history.len() >= 3);
+    assert!(ui.history.recs.len() >= 3);
     ui.activate(Item::StoreFfSave);
     let p = dir.join("frame-001.bin");
     assert!(p.is_file());
-    let n = ui.history.len();
-    ui.history.clear();
+    let n = ui.history.recs.len();
+    ui.history.recs.clear();
     ui.last[0] = None;
     ui.activate(Item::StoreFfLoad);
-    assert_eq!(ui.history.len(), n);
-    assert!(ui.hist_pos.is_some());
+    assert_eq!(ui.history.recs.len(), n);
+    assert!(ui.history.pos.is_some());
     assert_eq!(ui.m.run, RunState::Stop);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1018,7 +1018,7 @@ fn storage_save_and_recall() {
     use super::*;
     let dir = crate::ui::testkit::Scratch::new("ui-store");
     let mut ui = crate::ui::testkit::demo_ui();
-    ui.store_dir = dir.join("sub");
+    ui.files.dir = dir.join("sub");
     ui.m.ch[2].on = true;
     ui.m.tscale -= 2;
     ui.m.color_grade = true;
@@ -1036,7 +1036,7 @@ fn storage_save_and_recall() {
     let mut want = saved;
     (want.run, want.status) = (ui.m.run, ui.m.status);
     assert_eq!(ui.m, want);
-    ui.store_slot = 2;
+    ui.files.slot = 2;
     ui.activate(Item::StoreRecall);
     assert!(ui.toast.as_ref().unwrap().0.starts_with("Recall failed"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -1059,9 +1059,9 @@ fn level_line_after_a_change_and_no_mark_with_ac_coupling() {
     assert!(!ui.level_line_on(), "gone after {} s", LEVEL_LINE_S);
     // the mark: drawn in the accent colour at the right edge of the plot, at the level's height
     let mark = |ui: &mut Ui| {
-        let mut cv = Canvas::new(ui.area.w, ui.area.h + 200);
+        let mut cv = Canvas::new(ui.plot.area.w, ui.plot.area.h + 200);
         ui.render(&mut cv);
-        let g = ui.grid;
+        let g = ui.plot.grid;
         let x = g.x + g.w - MARK_W + 16;
         (g.y..g.y + g.h).filter(|&y| cv.px[(y * cv.w + x) as usize] == ACCENT).count()
     };
@@ -1129,4 +1129,39 @@ fn axis_labels() {
     assert_eq!(axis_label(1.545455, 1.0, 1.454545, 4.454545, "V"), "1.545 V");
     // 1 us/div at a delay of 1 s
     assert_eq!(axis_label(1.000002, 1e-6, 1.0, 1.000005, "s"), "1.000002 s");
+}
+
+// Break it catches (#279): level 50 % with AC trigger coupling set the middle of the signal in volts, while the trigger
+// compares the source without its mean and counts its level from there: on a signal that does not cross 0 V the level
+// lay above the whole swing and the trigger did not fire
+#[test]
+fn level_50_with_ac_trigger_coupling_counts_from_the_mean() {
+    use super::*;
+    let mut ui = crate::ui::testkit::demo_ui();
+    ui.m.run = RunState::Stop;
+    ui.m.trig_src = 0;
+    ui.m.trig_type = TrigType::Edge;
+    // 0 to 3.3 V, high a quarter of the time: middle 1.65 V, mean 0.825 V
+    let dt = 1e-6;
+    let v: Vec<f32> = (0..4000).map(|k| if k % 400 < 100 { 3.3 } else { 0.0 }).collect();
+    let rec = crate::wave::Record {
+        t0: -2e-3,
+        dt,
+        ch: [v.clone(), Vec::new(), Vec::new(), Vec::new()],
+        triggered: true,
+        partial: false,
+        raw: None,
+        la: None,
+        pairs: false,
+    };
+    ui.last[0] = Some(rec);
+    ui.measured.stats[0] = crate::wave::stats(&v, dt);
+    ui.m.trig_coup = TrigCoup::Dc;
+    ui.activate(Item::Trig50);
+    assert!((ui.m.trig_level - 1.65).abs() < 0.02, "DC: the middle, {}", ui.m.trig_level);
+    for coup in [TrigCoup::Ac, TrigCoup::LfReject] {
+        ui.m.trig_coup = coup;
+        ui.activate(Item::Trig50);
+        assert!((ui.m.trig_level - 0.825).abs() < 0.02, "{:?}: the middle less the mean, {}", coup, ui.m.trig_level);
+    }
 }

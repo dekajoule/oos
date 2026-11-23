@@ -13,6 +13,8 @@
   tools/device-test.py --host <ip> --changed origin/main --list    which tests this tree's change needs, and why
   tools/device-test.py --host <ip> --changed origin/main           only those (and the smoke tests)
   tools/device-test.py --host <ip> --save-known    a run of main: its failures are known from here on
+  tools/device-test.py --host <ip> --board dho     the board family's profile; default: the family whose models
+                                                   match the scope's *IDN?, else dho
 
 Focused, and judged without repeating by hand (tools/device_select.py, docs/device-testing.md):
   --changed BASE  runs the tests of the areas the changed files reach; documents and CI only the smoke tests
@@ -42,8 +44,42 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from oosclient import Link, LinkError, NoBlock  # noqa: E402
 import device_select  # noqa: E402
 
-CH = (1, 2, 3, 4)
-VSCALES = [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0]
+# The facts of a board family the tests take (ADR 0067, 4): the models its *IDN? names, its channels, the vertical
+# scales, the highest sample rate and whether it has a generator. `--board` picks one, by default the family whose
+# models match the scope's *IDN?, else dho. A port adds its entry (docs/porting.md).
+PROFILES = {
+    "dho": {
+        "models": r"DHO[89]\d\d",
+        "channels": (1, 2, 3, 4),
+        "vscales": [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0],
+        "max_rate": 1.25e9,
+        "generator": True,
+    },
+}
+
+
+def profile(name):
+    """The profile of the board family NAME; an unknown name stops the run, naming the known ones."""
+    if name not in PROFILES:
+        sys.exit(f"device-test.py: no profile for the board family '{name}' (known: {', '.join(sorted(PROFILES))})")
+    return PROFILES[name]
+
+
+def family_of(idn):
+    """The board family whose models match the model field of an *IDN? answer, else dho."""
+    p = idn.split(",")
+    model = p[1].strip() if len(p) > 1 else ""
+    return next((n for n, f in PROFILES.items() if re.match(f["models"], model)), "dho")
+
+
+def use_profile(name):
+    """The facts the tests read: the profile of NAME as module values."""
+    global PROFILE, CH, VSCALES
+    PROFILE = profile(name)
+    CH, VSCALES = PROFILE["channels"], PROFILE["vscales"]
+
+
+use_profile("dho")
 # a shell command with one of these never leaves this program
 FORBIDDEN = re.compile(r"spi2|mtd|flash_|>\s*/rigol|\b(rm|mv|cp|chmod|touch|tee)\b.*/rigol|((?<![0-9])>|of=)\s*/dev/|mmcblk|by-name|\bdd\b|mkfs|uboot|\btrust\b|parameter|oos-hw\s+wr|oos-fpgad\s+wr|cold-boot|\breboot\b|poweroff", re.I)
 
@@ -146,8 +182,11 @@ class Scope:
         return statistics.median(v) if v else math.nan
 
     def wave(self, c=1):
-        """(t0, dt, volts) of the record on the screen."""
+        """(t0, dt, volts) of the record on the screen: NORMal and the whole page, whatever a test before left set."""
         self.w(f":WAV:SOUR CHAN{c}")
+        self.w(":WAV:MODE NORM")
+        self.w(":WAV:STAR 1")
+        self.w(":WAV:STOP 1000000000")
         self.w(":WAV:FORM WORD")
         p = self.q(":WAV:PRE?").split(",")
         pts, dt, t0, yinc, yorg, yref = int(p[2]), float(p[4]), float(p[5]), float(p[7]), float(p[8]), float(p[9])
@@ -281,7 +320,7 @@ def clean(s):
 def identity(s, o):
     p = s.q("*IDN?").split(",")
     assert p[0] == "OOS" and len(p) == 4, p
-    assert re.match(r"DHO[89]\d\d", p[1]), p
+    assert re.match(PROFILE["models"], p[1]), p
     if not s.sim:
         assert p[2] not in ("", "0"), f"no serial: {p}"
     clean(s)
@@ -329,7 +368,7 @@ def plan_matches_this_build(s, o):
 def depth_and_rate_matrix(s, o):
     bad = []
     n = 0
-    for mask in ((1,), (1, 2), (1, 2, 3), (1, 2, 3, 4)):
+    for mask in (CH[:n] for n in range(1, len(CH) + 1)):
         for c in CH:
             s.w(f":CHAN{c}:DISP {1 if c in mask else 0}")
         for tdiv in (5e-9, 1e-6, 2e-4, 1e-3):
@@ -340,7 +379,7 @@ def depth_and_rate_matrix(s, o):
                 a = s.stat()["frames"]
                 r, d = s.num(":ACQ:SRAT?"), s.num(":ACQ:MDEP?")
                 n += 1
-                if not (0 < r <= 1.25e9 and d > 0):
+                if not (0 < r <= PROFILE["max_rate"] and d > 0):
                     bad.append((mask, tdiv, depth, r, d))
                 time.sleep(0.5 + min(2.0, d / 1e7))
                 if s.stat()["frames"] == a and depth != "10000000":
@@ -402,9 +441,10 @@ def zero_of_every_scale(s, o):
 
 @test("a0")
 def gnd_is_flat(s, o):
-    s.w(":CHAN1:COUP GND")
+    c = CH[0]
+    s.w(f":CHAN{c}:COUP GND")
     s.settle()
-    t0, dt, v = s.wave(1)
+    t0, dt, v = s.wave(c)
     assert v, "no samples"
     near("mean", statistics.fmean(v), 0, ab=0.05)
     assert statistics.pstdev(v) < 0.02, statistics.pstdev(v)
@@ -559,17 +599,17 @@ def random_settings_do_not_kill_it(s, o):
     """Random but valid settings, the kind of mix nobody tries by hand."""
     rnd = random.Random(1)
     a = s.stat()["frames"]
+    # the channels of the profile: the first one's coupling, invert and scale, the others switched, the second's probe
+    first, others = CH[0], CH[1:]
     keys = [
         ("trig_type", ["Edge", "Pulse", "Slope", "Pattern", "Duration", "Timeout", "Runt", "Window", "NthEdge"]),
         ("trig_mode", ["Auto", "Normal"]),
         ("slope", ["Rise", "Fall", "Either"]),
         ("mdepth", [0, 1, 2, 3, 4]),
-        ("ch1.coupling", ["Dc", "Ac", "Gnd"]),
-        ("ch2.on", ["true", "false"]),
-        ("ch3.on", ["true", "false"]),
-        ("ch4.on", ["true", "false"]),
-        ("ch1.invert", ["true", "false"]),
-        ("ch2.probe", [1, 10, 100]),
+        (f"ch{first}.coupling", ["Dc", "Ac", "Gnd"]),
+        *[(f"ch{n}.on", ["true", "false"]) for n in others],
+        (f"ch{first}.invert", ["true", "false"]),
+        (f"ch{(others or CH)[0]}.probe", [1, 10, 100]),
         ("dec_on", ["true", "false"]),
         ("dec_proto", ["Uart", "I2c", "Spi", "Can"]),
         ("persist", [0, 1, 2]),
@@ -580,7 +620,7 @@ def random_settings_do_not_kill_it(s, o):
         k, vals = rnd.choice(keys)
         s.w(f":SYST:SET {k} = {rnd.choice(vals)}")
         s.w(f":TIM:SCAL {rnd.choice([1e-8, 1e-6, 1e-4, 1e-3, 1e-2])}")
-        s.w(f":CHAN1:SCAL {rnd.choice(VSCALES)}")
+        s.w(f":CHAN{first}:SCAL {rnd.choice(VSCALES)}")
         s.w(f":TIM:OFFS {rnd.uniform(-1, 1) * 1e-4}")
         time.sleep(0.12)
         if i % 25 == 0:
@@ -718,6 +758,8 @@ def frame_rate_by_graphics_and_monitor(s, o):
 @test("a1")
 def generator_reaches(s, o):
     """Which channels see the generator: everything after this depends on it."""
+    if not PROFILE["generator"]:
+        raise Skip("the board family has no generator")
     for c in CH:
         s.w(f":CHAN{c}:DISP 1")
         s.w(f":CHAN{c}:SCAL 1")
@@ -1334,6 +1376,156 @@ def deep_memory(s, o):
         near(f"RMS as Vpp at {d}", rms * 2 * 2**0.5, 2.0, rel=0.08)
     s.w(":ACQ:MDEP AUTO")
     s.w(":MEAS:CLE ALL")
+    return "; ".join(rows)
+
+
+def screen_swing(s, c, bins=50):
+    """The record on the screen (`:WAV:MODE NORM`, the whole page): its start, the screen width and, per bin of the
+    screen, the swing in volts. A deep record zoomed out is drawn from the stored record, as the user sees it."""
+    t0, dt, v = s.wave(c)
+    n = len(v)
+    sw = [max(v[k * n // bins:(k + 1) * n // bins] or [0]) - min(v[k * n // bins:(k + 1) * n // bins] or [0])
+          for k in range(bins)]
+    return t0, dt * n, sw
+
+
+def raw_window(s, c, wait=60):
+    """After a STOP, the raw record the scope keeps (`:WAV:MODE RAW`): its preamble fields once the point count has
+    settled, the transfer page reset first (a page left by an earlier read would cut the count)."""
+    s.w(f":WAV:SOUR CHAN{c}")
+    s.w(":WAV:MODE RAW")
+    s.w(":WAV:FORM BYTE")
+    end, last = time.time() + wait, -1
+    while True:
+        s.w(":WAV:STAR 1")
+        s.w(":WAV:STOP 1000000000")
+        p = s.q(":WAV:PRE?").split(",")
+        pts = int(float(p[2]))
+        if pts == last or time.time() > end:
+            return pts, float(p[4]), float(p[7]), float(p[8]), float(p[9])
+        last = pts
+        time.sleep(2)
+
+
+def rising_edges(b, lo, hi):
+    """Sample indices where the bytes `b` rise through `hi` after having been below `lo` (hysteresis)."""
+    out, armed = [], False
+    for k, x in enumerate(b):
+        if x < lo:
+            armed = True
+        elif x > hi and armed:
+            out.append(k)
+            armed = False
+    return out
+
+
+def zoomed_out(s, o, c, d, how, meas):
+    """A record of depth `d` at 0.2 ms/div with a 100 kHz sine, ended by `how` (STOP while running, or SING), then the
+    smallest 1-2-5 time base whose screen holds it and a quarter more. `meas` False clears the measurement list (no
+    raw deep reads, docs/fork/deep-meas.md). The covered time on the screen record, its centre, the record's length."""
+    s.base()
+    s.gen("SIN", 1e5, 2.0)
+    if not meas:
+        s.w(":MEAS:CLE ALL")
+    s.w(f":ACQ:MDEP {d}")
+    s.settle(2, extra=2)
+    rate = s.num(":ACQ:SRAT?")
+    s.w(f":{how}")
+    end = time.time() + 30
+    while s.stat()["run"].upper() not in ("STOP", "STOPPED") and time.time() < end:
+        time.sleep(0.3)
+    time.sleep(2)
+    span = int(d) / rate
+    tb = next(x * 10.0 ** e for e in range(-6, 1) for x in (1, 2, 5) if x * 10.0 ** e * 10 >= span * 1.25)
+    s.w(f":TIM:SCAL {tb}")
+    # the zoomed-out view is read from the stored record: wait until the covered part stops changing
+    cover, end = -1, time.time() + 30
+    while time.time() < end:
+        t0, width, sw = screen_swing(s, c)
+        on = [k for k, x in enumerate(sw) if x > 1.0]
+        if len(on) == cover:
+            break
+        cover = len(on)
+        time.sleep(1.5)
+    s.shot(f"zoomed-{int(d) // 1000000}M-{how.lower()}-{'meas' if meas else 'nomeas'}", o.out)
+    name = f"{int(d) // 1000000} M {how}"
+    assert on, f"{name}: no signal on the zoomed-out screen"
+    bw = width / len(sw)
+    got = (on[-1] - on[0] + 1) * bw
+    mid = t0 + (on[0] + on[-1] + 1) / 2 * bw
+    assert len(on) == on[-1] - on[0] + 1, f"{name}: gaps in the record ({len(on)} of {on[-1] - on[0] + 1} bins)"
+    return name, got, mid, span, bw
+
+
+@test("a1", need=(1,))
+def deep_record_fills_the_zoomed_out_screen(s, o):
+    """A deep record, stopped while running and taken with Single, holds the signal over its whole length: zoomed out,
+    the trace covers depth / rate around the trigger, no shorter (#47: a DHO804 showed about 7 ms of 50 M at
+    1.25 GSa/s) and no longer. Without measurements, so the screen record is the stored record read again."""
+    c = s.loop[0]
+    rows = []
+    for d, how in (("10000000", "STOP"), ("50000000", "STOP"), ("125000000", "STOP"), ("50000000", "SING")):
+        name, got, mid, span, bw = zoomed_out(s, o, c, d, how, meas=False)
+        rows.append(f"{name}: {got * 1e3:.1f} of {span * 1e3:.1f} ms, centre {mid * 1e3:+.1f} ms")
+        near(f"{name}: covered time", got, span, rel=0.05, ab=2 * bw)
+        near(f"{name}: centre on the trigger", mid, 0.0, ab=1.5 * bw)
+    s.w(":ACQ:MDEP AUTO")
+    return "; ".join(rows)
+
+
+@test("a1", need=(1,))
+def norm_export_is_the_screen_after_a_stop(s, o):
+    """`:WAV:MODE NORM` reads the record the screen shows (docs/scpi.md), also when a shown measurement needs samples
+    and the scope keeps a raw window of the STOP for it (Mean and RMS are on after *RST): zoomed out on a stopped
+    50 M record, the export covers the 40 ms the screen draws, not the window of the STOP."""
+    c = s.loop[0]
+    name, got, mid, span, bw = zoomed_out(s, o, c, "50000000", "STOP", meas=True)
+    s.w(":ACQ:MDEP AUTO")
+    near(f"{name}: NORM covers", got, span, rel=0.05, ab=2 * bw)
+    return f"{name}: NORM covers {got * 1e3:.1f} of {span * 1e3:.1f} ms"
+
+
+@test("a1", need=(1,))
+def raw_window_is_one_unbroken_signal(s, o):
+    """The raw record kept after a STOP (`:WAV:MODE RAW`, docs/fork/deep-meas.md) is the screen and a margin of one
+    piece of signal: at least the screen's samples, every period of a 100 kHz sine as long as the next (a missing,
+    doubled or misplaced piece shows as a period off), and the amplitude of the generator."""
+    c = s.loop[0]
+    rows = []
+    for d in ("1000000", "10000000", "50000000", "125000000"):
+        s.base()
+        s.gen("SIN", 1e5, 2.0)
+        s.w(f":ACQ:MDEP {d}")
+        s.settle(2, extra=2)
+        rate, tdiv = s.num(":ACQ:SRAT?"), s.tdiv()
+        s.w(":STOP")
+        time.sleep(2)
+        pts, xinc, yinc, yor, yref = raw_window(s, c)
+        screen = int(round(10 * tdiv * rate))
+        rows.append(f"{int(d) // 1000000} M: {pts} points at {1 / xinc / 1e6:.0f} MSa/s")
+        assert pts >= min(screen, int(d)) * 0.98, f"{rows[-1]}: fewer than the screen's {min(screen, int(d))}"
+        near(f"{int(d) // 1000000} M: raw sample rate", 1 / xinc, rate, rel=0.001)
+        # the whole window, in pages of 1 M points
+        b, k = bytearray(), 1
+        while k <= pts:
+            s.w(f":WAV:STAR {k}")
+            s.w(f":WAV:STOP {min(pts, k + 999999)}")
+            b += s.block(":WAV:DATA?", timeout=120)
+            k += 1000000
+        assert len(b) == pts, f"{rows[-1]}: read {len(b)} bytes"
+        lo, hi = min(b), max(b)
+        vpp = (hi - lo) * yinc
+        mid, q = (hi + lo) / 2, (hi - lo) / 4
+        e = rising_edges(b, mid - q, mid + q)
+        per = [y - x for x, y in zip(e, e[1:])]
+        want = 1 / 1e5 / xinc
+        bad = [(i, p) for i, p in enumerate(per) if abs(p - want) > want * 0.02]
+        rows[-1] += f", {len(per)} periods, {vpp:.2f} Vpp"
+        assert len(per) >= pts / want * 0.9 - 2, f"{rows[-1]}: expected about {pts / want:.0f} periods"
+        assert not bad, f"{rows[-1]}: periods off at {bad[:4]} (want {want:.0f} samples)"
+        near(f"{int(d) // 1000000} M: Vpp", vpp, 2.0, rel=0.12)
+    s.w(":RUN")
+    s.w(":ACQ:MDEP AUTO")
     return "; ".join(rows)
 
 
@@ -2381,7 +2573,10 @@ def main():
     ap.add_argument("--retries", type=int, default=1, help="runs of a failed test again (default 1)")
     ap.add_argument("--known", default=os.path.join("device-test", "known.json"), help="results.json of a run of main")
     ap.add_argument("--save-known", action="store_true", help="this run becomes the known run (run it on main)")
+    ap.add_argument("--board", help=f"board family: {', '.join(sorted(PROFILES))} (default: from *IDN?, else dho)")
     o = ap.parse_args()
+    if o.board:
+        use_profile(o.board)
     selected = None
     if o.changed:
         paths = device_select.changed_files(o.changed)
@@ -2421,7 +2616,11 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     try:
         s = Scope(o.host, o.scpi_port, o.web_port, sim=o.sim)
-        log(f"scope: {s.q('*IDN?')}")
+        idn = s.q("*IDN?")
+        if not o.board:
+            o.board = family_of(idn)
+            use_profile(o.board)
+        log(f"scope: {idn}, board family {o.board}")
         for tier, name, f, need in TESTS:
             always = name in ("generator_reaches", "protected_areas_before", "protected_areas_after")
             if o.tier and tier != o.tier and not always:

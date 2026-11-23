@@ -38,6 +38,10 @@ pub(super) struct Page {
 /// Below the LAN box of the top bar: the pages of the network.
 const NET_BOX: Option<Anchor> = Some(|u, _| (u.net_box().x + u.net_box().w / 2, true));
 
+/// Under the top bar, centred: the cursor page, so that the readouts of the cursors in the strip above the cards stay
+/// in sight while the cursors move (its key has no button in the top bar since ADR 0076; ADR 0077).
+const TOP_CENTRE: Option<Anchor> = Some(|u, _| (u.scr.w / 2, true));
+
 /// Above a card at the bottom: the channel's, the time base's or the trigger's.
 const CH_CARD: Option<Anchor> = Some(|u, m| {
     let c = match m {
@@ -97,7 +101,7 @@ macro_rules! page {
     };
 }
 
-pub(super) const PAGES: [Page; 48] = [
+pub(super) const PAGES: [Page; 47] = [
     Page {
         id: MenuId::Network,
         title: |_, _| "Network".into(),
@@ -244,7 +248,7 @@ pub(super) const PAGES: [Page; 48] = [
             format!("Cursor \u{b7} {}", src)
         },
         |u, _| u.cursor_items(),
-        None,
+        TOP_CENTRE,
         None,
     ),
     page!(MenuId::Display, "Display", |u, _| u.display_items(), None),
@@ -252,8 +256,13 @@ pub(super) const PAGES: [Page; 48] = [
     plain(
         MenuId::Ref,
         |u, _| {
-            u.refs[u.ref_sel].as_ref().map_or(format!("Reference R{} \u{b7} empty", u.ref_sel + 1), |r| {
-                format!("Reference R{}{}{}", u.ref_sel + 1, if r.label.is_empty() { "" } else { " \u{b7} " }, r.label)
+            u.refs[u.ref_page.sel].as_ref().map_or(format!("Reference R{} \u{b7} empty", u.ref_page.sel + 1), |r| {
+                format!(
+                    "Reference R{}{}{}",
+                    u.ref_page.sel + 1,
+                    if r.label.is_empty() { "" } else { " \u{b7} " },
+                    r.label
+                )
             })
         },
         |u, _| u.ref_items(),
@@ -287,7 +296,7 @@ pub(super) const PAGES: [Page; 48] = [
     page!(MenuId::SimAdvanced, "SIM advanced", |u, _| u.sim_advanced_items(), None),
     plain(
         MenuId::MeasPair,
-        |u, _| format!("Pairs {} to {}", u.pair_source_caption(u.meas_src), u.pair_source_caption(u.meas_src_b)),
+        |u, _| format!("Pairs {} to {}", u.pair_source_caption(u.sources.a), u.pair_source_caption(u.sources.b)),
         |_, _| (0..tools::PAIRS.len()).map(Item::MeasPair).collect(),
         None,
         None,
@@ -298,7 +307,7 @@ pub(super) const PAGES: [Page; 48] = [
         |u, _| u.dvm_items(),
         Some(|u| {
             let m = &u.m;
-            if u.offline {
+            if u.offline.on {
                 return Vec::new();
             }
             [m.dvm_on.then_some(WaveId::Ch(m.dvm_src)), m.cnt_on.then_some(WaveId::Ch(m.cnt_src))]
@@ -315,7 +324,6 @@ pub(super) const PAGES: [Page; 48] = [
         None,
     ),
     page!(MenuId::Measure, "Measure settings", |u, _| u.measure_items(), None),
-    page!(MenuId::MeasHold, "Add", |_, _| vec![Item::AddMeas], None),
     // its catalogue is a layout of its own (`catalog_dialog`), not rows
     page!(MenuId::MeasAdd, "Add measurement", |_, _| Vec::new(), None),
     plain(
@@ -438,9 +446,9 @@ pub(super) const LAYOUTS: &[Layout] = &[
         MenuId::Network,
         "100M",
         |u| {
-            u.eth_link = true;
-            u.eth.speed = Some(100);
-            u.net_ifs = vec![("eth0".into(), "192.168.177.164".into())]
+            u.net.eth_link = true;
+            u.net.eth.speed = Some(100);
+            u.net.ifs = vec![("eth0".into(), "192.168.177.164".into())]
         },
         &[],
     ),
@@ -450,7 +458,7 @@ pub(super) const LAYOUTS: &[Layout] = &[
         "long name",
         |u| {
             u.sys.net_name = "x".repeat(63);
-            u.net = "192.168.177.164".into()
+            u.net.addr = "192.168.177.164".into()
         },
         &[],
     ),
@@ -481,7 +489,6 @@ pub(super) fn every_kind() -> Vec<MenuId> {
         Acquire,
         Measure,
         MeasAdd,
-        MeasHold,
         MeasPair,
         Dvm,
         Cursor,
@@ -523,11 +530,11 @@ pub(super) fn every_kind() -> Vec<MenuId> {
     ];
     for m in &all {
         match m {
-            Main | Channel(_) | ChMore(_) | Logger | Horizontal | Trigger | Acquire | Measure | MeasAdd | MeasHold
-            | MeasPair | Dvm | Cursor | Display | Utility | Math | Ref | Decode | Bus | Storage | Mask | Zone
-            | Spectrum | Eye | Power | Magnetic | Inverter | Dpt | Identify | SelfCal | Network | Features
-            | Decoders(_) | Remote | Ssh | Bluetooth | Time | Bode | Sim | SimAdvanced | Afg | BwTest | ViewMore
-            | La | LaLines | LaPat | Windows | MeasSelected => {}
+            Main | Channel(_) | ChMore(_) | Logger | Horizontal | Trigger | Acquire | Measure | MeasAdd | MeasPair
+            | Dvm | Cursor | Display | Utility | Math | Ref | Decode | Bus | Storage | Mask | Zone | Spectrum | Eye
+            | Power | Magnetic | Inverter | Dpt | Identify | SelfCal | Network | Features | Decoders(_) | Remote
+            | Ssh | Bluetooth | Time | Bode | Sim | SimAdvanced | Afg | BwTest | ViewMore | La | LaLines | LaPat
+            | Windows | MeasSelected => {}
             Pick => unreachable!("Pick is no page"),
         }
     }
@@ -654,6 +661,18 @@ mod tests {
         for b in &super::super::bars::STATUS_BOXES {
             assert!(page(b.page).is_some(), "the {} box opens {:?}, which is not in PAGES", b.label, b.page);
         }
+    }
+
+    /// The cursor page opens centred under the top bar, so the cursor readouts in the strip stay in sight (ADR 0077).
+    #[test]
+    fn the_cursor_page_opens_centred_under_the_top_bar() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.open_menu(MenuId::Cursor);
+        let d = ui.dlg_layout().expect("the cursor page is a dialog");
+        let f = ui.frame();
+        assert!((d.r.x + d.r.w / 2 - ui.scr.w / 2).abs() <= 1, "centred: {:?} on {}", d.r, ui.scr.w);
+        assert_eq!(d.r.y, f.top.bottom() + 4, "under the top bar");
+        assert!(d.r.y + d.r.h < f.bottom.y, "above the strip and the cards");
     }
 
     /// A picker is answered by one page at most: of the rows of every page, and of the pickers a page opens itself.

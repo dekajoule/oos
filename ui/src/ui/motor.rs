@@ -4,6 +4,7 @@
 //! Inverter pages: DQ0 and the mechanical shaft (`oos_dsp::motor`). Quadrature and Hall are logic lines.
 
 use super::magnetic::{clash_wave, missing_wave, needs_more_channels, num, pad, wave_clash, Taken};
+use super::menu_text::on_off;
 use super::*;
 use oos_dsp::motor::{self, Theta};
 
@@ -116,11 +117,10 @@ impl Ui {
 
     pub(super) fn inverter_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".into() } else { "Off".into() };
         let opt = |c: Option<WaveId>| c.map(|id| self.wave_name(id)).unwrap_or_else(|| "Off".into());
         let line = |n: u8| format!("D{}", n.min(15));
         Some(match it {
-            Item::InvOn => onoff(m.view == AView::Inverter),
+            Item::InvOn => on_off(m.view == AView::Inverter),
             Item::InvPage => {
                 if m.inv_page == InvPage::Dq0 {
                     "DQ0".into()
@@ -158,7 +158,7 @@ impl Ui {
             Item::InvQb => line(m.inv_qb),
             Item::InvQi => m.inv_qi.map(line).unwrap_or_else(|| "Off".into()),
             Item::InvCpr => format!("{:.0}", m.inv_cpr),
-            Item::InvSwap => onoff(m.inv_swap),
+            Item::InvSwap => on_off(m.inv_swap),
             Item::InvHa => line(m.inv_ha),
             Item::InvHb => line(m.inv_hb),
             Item::InvHc => line(m.inv_hc),
@@ -217,29 +217,17 @@ impl Ui {
             opts[(i as i32 + d).rem_euclid(opts.len() as i32) as usize].clone()
         };
         match it {
-            Item::InvOn => self.m.view = if self.m.view == AView::Inverter { AView::Scope } else { AView::Inverter },
+            Item::InvOn => super::analysers::toggle_view(&mut self.m, AView::Inverter),
             Item::InvPage => {
                 self.m.inv_page = if self.m.inv_page == InvPage::Dq0 { InvPage::Mech } else { InvPage::Dq0 };
                 if self.m.inv_page == InvPage::Mech && self.m.inv_ang == InvAngle::Off {
                     self.m.inv_ang = InvAngle::Phase;
                 }
             }
-            Item::InvA => {
-                let cur = self.m.inv_a;
-                self.m.inv_a = self.step_wave(cur, d);
-            }
-            Item::InvB => {
-                let cur = self.m.inv_b;
-                self.m.inv_b = self.step_wave(cur, d);
-            }
-            Item::InvC => {
-                let cur = self.m.inv_c;
-                self.m.inv_c = self.step_wave(cur, d);
-            }
-            Item::InvAn => {
-                let cur = self.m.inv_an;
-                self.m.inv_an = self.step_wave(cur, d);
-            }
+            Item::InvA => self.m.inv_a = self.step_wave(self.m.inv_a, d),
+            Item::InvB => self.m.inv_b = self.step_wave(self.m.inv_b, d),
+            Item::InvC => self.m.inv_c = self.step_wave(self.m.inv_c, d),
+            Item::InvAn => self.m.inv_an = self.step_wave(self.m.inv_an, d),
             Item::InvAng => {
                 let cur = self.ang_name();
                 let name = pick(&cur, opts.as_deref().unwrap_or(&[]));
@@ -247,18 +235,9 @@ impl Ui {
             }
             Item::InvPoles => self.m.inv_poles = (self.m.inv_poles as i32 + d).clamp(1, 32) as u32,
             Item::InvQty => self.m.inv_volt = !self.m.inv_volt,
-            Item::InvTq => {
-                let cur = self.m.inv_tq;
-                self.m.inv_tq = self.step_wave_opt(cur, d);
-            }
-            Item::InvEv => {
-                let cur = self.m.inv_ev;
-                self.m.inv_ev = self.step_wave_opt(cur, d);
-            }
-            Item::InvEi => {
-                let cur = self.m.inv_ei;
-                self.m.inv_ei = self.step_wave_opt(cur, d);
-            }
+            Item::InvTq => self.m.inv_tq = self.step_wave_opt(self.m.inv_tq, d),
+            Item::InvEv => self.m.inv_ev = self.step_wave_opt(self.m.inv_ev, d),
+            Item::InvEi => self.m.inv_ei = self.step_wave_opt(self.m.inv_ei, d),
             Item::InvScale => self.m.inv_scale = eng_ladder(self.m.inv_scale, d, 1e-3, 1e3, false),
             Item::InvDeg => self.m.inv_degv = eng_ladder(self.m.inv_degv, d, 1e-3, 1e4, false),
             Item::InvOff => self.m.inv_off = (self.m.inv_off + d as f64).clamp(-3600.0, 3600.0),
@@ -315,16 +294,15 @@ impl Ui {
                 return;
             }
         };
-        if analog.is_some() && taken.opt[0].is_none() {
-            self.azr.inv_note = missing_wave(m.inv_an);
-            return;
-        }
         let (a, b, c, dt, t0) = (&taken.v[0], &taken.v[1], &taken.v[2], taken.dt, taken.t0);
         let owned;
         let theta = match ang {
             InvAngle::Off | InvAngle::Phase => Theta::Vector,
             InvAngle::Analog => {
-                let v = taken.opt[0].as_deref().unwrap();
+                let Some(v) = taken.opt[0].as_deref() else {
+                    self.azr.inv_note = missing_wave(m.inv_an);
+                    return;
+                };
                 owned = motor::analog_elec(v, degv, off, elec, poles);
                 Theta::Elec(&owned)
             }
@@ -486,7 +464,7 @@ impl Ui {
     }
 
     fn draw_dq(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let f = &self.fonts();
         let mut lines =
             vec![format!("{}   angle {}", if self.m.inv_volt { "voltage" } else { "current" }, self.ang_name())];
@@ -561,7 +539,7 @@ impl Ui {
     }
 
     fn draw_mech(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let mut lines = vec![format!("angle {}", self.ang_name())];
         if let Some(me) = &self.azr.mech {
             let s = &me.shaft;

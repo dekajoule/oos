@@ -138,9 +138,7 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     // protocol trigger: hardware edge on the line where frames start (the protocol's start role: SPI chip select, I2S
     // word select, else the data line)
     let mut src = if m.trig_type == TrigType::Bus {
-        let Proto::Module(i) = m.dec_proto;
-        [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4][crate::protocols::get(i).start_role().min(3)]
-            .unwrap_or(m.dec_src)
+        [Some(m.dec_src), Some(m.dec_src2), m.dec_cs, m.dec_src4][m.dec_proto.start_role().min(3)].unwrap_or(m.dec_src)
     } else {
         m.trig_src
     };
@@ -162,14 +160,11 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         slope: match (m.trig_type, m.slope) {
             // frames start with a falling edge (start bit, SOF, break, I2C start, CS); I2S and the modules that say so
             // (1553, ARINC 429): either edge
-            (TrigType::Bus, _) if m.dec_proto.module().is_some() => {
-                match m.dec_proto.module().map(|p| p.start_edge()) {
-                    Some(Slope::Rise) => tpu::Slope::Rising,
-                    Some(Slope::Either) => tpu::Slope::Either,
-                    _ => tpu::Slope::Falling,
-                }
-            }
-            (TrigType::Bus, _) => tpu::Slope::Falling,
+            (TrigType::Bus, _) => match m.dec_proto.start_edge() {
+                Slope::Rise => tpu::Slope::Rising,
+                Slope::Either => tpu::Slope::Either,
+                Slope::Fall => tpu::Slope::Falling,
+            },
             (_, Slope::Rise) => tpu::Slope::Rising,
             (_, Slope::Fall) => tpu::Slope::Falling,
             (_, Slope::Either) => tpu::Slope::Either,
@@ -218,17 +213,17 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
     if let Some(count) = hw_avg_count(m, &s) {
         s.mode = oos_hal::dho::acq::Mode::Average { count };
     }
-    if crate::compress::enabled() {
+    if crate::board::policy::compress::enabled() {
         live_compress(m, &mut s);
     }
     s
 }
 
-/// The live compression for the model (compress.rs): the factor of `compress::k_for` for the record of `s` where the
+/// The live compression for the model (compress.rs): the factor of `policy::compress::k_for` for the record of `s` where the
 /// model allows it (not in roll or scan), else none.
 pub(super) fn live_compress(m: &Model, s: &mut Settings) {
     if slow_mode(m) != Slow::Off
-        || !crate::compress::allowed(m)
+        || !crate::board::policy::compress::allowed(m)
         || s.la.is_some()
         || s.segments.is_some()
         || !matches!(s.mode, oos_hal::dho::acq::Mode::Normal)
@@ -236,7 +231,7 @@ pub(super) fn live_compress(m: &Model, s: &mut Settings) {
         return;
     }
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-    s.compress = crate::compress::k_for(p.rate, s.tdiv, p.memsel);
+    s.compress = crate::board::policy::compress::k_for(p.rate, s.tdiv, p.memsel);
 }
 
 /// A reader of every frame in the UI that the model does not show (protocol watch, XY: `Shared::needs_raw`) switches
@@ -249,9 +244,8 @@ pub(super) fn raw_for_ui(s: &mut Settings, needs_raw: bool) {
 
 /// The batch was read with the live compression (`live_compress`): its newest frame is read again raw
 /// (`seq::read_raw_again`) for the record the UI keeps.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn raw_newest(b: &Settings, p: &hz::Params) -> bool {
-    b.compress > 1 && p.memsel <= crate::compress::MAX_DEPTH
+    b.compress > 1 && p.memsel <= crate::board::policy::compress::MAX_DEPTH
 }
 
 /// The AUX OUT set-up of the menu choice. Pass/fail takes the default pulse of `auxout::PassFail` (docs/fork/auxout.md).
@@ -300,13 +294,14 @@ fn hw_segments_ok(m: &Model) -> bool {
 }
 
 /// Most hardware segments for the model's set-up (`Board::seg_max`): the whole-memory limit of its segment size.
+/// None where no segment of that size fits (100 M and 125 M points): the software history records them.
 pub fn seg_max(m: &Model) -> Option<usize> {
     if !hw_segments_ok(m) {
         return None;
     }
     let s = settings(m, false);
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-    Some(hz::max_record_frames(p.seg) as usize)
+    Some(hz::max_record_frames(p.seg) as usize).filter(|&n| n > 0)
 }
 
 /// Settings for reading hardware segments back: the live batch plan (compression above 1 M points) with the header
@@ -329,8 +324,7 @@ fn bus_line(m: &Model) -> Option<u8> {
     if !m.bus_on_la() {
         return None;
     }
-    let Proto::Module(i) = m.dec_proto;
-    m.dec_la[crate::protocols::get(i).start_role().min(3)].or(m.dec_la[0])
+    m.dec_la[m.dec_proto.start_role().min(3)].or(m.dec_la[0])
 }
 
 /// The UI trigger as a hardware (TPU) trigger. Two-level types: `Settings::level` is the upper level.

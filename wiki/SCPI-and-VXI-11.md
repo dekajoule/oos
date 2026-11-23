@@ -1,6 +1,6 @@
 # SCPI and VXI-11
 
-How to control OOS from a computer: the ways in (raw socket, VXI-11/VISA, MCP), the rules of the command syntax, every command family with examples, waveform and screenshot transfer, errors, and what differs from the stock Rigol firmware. This page describes OOS 0.1.14.
+How to control OOS from a computer: the ways in (raw socket, VXI-11/VISA, MCP), the rules of the command syntax, every command family with examples, waveform and screenshot transfer, errors, and what differs from the stock Rigol firmware. This page describes OOS 0.1.15.
 
 > **No authentication.** Anyone who can reach the scope can control it. Keep it on a trusted bench network, never on the internet. `net.allow` (below) limits who may connect.
 
@@ -55,7 +55,7 @@ All of them end in the same SCPI interpreter, so a command behaves the same whic
 
 ```sh
 printf '*IDN?\n' | nc dho924s-123456.local 5555
-# OOS,DHO924S,<serial>,oos-ui 0.1.14
+# OOS,DHO924S,<serial>,oos-ui 0.1.15
 ```
 
 **Python with pyvisa, raw socket:**
@@ -103,7 +103,7 @@ print(scope.query('*IDN?'))
 | Command | What it does |
 |---|---|
 | `*IDN?` | `OOS,<model>,<serial>,oos-ui <version>` |
-| `*RST` | the default settings (as the Default key) |
+| `*RST` | the default settings (as the Default key), and the waveform transfer from the start: CH1, NORMal, BYTE, the whole record |
 | `*CLS` | clears the error queue, the event register and pending `*OPC` registrations |
 | `*OPC?` / `*OPC` / `*ESR?` | see [Synchronisation](#synchronisation-opc-esr) |
 | `:RUN`, `:STOP`, `:SINGle` | Run (on the live acquisition, after a Single with the sweep before it, Auto or Normal; a stored replay and SIM go to Normal), Stop, one acquisition then Stop |
@@ -127,7 +127,7 @@ print(scope.query('*IDN?'))
 |---|---|
 | `:CHANnel<n>:DISPlay[?]` | on/off |
 | `:CHANnel<n>:SCALe[?]` | V/div; the nearest scale the scope has; the probe factor applies |
-| `:CHANnel<n>:OFFSet[?]` | volts |
+| `:CHANnel<n>:OFFSet[?]` | volts, within the range of the scale |
 | `:CHANnel<n>:POSition[?]` | divisions |
 | `:CHANnel<n>:COUPling[?]` | `DC\|AC\|GND` (`DC50` only where the board has 50 Ω) |
 | `:CHANnel<n>:BWLimit[?]` | `OFF\|20M\|AUTO` or another filter of the menu |
@@ -143,7 +143,7 @@ print(scope.query('*IDN?'))
 
 | Command | Values |
 |---|---|
-| `:TIMebase[:MAIN]:SCALe[?]` | s/div, nearest step |
+| `:TIMebase[:MAIN]:SCALe[?]` | s/div, nearest step; the expansion reference keeps its place, as with the knob |
 | `:TIMebase[:MAIN]:OFFSet[?]` | delay in seconds (`POSition` is the same) |
 | `:TIMebase:DELay:ENABle[?]`, `:DELay:SCALe[?]`, `:DELay:OFFSet[?]` | zoom window on/off, s/div, centre time |
 | `:TIMebase:VERNier[?]` | fine steps on/off |
@@ -193,7 +193,7 @@ Example, a single acquisition on a rising edge at 1.5 V:
 | `:WAVeform:PREamble?` | 10 values, below |
 | `:WAVeform:DATA?` | the samples as an IEEE block |
 
-**Modes.** NORM reads the record on screen. RAW reads the samples in memory, also outside the screen; OOS allows RAW while running (the stock firmware only when stopped). MAX is the screen record while running and the memory when stopped. A reference gives its own samples in every mode. While running, two queries can see two different acquisitions: send `:STOP` first when preamble and data must belong together.
+**Modes.** NORM reads the record on screen, also after a STOP of a deep record zoomed out, when the measurements keep the window of the STOP. RAW reads the samples in memory, also outside the screen; OOS allows RAW while running (the stock firmware only when stopped). MAX is the screen record while running and the memory when stopped. A reference gives its own samples in every mode. While running, two queries can see two different acquisitions: send `:STOP` first when preamble and data must belong together.
 
 **Preamble:** `format,type,points,count,xincrement,xorigin,xreference,yincrement,yorigin,yreference`. `format` 0 BYTE, 1 WORD, 2 ASCII; `type` 0 NORM, 1 MAX, 2 RAW; `count` is 1.
 
@@ -324,7 +324,7 @@ Values are in base units, phase in degrees, duty and overshoot in percent. `*OPC
 | `:INVerter:ITEM? <item>[,src...]` | the inverter page's results |
 | `:DPT:ITEM? <item>[,V,I[,G]]` | double pulse: `VPEAK`, `IPEAK`, `EON`, `EOFF`, `TDON`, `TR`, `TDOFF`, `TF`, `QRR` |
 | `:BANDwidth:ITEM? <item>[,src]` | `RISE`, `BW`, `OVER` |
-| `:BODE:MODE[?] LOOP\|PSRR\|IMPedance`, `:BODE:RUN ON\|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"` | Bode plot; RUN drives the generator |
+| `:BODE:MODE[?] LOOP\|PSRR\|IMPedance`, `:BODE:UNIT[?] DB\|RATio`, `:BODE:AMPLitude[?] <Vpp>`, `:BODE:RUN ON\|OFF`, `:BODE:DATA?`, `:BODE:GENerator[?] "ip:port"` | Bode plot; RUN drives the generator |
 | `:IDENtify?` | what Identify recognises in the signal |
 
 These are OOS functions, not stock Rigol commands. Their limits are in [reference analysis](https://github.com/dekajoule/oos/blob/main/docs/reference-analysis.md).
@@ -417,7 +417,7 @@ A reference can be a trigger, measurement, cursor, Math or decoder source like a
 |---|---|
 | `:SYSTem:ERRor?` | the next error, see [Errors](#errors) |
 | `:SYSTem:STATe?` | diagnostic state of the application (also whether the GPU draws) |
-| `:SYSTem:GET? <key>`, `:SYSTem:SET <key> = <value>` | any setting by its setup key, also those without a command of their own (keys in [store.rs](https://github.com/dekajoule/oos/blob/main/ui/src/store.rs)) |
+| `:SYSTem:GET? <key>`, `:SYSTem:SET <key> = <value>` | any setting by its setup key, also those without a command of their own (keys in [lib.rs of oos-store](https://github.com/dekajoule/oos/blob/main/ui/store/src/lib.rs)) |
 | `:SYSTem:GRAPhics[?] CPU\|GPU` | System > Graphics |
 | `:SYSTem:AOUTput[?] TOUT\|PFAil\|OFF` | the rear AUX OUT: trigger out, pass/fail (where the mask or zone unit is there), or low |
 | `:SYSTem:LOG ON\|OFF` | measurement logger |
@@ -427,7 +427,7 @@ A reference can be a trigger, measurement, cursor, Math or decoder source like a
 
 ## Synchronisation: *OPC, *ESR?
 
-- `*OPC?` waits until the operation in progress is finished, then answers `1`. It waits for Auto, a SIM generation and an armed `:SINGle`. It does **not** wait for continuous Run, measurements, Math, decoding or the eye: poll their values instead.
+- `*OPC?` waits until the operation in progress is finished, then answers `1`. It waits for Auto, a SIM generation, an armed `:SINGle`, and a `:STOP` until the record of the stop is in place (a moment, at most 3 s): after `:STOP;*OPC?` the preamble and the data belong to the same record. It does **not** wait for continuous Run, measurements, Math, decoding or the eye: poll their values instead.
 - `*OPC` sets bit 0 of the event register when they are finished; `*ESR?` reads and clears it. Bits: 0 operation complete, 2 query error, 3 device error, 4 execution error, 5 command error.
 - A `:SINGle` that never triggers makes `*OPC?` wait forever: set a timeout in the client, or `:TFORce`.
 - While a client waits, the scope keeps running and serves other clients.
@@ -448,7 +448,7 @@ Read `:SYSTem:ERRor?` until it answers `0,"No error"`. Each read takes one error
 | -113 | undefined header (the command does not exist) |
 | -221 | settings conflict (e.g. `*OPC?` through MCP) |
 | -223 | too much data (a waveform page above 64 MiB) |
-| -224 | illegal parameter value |
+| -224 | illegal parameter value (the command exists, the value is not one it takes) |
 | -230 | data not available (analysis without a result) |
 | -241 | hardware missing (e.g. generator on a model without it) |
 | -256 | file not found |

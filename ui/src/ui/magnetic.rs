@@ -3,6 +3,7 @@
 
 //! Magnetic page: inductance, B / H / μr, cycle loss, and the I vs ∫V loop (`oos_dsp::magnetic`).
 
+use super::menu_text::on_off;
 use super::*;
 use oos_dsp::magnetic::{self, Geom};
 
@@ -41,10 +42,9 @@ impl Ui {
 
     pub(super) fn magnetic_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".into() } else { "Off".into() };
         let geom = |x: f64, unit: &str| if x > 0.0 { si(x, unit) } else { "off".into() };
         Some(match it {
-            Item::MagOn => onoff(m.view == AView::Magnetic),
+            Item::MagOn => on_off(m.view == AView::Magnetic),
             Item::MagV => self.wave_name(m.mag_v),
             Item::MagI => self.wave_name(m.mag_i),
             Item::MagN => format!("{:.0}", m.mag_n),
@@ -82,19 +82,17 @@ impl Ui {
 
     pub(super) fn magnetic_adjust(&mut self, it: Item, d: i32) -> bool {
         if matches!(it, Item::MagV | Item::MagI) {
-            let cur = if it == Item::MagV { self.m.mag_v } else { self.m.mag_i };
-            let next = self.step_wave(cur, d);
             if it == Item::MagV {
-                self.m.mag_v = next;
+                self.m.mag_v = self.step_wave(self.m.mag_v, d);
             } else {
-                self.m.mag_i = next;
+                self.m.mag_i = self.step_wave(self.m.mag_i, d);
             }
             self.analyzer_update();
             return true;
         }
         let m = &mut self.m;
         match it {
-            Item::MagOn => m.view = if m.view == AView::Magnetic { AView::Scope } else { AView::Magnetic },
+            Item::MagOn => super::analysers::toggle_view(m, AView::Magnetic),
             Item::MagN => m.mag_n = (m.mag_n + d as f64).clamp(1.0, 10_000.0),
             Item::MagAe => m.mag_ae = eng_ladder(m.mag_ae, d, 1e-6, 0.1, true),
             Item::MagLe => m.mag_le = eng_ladder(m.mag_le, d, 1e-3, 10.0, true),
@@ -158,7 +156,7 @@ impl Ui {
     }
 
     pub(super) fn draw_magnetic(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let m = &self.m;
         let bh = m.mag_plot == MagPlot::BH && m.mag_ae > 0.0 && m.mag_le > 0.0;
         let (n, ae, le) = (m.mag_n.max(1.0), m.mag_ae, m.mag_le);
@@ -422,16 +420,13 @@ impl Ui {
             req.iter().map(|(id, s)| (*id, s)).chain(opt_s.iter().flatten().map(|(id, s)| (*id, s))).collect();
         let refs: Vec<(WaveId, &WaveSamp)> =
             pool.iter().copied().filter(|(id, _)| matches!(id, WaveId::Ref(_))).collect();
-        let grid = if refs.is_empty() {
-            pool[0]
-        } else {
-            let best = refs.iter().map(|(_, s)| s.dt).min_by(|a, b| a.total_cmp(b)).unwrap_or(0.0);
-            *refs
-                .iter()
-                .filter(|(_, s)| (s.dt - best).abs() <= best.abs() * 1e-9)
-                .max_by_key(|(_, s)| s.v.len())
-                .unwrap()
-        };
+        let best = refs.iter().map(|(_, s)| s.dt).min_by(|a, b| a.total_cmp(b)).unwrap_or(0.0);
+        // the reference of the finest step leads, the first source when there is no reference
+        let grid = *refs
+            .iter()
+            .filter(|(_, s)| (s.dt - best).abs() <= best.abs() * 1e-9)
+            .max_by_key(|(_, s)| s.v.len())
+            .unwrap_or(&pool[0]);
         let (t0, dt, n) = (grid.1.t0, grid.1.dt, grid.1.v.len());
         let mut moved = false;
         let mut v = Vec::with_capacity(req.len());

@@ -5,12 +5,11 @@
 //! and `PATTern` of the signal simulator. A new `:SIM` command goes into `sim_cmd` here, with its line in
 //! docs/scpi.md and its query in ui/tests/scpi.txt (AGENTS.md).
 
-use super::{e, kw, parse_bool, parse_slot, Scpi};
+use super::{e, kw, parse_bool, parse_slot, t, Scpi};
 use crate::ui::Ui;
 
 impl Scpi {
     pub(super) fn sim_cmd(&mut self, ui: &mut Ui, n: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
-        let t = |s: &str| Some(s.as_bytes().to_vec());
         let n0 = n.first().copied().unwrap_or("");
         if n.len() == 1 && kw(n0, "BUSY") && query {
             return t(if ui.sim_generating() { "1" } else { "0" });
@@ -106,17 +105,9 @@ impl Scpi {
             if query {
                 return t(&format!("R{}", ui.sim_slot() + 1));
             }
-            return match parse_slot(arg) {
-                Some(i) => {
-                    ui.sim_slot_set(i);
-                    ui.mark_changed();
-                    None
-                }
-                None => {
-                    self.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
-                    None
-                }
-            };
+            return self.set_arg(ui, arg, parse_slot(arg), |ui, i| {
+                ui.sim_slot_set(i);
+            });
         }
         if kw(n0, "PLAY") {
             if query {

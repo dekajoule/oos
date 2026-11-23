@@ -150,7 +150,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
             u.sysinfo_open();
             u.dialog = Some(vec![]);
         }),
-        ("s-power-dlg", |u| u.power_dlg = true),
+        ("s-power-dlg", |u| u.power.open = true),
         ("s-touchlock", |u| u.m.touch_lock = true),
         ("s-la", |u| u.m.la.on = true),
         ("s-cards-1", |u| {
@@ -184,14 +184,14 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
             u.m.dec_src = 2;
             u.set_dec_proto(Proto::SPI);
             u.m.dec_select(0);
-            u.table = Some(tables::TableKind::Decode);
+            u.table.kind = Some(tables::TableKind::Decode);
         }),
         ("s-track", |u| {
             u.m.cursor = CursorMode::Track;
         }),
         ("s-network", |u| {
-            (u.net, u.net_if) = ("192.168.177.64".into(), "wlan0".into());
-            u.net_ifs = vec![("eth0".into(), "192.0.2.51".into()), ("wlan0".into(), "192.168.177.64".into())];
+            (u.net.addr, u.net.iface) = ("192.168.177.64".into(), "wlan0".into());
+            u.net.ifs = vec![("eth0".into(), "192.0.2.51".into()), ("wlan0".into(), "192.168.177.64".into())];
             u.wlan.link = wlan::tests_link("Labor", "192.168.177.64");
             u.open_menu(MenuId::Network);
         }),
@@ -224,7 +224,7 @@ fn gallery_at(dir: &std::path::Path, ts: TextSize) {
         ("s-stats", |u| {
             u.m.ch[1].on = true;
             u.m.meas.push((Meas::Freq, WaveId::Ch(1)));
-            u.stats_on = true;
+            u.results.on = true;
         }),
         ("s-osk", |u| u.activate(Item::ChLabel(0))),
         ("s-startup", |u| {
