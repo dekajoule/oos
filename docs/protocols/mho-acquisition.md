@@ -515,11 +515,23 @@ after a change are dropped while the board settles. Frames are volts at the prob
 **Seen on the unit** (hp197's MHO98, mho-dev-21, issue #4): the keys set the board on CH1 (the snapshot was CH2):
 every scale from 1 mV/div to 5 V/div showed the probe compensation signal at the same 0 to 0.3 V, and the time bases
 from 2 us/div to 10 ms/div at the recorded sample rates. From 1 us/div on (1 GSa/s and above) the read-out was a flat
-line. The stock system's settings of 1 us/div and 2 us/div differ in the rate code 0x10d0 only (0x8004 against
-0x8008); the read-out's pass-through of the DHO800/DHO900 cleared the upper bits of 0x1154 that the stock system sets
-(0x4c3). From mho-dev-22 on the MHO900's pass-through keeps them (`snapshot::passthrough_keeping`; assumed: they matter
-where the two ADCs interleave). The trigger: the stock system's level words hold a window around the level (0x2004
+line. The read-out's pass-through of the DHO800/DHO900 cleared the upper bits of 0x1154 that the stock system sets
+(0x4c3); from mho-dev-22 on the MHO900's pass-through keeps them (`snapshot::passthrough_keeping`). That did not help:
+on skluehspies' MHO98 (mho-dev-22, issue #491) the read-out from 1 GSa/s on was still a flat line at exactly 0 V
+(0 V peak to peak). Besides the rate code 0x10d0 (0x8004 against 0x8008) the stock system's settings of 1 us/div and
+2 us/div differ in 0x1128 (0xc0010006 against 0xc0010007) and in the SPU's filter word 0x1098 (0 against 1): from
+1 GSa/s on the stock system runs the digital filter (adc-mode.md section 4.2), with coefficients its start loads
+through 0x109c and OOS does not. From mho-dev-23 on the plan keeps the filter bypassed at every rate
+(`settings::FILTER`, bits 1:0 = 1). **Assumed** that the unloaded filter is why the read-out was flat.
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-22, issue #491): the keys set scale and time base up to 500 MSa/s;
+at 2 us/div the falling edge of the probe compensation signal is there, but at a different place in each frame. The
+recorded level words are the stock level, 0 V, the low level of that signal, so the trigger fires on noise. 0x4034 bit
+6 was set at the end of every acquisition (0x4c0031e0), so it does not tell the trigger from the auto trigger's
+timeout. From mho-dev-23 on the acquisition thread sets the edge trigger on the channel measured at the screen's level
+and slope with the DHO800/DHO900's sequence (`tpu::edge`; **assumed** the same TPU: the stock 0x201c is the DHO's
+0x00aa4100, an edge on CH1, and the level words have its layout), and the screen's log lists the status words of every
+50 acquisitions. `mho-start` counts a square with one level at the end of the range as the square wave, clipped. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
-holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open. The acquisition thread counts
-0x4034 bit 6 in the screen's log.
+holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.

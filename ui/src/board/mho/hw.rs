@@ -9,14 +9,17 @@
 //! With the unit's recording of the stock settings (`/oos/mho-settings.txt`, `tools/mho-settings.py`) the screen's
 //! keys set the board: the first channel on, its scale and the time base go to the nearest recorded setting
 //! (`settings::Settings::plan`): the FPGA's words, the ADCs' registers, the front end's words and select lines.
-//! Without it the board stays at the snapshot's setting. One channel at a time. **Verified on the unit** that the
-//! board measures at the snapshot's setting (three units, issues #4, #248, #491); the keys not yet.
+//! Without it the board stays at the snapshot's setting. One channel at a time; the trigger is the edge on the channel
+//! measured at the screen's level and slope (`tpu::edge`, assumed to be the DHO's TPU). **Verified on the unit** that
+//! the board measures at the snapshot's setting (three units, issues #4, #248, #491) and that the keys set the scale
+//! and the time base up to 500 MSa/s (two MHO98, #4 and #491); the trigger and 1 GSa/s and above not yet.
 
 use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
 use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
 use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
 use oos_hal::mho::settings::{Plan, Settings};
-use oos_hal::mho::{acq, snapshot};
+use oos_hal::mho::{acq, snapshot, tpu};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// The unit's snapshot and its recording of the stock settings, as `oos-mho-live` leaves them.
@@ -102,7 +105,12 @@ fn run(out: &HwShared) {
         if settings.is_some() { "; the keys set the board" } else { "; no settings file: the keys don't" }
     ));
     let mut buf = DmaBuf::new();
-    let (mut seq, mut settle, mut fired) = (0u64, SETTLE, 0u32);
+    let (mut seq, mut settle) = (0u64, SETTLE);
+    // the status words of the last acquisitions, how often each, in the screen's log every 50 frames
+    let mut statuses: BTreeMap<u32, u32> = BTreeMap::new();
+    // the TPU's shadows (the MHO900's stock 0x201c is the DHO's) and the trigger last set, with the scale it was for
+    let mut tsh = tpu::Shadows::APP;
+    let mut trig_set: Option<(super::Trig, usize, f64, f64)> = None;
     // the stock system's upper bits of 0x1154 for the pass-through: the snapshot's, then each plan's
     let mut keep_1154 = s.fpga.get(&0x1154).copied().unwrap_or(0);
     loop {
@@ -115,11 +123,13 @@ fn run(out: &HwShared) {
             continue;
         }
         if let (Some(st), Some(w)) = (&settings, want) {
-            if applied.as_ref() != Some(&w) {
+            if applied.as_ref().map(|a| (a.ch, a.scale, a.tdiv, a.probe)) != Some((w.ch, w.scale, w.tdiv, w.probe)) {
                 if let Some(ch) = w.ch {
                     match st.plan(ch, w.tdiv, w.scale) {
                         Ok(p) => {
                             apply(&mut bar, afe.as_mut(), &p);
+                            // the plan wrote the recorded level words (the stock level, 0 V): the screen's again
+                            trig_set = None;
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
                             now = Now {
                                 ch,
@@ -138,7 +148,14 @@ fn run(out: &HwShared) {
                         Err(e) => status(format!("MHO900: CH{}: {}", ch, e)),
                     }
                 }
-                applied = Some(w);
+                applied = Some(w.clone());
+            }
+            if let Some(ch) = w.ch {
+                let key = (w.trig, ch, now.scale, w.probe);
+                if trig_set != Some(key) {
+                    trigger(&mut bar, &mut tsh, now.ch, now.scale, w.probe, w.trig);
+                    trig_set = Some(key);
+                }
             }
         }
         sh.s4008 = (sh.s4008 & !0xf) | now.mask;
@@ -162,13 +179,9 @@ fn run(out: &HwShared) {
                 continue;
             }
         };
-        // how often the FPGA's trigger fired, against the auto trigger's timeout (0x4034 bit 6, as on the DHO800/DHO900:
-        // assumed on the MHO900), in the screen's log every 50 frames
-        fired += (a.status & 1 << 6 != 0) as u32;
-        if seq % 50 == 49 {
-            eprintln!("oos-ui mho: trigger fired in {} of the last 50 acquisitions (status {:#x})", fired, a.status);
-            fired = 0;
-        }
+        // which status words the acquisitions ended with (0x4034 bit 6, the DHO's "trigger fired", was set on every
+        // one of an MHO98's, issue #491: another bit has to tell the trigger from the auto trigger's timeout)
+        tally(&mut statuses, a.status, seq);
         let words: Vec<u16> = match buf.read(&mut c2h, 2 * win.n as usize, |_, _| {}) {
             Ok(b) => b.as_chunks::<2>().0.iter().map(|w| u16::from_le_bytes(*w)).collect(),
             Err(e) => {
@@ -183,18 +196,7 @@ fn run(out: &HwShared) {
             continue;
         }
         let probe = applied.as_ref().map_or(1.0, |w| w.probe);
-        let mut f = frame(&words, now.ch - 1, now.scale, probe, now.dt, now.pre - win.start);
-        f.seq = seq;
-        let mut g = lock(out);
-        f.stamp = g.stamp;
-        g.decoded += 1;
-        g.queue.push_back(f.clone());
-        while g.queue.len() > QUEUE_MAX {
-            g.queue.pop_front();
-            g.dropped += 1;
-        }
-        g.frame = f;
-        drop(g);
+        publish(out, frame(&words, now.ch - 1, now.scale, probe, now.dt, now.pre - win.start), seq);
         std::thread::sleep(Duration::from_millis(PERIOD_MS));
     }
 }
@@ -236,6 +238,43 @@ fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan) {
             }
         }
     }
+}
+
+/// Counts the status word an acquisition ended with; every 50 frames the counts go to the screen's log.
+fn tally(statuses: &mut BTreeMap<u32, u32>, status: u32, seq: u64) {
+    *statuses.entry(status).or_default() += 1;
+    if seq % 50 == 49 {
+        let list: Vec<String> = statuses.iter().map(|(s, n)| format!("{:#010x} x{}", s, n)).collect();
+        eprintln!("oos-ui mho: status of the last 50 acquisitions: {}", list.join(", "));
+        statuses.clear();
+    }
+}
+
+/// Hands a frame to the screen: the newest in the queue, the oldest dropped beyond `QUEUE_MAX`.
+fn publish(out: &HwShared, mut f: Frame, seq: u64) {
+    f.seq = seq;
+    let mut g = lock(out);
+    f.stamp = g.stamp;
+    g.decoded += 1;
+    g.queue.push_back(f.clone());
+    while g.queue.len() > QUEUE_MAX {
+        g.queue.pop_front();
+        g.dropped += 1;
+    }
+    g.frame = f;
+}
+
+/// The edge trigger on channel `ch` at the screen's level (V at the probe tip, `probe` the ratio) for the hardware's
+/// `scale` (V/div at the BNC): the DHO800/DHO900's sequence (`tpu::edge`), hysteresis by the scale as there, holdoff
+/// the shortest. The auto trigger's timeout stays the stock system's.
+fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, ch: usize, scale: f64, probe: f64, t: super::Trig) {
+    let nv = |v: f64| v * 1e9;
+    let level = nv(t.level / probe.max(1e-9));
+    let noise = tpu::noise_hysteresis(nv(scale), false);
+    for (a, v) in tpu::edge(sh, ch as u32, t.slope, level, 0.0, nv(scale), 1.0, noise, 8_000_000) {
+        bar.wr(a, v);
+    }
+    eprintln!("oos-ui mho: trigger: CH{} {:?} at {} V ({} V at the BNC)", ch, t.slope, t.level, t.level / probe);
 }
 
 /// A frame of the read-out `words` of channel `ch` (0 to 3) at `scale` V/div: volts as the stock system decodes them

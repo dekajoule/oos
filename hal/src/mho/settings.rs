@@ -22,6 +22,12 @@ pub const FORMAT: u32 = 1;
 /// changed; an MHO934's recording, issue #248): not written.
 pub const LIVE: [u32; 8] = [0x1024, 0x1028, 0x1030, 0x1044, 0x1048, 0x1438, 0x40b8, 0x40d0];
 
+/// The SPU's digital filter (docs/protocols/adc-mode.md section 4.2: bits 1:0 = 1 bypass it, bit 0 = 0 runs it with
+/// the coefficients loaded through 0x109c). The stock system runs it from 1 GSa/s on (0x1098 = 0) with coefficients
+/// its start loads and OOS does not; with none loaded the read-out is a flat line at 0 V (an MHO98, issue #491).
+/// The plan keeps it bypassed at every rate. **Assumed** that this is why the read-out was flat.
+pub const FILTER: u32 = 0x1098;
+
 /// One recorded setting.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Setting {
@@ -186,7 +192,7 @@ impl Settings {
             .filter(|(a, _)| !skip(a))
             .map(|(&a, &v)| {
                 let d = sc.fpga.get(&a).copied().unwrap_or(0) ^ reference.fpga.get(&a).copied().unwrap_or(0);
-                (a, v ^ d)
+                (a, if a == FILTER { (v ^ d) & !3 | 1 } else { v ^ d })
             })
             .collect();
         let switch_on = self.get(&format!("CH{}_alone", ch)).map(|s| s.afe.clone()).unwrap_or_default();
@@ -233,14 +239,14 @@ mod tests {
             setting(
                 "CH2_tdiv=2e-9",
                 &st("2e-9", "4e9"),
-                &[(0x10d0, 0x8001), (0x10e4, 10_000), (0x1014, 0x0480_0000), (0x1210, 49_999)],
+                &[(0x10d0, 0x8001), (0x1098, 0), (0x10e4, 10_000), (0x1014, 0x0480_0000), (0x1210, 49_999)],
                 true,
                 &[],
             ),
             setting(
                 "CH2_tdiv=2e-4",
                 &st("2e-4", "5e6"),
-                &[(0x10d0, 0), (0x10d8, 50), (0x10e4, 10_000), (0x1014, 0x0480_0000), (0x1024, 7)],
+                &[(0x10d0, 0), (0x10d8, 50), (0x1098, 1), (0x10e4, 10_000), (0x1014, 0x0480_0000), (0x1024, 7)],
                 false,
                 &[],
             ),
@@ -291,6 +297,9 @@ mod tests {
         let fast = s.plan(2, 1e-9, 1.0).unwrap();
         assert_eq!((fast.tdiv, fast.srate, fast.scale), (2e-9, 4e9, 1.0));
         assert_eq!(fast.fpga.iter().find(|w| w.0 == 0x10d0), Some(&(0x10d0, 0x8001)));
+        // the filter the stock system runs from 1 GSa/s on stays bypassed: OOS loads no coefficients
+        assert_eq!(fast.fpga.iter().find(|w| w.0 == FILTER), Some(&(FILTER, 1)));
+        assert_eq!(w.get(&FILTER), Some(&1));
         assert!(s.plan(3, 1e-3, 1.0).is_err());
     }
 }

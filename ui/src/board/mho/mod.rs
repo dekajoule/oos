@@ -21,13 +21,21 @@ use std::sync::Mutex;
 pub struct Mho;
 
 /// What the screen asks of the board: the channel (1 to 4, None: none on), its scale at the BNC in V/div, the time
-/// base in s/div and the probe's ratio (the frames are volts at the probe tip).
+/// base in s/div and the probe's ratio (the frames are volts at the probe tip), and the trigger.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Want {
     pub ch: Option<usize>,
     pub scale: f64,
     pub tdiv: f64,
     pub probe: f64,
+    pub trig: Trig,
+}
+
+/// The edge trigger on the channel measured: its level in V at the probe tip and its slope.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Trig {
+    pub level: f64,
+    pub slope: oos_hal::mho::tpu::Slope,
 }
 
 /// Time base from which the screen rolls (as on the DHO800/DHO900 and stock: 200 ms/div).
@@ -59,6 +67,14 @@ impl Board for Mho {
             scale: (crate::model::VSCALES[m.ch[c].vscale] * m.ch[c].vfine) as f64,
             tdiv: m.hw_time_per_div() as f64,
             probe: m.ch[c].probe as f64,
+            trig: Trig {
+                level: m.trig_level as f64,
+                slope: match m.slope {
+                    crate::model::Slope::Rise => oos_hal::mho::tpu::Slope::Rising,
+                    crate::model::Slope::Fall => oos_hal::mho::tpu::Slope::Falling,
+                    crate::model::Slope::Either => oos_hal::mho::tpu::Slope::Either,
+                },
+            },
         }
     }
 

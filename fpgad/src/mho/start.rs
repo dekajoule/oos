@@ -30,7 +30,7 @@ const DEFAULT_RECIPE: &str = "/oos/mho-recipe.txt";
 const CSV: &str = "/tmp/mho-frame.csv";
 /// The revision of this command, the first line of its report: says which `oos-fpgad` made a report (the mho-dev
 /// release it came with).
-const REVISION: &str = "mho-dev-22";
+const REVISION: &str = "mho-dev-23";
 /// Acquisitions tried, and how long each may take to complete.
 const TRIES: u32 = 3;
 const DONE_MS: u64 = 2000;
@@ -450,7 +450,7 @@ fn levels_line(words: &[u16], scale: f64) -> (String, bool) {
         return ("empty".into(), false);
     };
     let (lo, hi) = (words.iter().min().copied().unwrap_or(0), words.iter().max().copied().unwrap_or(0));
-    let sq = l.is_square(scale);
+    let (sq, clipped) = (l.is_square(scale), l.is_clipped_square(scale));
     (
         format!(
             "codes {:04x}..{:04x}, {:.3} V..{:.3} V, mean {:.3} V, levels {:.3}/{:.3} V{}",
@@ -461,9 +461,15 @@ fn levels_line(words: &[u16], scale: f64) -> (String, bool) {
             l.mean,
             l.low,
             l.high,
-            if sq { "  SQUARE WAVE" } else { "" }
+            if sq {
+                "  SQUARE WAVE"
+            } else if clipped {
+                "  SQUARE WAVE, CLIPPED (larger than this scale's range)"
+            } else {
+                ""
+            }
         ),
-        sq,
+        sq || clipped,
     )
 }
 
@@ -593,6 +599,9 @@ fn judge(s: &Snapshot, words: &[u16]) -> i32 {
     );
     if l.is_square(s.scale) {
         println!("mho-start: first acquisition: the square wave, {:.2} V to {:.2} V", l.low, l.high);
+        0
+    } else if l.is_clipped_square(s.scale) {
+        println!("mho-start: first acquisition: the square wave, clipped: larger than the range of {} V/div", s.scale);
         0
     } else {
         println!("mho-start: first acquisition: not the square wave (a line, noise or clipped)");

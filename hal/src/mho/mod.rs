@@ -24,6 +24,12 @@ pub mod afe_bus {
     #[cfg(target_os = "linux")]
     pub use crate::dho::gpio::Line;
 }
+/// The trigger: the TPU of the DHO800/DHO900 at the same addresses (protocols/mho-acquisition.md section 2). **Assumed**
+/// from the unit's recordings: the MHO900's stock 0x201c is the DHO's word for an edge on CH1 (0x00aa4100) and its
+/// level words have the DHO's layout around 0x8000 (section 11).
+pub mod tpu {
+    pub use crate::dho::tpu::{edge, noise_hysteresis, Shadows, Slope};
+}
 pub mod board;
 pub mod bringup;
 pub mod recipe;

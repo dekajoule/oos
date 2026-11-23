@@ -418,6 +418,18 @@ impl Levels {
             && self.max < 4.0 * scale + 1e-9
             && self.min > -4.0 * scale - 1e-9
     }
+
+    /// The square wave with one of its levels at the end of the range (a signal larger than the scale's range, an
+    /// MHO98 at 0.1 V/div, issue #491): it measures, the scale is too fine. Both ends reached is not the square but
+    /// spikes, as in the first acquisitions after the set-up.
+    pub fn is_clipped_square(&self, scale: f64) -> bool {
+        let rail = 4.3 * scale;
+        let swing = self.high - self.low;
+        swing >= 0.5 * scale
+            && (0.1..=0.9).contains(&self.high_share)
+            && (self.max - self.min) < 1.5 * swing
+            && ((self.max >= rail) != (self.min <= -rail))
+    }
 }
 
 #[cfg(test)]
@@ -601,6 +613,13 @@ mod tests {
         assert!(!Levels::of(&spike, 1.0).unwrap().is_square(1.0));
         let clipped = vec![0xffffu16; 1000];
         assert!(!Levels::of(&clipped, 1.0).unwrap().is_square(1.0));
+        assert!(!Levels::of(&clipped, 1.0).unwrap().is_clipped_square(1.0));
+        // 0 to 3 V at 0.1 V/div: its upper level at the end of the range; spikes to both ends are not the square
+        let over: Vec<u16> = (0..1000).map(|i| if i % 100 < 50 { 0x8000 } else { 0xffff }).collect();
+        let l = Levels::of(&over, 0.1).unwrap();
+        assert!(!l.is_square(0.1) && l.is_clipped_square(0.1), "{:?}", l);
+        let both: Vec<u16> = (0..1000).map(|i| [0x8000, 0xffff, 0x0000][i % 3]).collect();
+        assert!(!Levels::of(&both, 0.1).unwrap().is_clipped_square(0.1));
         assert_eq!(Levels::of(&[], 1.0), None);
     }
 }
