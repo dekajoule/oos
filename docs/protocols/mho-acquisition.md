@@ -543,7 +543,18 @@ level; where an edge was in a frame, it was not always the set slope's. Not yet 
 record at those rates. The stock system's read-out window ends 0x2d1 points past its length (0x1100 = 10 721 for
 10 000 points; the DHO800/DHO900's 0x248). From mho-dev-24 on the screen's log reports, every 50 frames, how far the
 edge of the set slope and level nearest the trigger point lies from it, and the screen puts its trigger point on
-that edge (a software trigger on the board's frames until the offset is known). The trigger: the stock system's level words hold a window around the level (0x2004
+that edge (a software trigger on the board's frames until the offset is known).
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-24, issue #491): at 4 GSa/s (100 and 200 ns/div) the edge was
+within 2 samples of the trigger point in every frame, for minutes. At every rate below (2 GSa/s down to 5 MSa/s, with
+0x10d0 = 0x8002 to 0x8008 or the second divider) it lay anywhere in the record, and from 500 MSa/s to 2 GSa/s mostly
+outside it. So the board's trigger and the record meet at the ADCs' own rate only; what the stock system sets besides
+for the slower rates is not known. From mho-dev-25 on a setting below 4 GSa/s by a whole ratio k of at most 100
+(20 us/div and faster) is recorded at 4 GSa/s with the channel's 4 GSa/s setting, k times as deep (0x10e4, the points
+before and after the trigger 0x4050/0x4054, the segment 0x10e0), and every k-th point makes the frame
+(`settings::plan_fast`). The segment size is a quarter of the DHO800/DHO900's (`hz::mem_size`): that gives the stock
+system's 0x200 at 10 000 points and 0x8000 at 1 000 000 (assumed between them). Slower settings keep their own rate and
+the screen's software trigger. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.

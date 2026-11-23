@@ -28,6 +28,13 @@ pub const LIVE: [u32; 8] = [0x1024, 0x1028, 0x1030, 0x1044, 0x1048, 0x1438, 0x40
 /// The plan keeps it bypassed at every rate. **Assumed** that this is why the read-out was flat.
 pub const FILTER: u32 = 0x1098;
 
+/// The rate at which the board's trigger lies at the record's trigger point: 4 GSa/s, the ADCs' own (an MHO98,
+/// mho-dev-24, issue #491: the edge within 2 samples of it in every frame at 4 GSa/s; at every rate below, 2 GSa/s to
+/// 5 MSa/s, anywhere in the record). Below it a plan records at this rate, deeper by the ratio, and the frame takes
+/// every n-th point (`plan_fast`), up to `OVERSAMPLE_MAX` times.
+pub const FAST: f64 = 4e9;
+pub const OVERSAMPLE_MAX: u32 = 100;
+
 /// One recorded setting.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Setting {
@@ -89,7 +96,48 @@ fn num(s: &str) -> Result<u32, String> {
     r.map_err(|_| format!("not a number: {:?}", s))
 }
 
+/// The record's segment size (0x10e0) for `depth` points: a quarter of the DHO800/DHO900's (`hz::mem_size`), which
+/// gives the stock system's 0x200 at 10 k points and 0x8000 at 1 M (an MHO98's recording, issue #491). **Assumed**
+/// between them.
+pub fn segment(depth: u32) -> u32 {
+    (crate::dho::hz::mem_size(depth as i128) / 4) as u32
+}
+
+impl Plan {
+    fn set(&mut self, a: u32, v: u32) {
+        match self.fpga.iter_mut().find(|w| w.0 == a) {
+            Some(w) => w.1 = v,
+            None => self.fpga.push((a, v)),
+        }
+    }
+}
+
 impl Settings {
+    /// `plan`, recorded at `FAST` when the setting's rate is below it by a whole ratio of at most `OVERSAMPLE_MAX`:
+    /// the channel's 4 GSa/s setting with the depth, the segment and the points before and after the trigger times
+    /// the ratio, and the ratio (every that many points of the record make the frame; 1: the plan as recorded).
+    pub fn plan_fast(&self, ch: usize, tdiv: f64, scale: f64) -> Result<(Plan, u32), String> {
+        let p = self.plan(ch, tdiv, scale)?;
+        let r = FAST / p.srate;
+        let k = r.round() as u32;
+        if k <= 1 || k > OVERSAMPLE_MAX || (r - k as f64).abs() > 1e-6 {
+            return Ok((p, 1));
+        }
+        let fast = self.steps(ch, "tdiv").into_iter().filter(|(_, s)| s.num("srate") == Some(FAST)).map(|x| x.0);
+        let Some(t4) = fast.reduce(f64::max) else {
+            return Ok((p, 1));
+        };
+        let mut f = self.plan(ch, t4, scale)?;
+        let (depth, pre) = (p.depth * k, p.pre * k);
+        f.set(super::snapshot::DEPTH, depth);
+        f.set(0x10e0, segment(depth));
+        f.set(0x4050, pre);
+        f.set(0x4054, depth - pre);
+        f.fpga.sort_unstable();
+        (f.depth, f.pre, f.tdiv) = (depth, pre, p.tdiv);
+        Ok((f, k))
+    }
+
     /// Reads the part after `MARK`. An error names the line.
     pub fn parse(text: &str) -> Result<Settings, String> {
         let mut lines = text.lines().skip_while(|l| l.trim() != MARK);
@@ -301,5 +349,26 @@ mod tests {
         assert_eq!(fast.fpga.iter().find(|w| w.0 == FILTER), Some(&(FILTER, 1)));
         assert_eq!(w.get(&FILTER), Some(&1));
         assert!(s.plan(3, 1e-3, 1.0).is_err());
+    }
+
+    // Break it catches: a slow setting recorded at its own rate (its trigger lies anywhere), the depth or the points
+    // before the trigger not scaled, the segment of the shallow record kept, a rate the ADCs cannot divide to taken.
+    #[test]
+    fn a_slower_rate_is_recorded_at_4_gsa_s_and_thinned() {
+        let s = Settings::parse(&file()).unwrap();
+        // 5 MSa/s is 800 times below 4 GSa/s: more than OVERSAMPLE_MAX, recorded as it is
+        let (p, k) = s.plan_fast(2, 2e-4, 0.1).unwrap();
+        assert_eq!((k, p.srate), (1, 5e6));
+        let t = file().replace("tdiv=2e-4 srate=5e6", "tdiv=2e-4 srate=5e8");
+        let s = Settings::parse(&t).unwrap();
+        let (p, k) = s.plan_fast(2, 2e-4, 0.1).unwrap();
+        let w: BTreeMap<u32, u32> = p.fpga.iter().copied().collect();
+        assert_eq!((k, p.srate, p.tdiv, p.depth, p.pre), (8, 4e9, 2e-4, 80_000, 40_000));
+        assert_eq!(
+            (w[&0x10d0], w[&0x10e4], w[&0x10e0], w[&0x4050], w[&0x4054]),
+            (0x8001, 80_000, 0x800, 40_000, 40_000)
+        );
+        assert_eq!(w.get(&0x1014), Some(&0x0400_0000), "the scale's bits stay");
+        assert_eq!((segment(10_000), segment(1_000_000)), (0x200, 0x8000));
     }
 }

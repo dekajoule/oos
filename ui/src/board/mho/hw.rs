@@ -55,6 +55,36 @@ struct Now {
     n: u32,
     pre: u32,
     mask: u32,
+    /// every how many points of the record make the frame (`settings::plan_fast`: recorded at 4 GSa/s)
+    k: u32,
+}
+
+impl Now {
+    /// The board as plan `p` of channel `ch` sets it, every `k`-th point of its record making the frame.
+    fn of(ch: usize, p: &Plan, k: u32) -> Now {
+        Now {
+            ch,
+            scale: p.scale,
+            dt: k as f64 / p.srate,
+            n: p.depth.min(POINTS_MAX),
+            pre: p.pre.min(p.depth),
+            mask: p.mask,
+            k,
+        }
+    }
+}
+
+/// The status line of a plan set.
+fn set_text(ch: usize, p: &Plan, k: u32) -> String {
+    let how = if k > 1 { format!("; recorded at 4 GSa/s, every {}th point", k) } else { String::new() };
+    format!(
+        "MHO900: CH{} at {} V/div, {} s/div, {:.3e} Sa/s (recorded settings{})",
+        ch,
+        p.scale,
+        p.tdiv,
+        p.srate / k as f64,
+        how
+    )
 }
 
 fn run(out: &HwShared) {
@@ -95,6 +125,7 @@ fn run(out: &HwShared) {
         n: depth,
         pre: depth / 2,
         mask: s.fsm_mask(),
+        k: 1,
     };
     let mut sh = s.shadows();
     let mut applied: Option<super::Want> = None;
@@ -126,24 +157,14 @@ fn run(out: &HwShared) {
         if let (Some(st), Some(w)) = (&settings, want) {
             if applied.as_ref().map(|a| (a.ch, a.scale, a.tdiv, a.probe)) != Some((w.ch, w.scale, w.tdiv, w.probe)) {
                 if let Some(ch) = w.ch {
-                    match st.plan(ch, w.tdiv, w.scale) {
-                        Ok(p) => {
+                    match st.plan_fast(ch, w.tdiv, w.scale) {
+                        Ok((p, k)) => {
                             apply(&mut bar, afe.as_mut(), &p);
                             // the plan wrote the recorded level words (the stock level, 0 V): the screen's again
                             trig_set = None;
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
-                            now = Now {
-                                ch,
-                                scale: p.scale,
-                                dt: 1.0 / p.srate,
-                                n: p.depth.min(POINTS_MAX),
-                                pre: p.pre.min(p.depth),
-                                mask: p.mask,
-                            };
-                            status(format!(
-                                "MHO900: CH{} at {} V/div, {} s/div, {:.3e} Sa/s (recorded settings)",
-                                ch, p.scale, p.tdiv, p.srate
-                            ));
+                            now = Now::of(ch, &p, k);
+                            status(set_text(ch, &p, k));
                             settle = SETTLE;
                         }
                         Err(e) => status(format!("MHO900: CH{}: {}", ch, e)),
@@ -197,7 +218,8 @@ fn run(out: &HwShared) {
             continue;
         }
         let probe = applied.as_ref().map_or(1.0, |w| w.probe);
-        let mut f = frame(&words, now.ch - 1, now.scale, probe, now.dt, now.pre - win.start);
+        let (words, pre) = thin(&words, now.pre - win.start, now.k);
+        let mut f = frame(&words, now.ch - 1, now.scale, probe, now.dt, pre);
         if let Some((t, ..)) = trig_set {
             edges.align(&mut f, now.ch - 1, t, now.scale * probe, seq);
         }
@@ -349,6 +371,14 @@ fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, ch: usize, scale: f64, probe: 
     eprintln!("oos-ui mho: trigger: CH{} {:?} at {} V ({} V at the BNC)", ch, t.slope, t.level, t.level / probe);
 }
 
+/// Every `k`-th point of a record whose trigger is at `pre`, the trigger among them: the points and the trigger's index
+/// in them.
+fn thin(words: &[u16], pre: u32, k: u32) -> (Vec<u16>, u32) {
+    let (pre, k) = (pre as usize, k.max(1) as usize);
+    let first = pre % k;
+    (words.iter().skip(first).step_by(k).copied().collect(), ((pre - first) / k) as u32)
+}
+
 /// A frame of the read-out `words` of channel `ch` (0 to 3) at `scale` V/div: volts as the stock system decodes them
 /// (section 5) times the probe's ratio, the trigger at sample `pre` of the window.
 fn frame(words: &[u16], ch: usize, scale: f64, probe: f64, dt: f64, pre: u32) -> Frame {
@@ -374,6 +404,14 @@ mod tests {
         assert_eq!(f.ch[1].len(), 10_000);
         assert!((f.ch[1][0] - 0.0).abs() < 1e-3 && (f.ch[1][9999] - 3.0).abs() < 1e-3);
         assert_eq!((f.pre, f.dt, f.acq.1), (5000, 2e-7, 10_000));
+    }
+
+    // Break it catches: the trigger's point dropped by the thinning, the trigger's index off by the points before it.
+    #[test]
+    fn thinning_keeps_the_trigger_point() {
+        let w: Vec<u16> = (0..80).collect();
+        assert_eq!(thin(&w, 43, 8), ((3..80).step_by(8).collect::<Vec<u16>>(), 5));
+        assert_eq!(thin(&w, 43, 1), (w.clone(), 43));
     }
 
     // Break it catches: the edge taken in the wrong direction, a noise wiggle around the level taken for an edge, the
