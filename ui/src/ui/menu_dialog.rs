@@ -566,16 +566,21 @@ impl Ui {
         (Rect::new(c.x + 14, c.y, track.x - c.x - 22, c.h), track)
     }
 
-    /// A switch in its control `c`: one field, the state on the left, the switch on the right; on, the track is the
-    /// accent and the knob stands right.
+    /// A switch in its control `c`: one field, the state on the left, the switch on the right. On, the field is the
+    /// accent like a chosen segment or an active button, and the switch inverts on it: a dark track, the knob in the
+    /// accent on the right. Off, a dark field, a grey track, the knob on the left.
     fn draw_switch(&self, cv: &mut Canvas, c: Rect, on: bool) {
-        btn(cv, c, BTN, BTN_BORDER);
+        if on {
+            cv.round(c, 5, ACCENT, 255);
+        } else {
+            btn(cv, c, BTN, BTN_BORDER);
+        }
         let (txt, track) = Self::switch_parts(c);
-        cv.text_in(&self.fonts().mb, txt, 0, if on { "On" } else { "Off" }, if on { TEXT } else { DIM });
+        cv.text_in(&self.fonts().mb, txt, 0, if on { "On" } else { "Off" }, if on { DARK_TEXT } else { DIM });
         let r = track.h / 2;
         if on {
-            cv.round(track, r, ACCENT, 255);
-            cv.circle(track.x + track.w - r, track.y + r, r - 3, DARK_TEXT);
+            cv.round(track, r, DARK_TEXT, 255);
+            cv.circle(track.x + track.w - r, track.y + r, r - 3, ACCENT);
         } else {
             cv.round(track, r, BTN_BORDER, 255);
             cv.circle(track.x + r, track.y + r, r - 3, DIM);
