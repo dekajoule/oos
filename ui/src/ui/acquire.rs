@@ -100,9 +100,9 @@ pub(super) struct Seen {
     /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets
     /// no new one)
     pub view: AView,
-    /// the horizontal view the running picture was drawn at: time per division, delay, zoom scale and zoom delay
-    /// (`redraw_held`, #548)
-    pub drawn: (f32, f32, usize, f32),
+    /// the horizontal view the running picture was drawn at: time per division, delay, zoom on, zoom scale and zoom
+    /// delay (`redraw_held`, #548)
+    pub drawn: (f32, f32, bool, usize, f32),
 }
 
 impl Default for Seen {
@@ -116,7 +116,7 @@ impl Default for Seen {
             unaged: 0.0,
             running: false,
             view: AView::Scope,
-            drawn: (f32::NAN, 0.0, 0, 0.0),
+            drawn: (f32::NAN, 0.0, false, 0, 0.0),
         }
     }
 }
@@ -428,7 +428,7 @@ impl Ui {
             self.step_fast_frames(&mut take);
         }
         self.step_records(&mut take, k, dt_wall, hw_seg);
-        self.redraw_held(take.got, deferred);
+        self.redraw_held(take.got);
         if take.renew == Renew::Keep {
             self.seen.unaged = 0.0;
         }
@@ -443,23 +443,26 @@ impl Ui {
 
     /// A new time base, delay or zoom while running and no record came: the held record is drawn again at its own
     /// times, as after a STOP. The picture of the old view stayed, and a 2 ms record taken at 0.2 ms/div filled the
-    /// whole screen at 10 ms/div while the scope waited for a trigger (#548). A changed trigger level keeps the
-    /// picture as it is (#280).
-    fn redraw_held(&mut self, got: usize, deferred: bool) {
-        let view = (self.m.time_per_div(), self.m.delay, self.m.zscale, self.m.zdelay);
+    /// whole screen at 10 ms/div while the scope waited for a trigger (#548). Any horizontal change counts, also a
+    /// zoom switched without `dirty_map`; a changed trigger level keeps the picture as it is (#280).
+    fn redraw_held(&mut self, got: usize) {
+        let m = &self.m;
+        let view = (m.time_per_div(), m.delay, m.zoom, m.zscale, m.zdelay);
         if got > 0 || self.seen.drawn.0.is_nan() {
             self.seen.drawn = view;
             return;
         }
-        if !deferred || view == self.seen.drawn {
+        if self.m.run != RunState::Run || view == self.seen.drawn {
             return;
         }
         self.seen.drawn = view;
         self.ph.clear();
         self.phz.clear();
         if let Some(rec) = self.last[0].clone() {
+            // the zoom pane from the stored samples at its own window, as `step_commit` and the STOP redraw do
+            let detail = self.captured_record_view(&rec, (tscales()[self.m.zscale], self.m.zdelay));
             let zw = self.z_weights(&rec);
-            self.draw_channels(&rec, None, zw.as_deref(), 24 * 6);
+            self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24 * 6);
         }
     }
 

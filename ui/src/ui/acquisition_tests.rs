@@ -1157,6 +1157,12 @@ fn a_new_time_base_while_waiting_draws_the_held_record_at_its_own_times() {
     let (lo, hi) = (*narrow.first().unwrap(), *narrow.last().unwrap());
     assert!(hi - lo <= w / 25, "the record takes the middle fiftieth at 10 ms/div: columns {lo}..{hi} of {w}");
     assert!(lo > w * 2 / 5 && hi < w * 3 / 5, "in the middle: columns {lo}..{hi} of {w}");
+    // the zoom switched on while waiting (no setting marked changed): its pane gets the held record too
+    ui.set_zoom(true);
+    for _ in 0..3 {
+        ui.step(0.033);
+    }
+    assert!(ui.phz.map[0].iter().any(|&c| c != 0), "the zoom pane shows the held record");
 }
 
 // Break it catches (#441, a DHO802 on 0.1.14, 100 ms persistence): the picture aged every screen step whether a record
