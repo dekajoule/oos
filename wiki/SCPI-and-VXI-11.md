@@ -103,7 +103,7 @@ print(scope.query('*IDN?'))
 | Command | What it does |
 |---|---|
 | `*IDN?` | `OOS,<model>,<serial>,oos-ui <version>` |
-| `*RST` | the default settings (as the Default key) |
+| `*RST` | the default settings (as the Default key), and the waveform transfer from the start: CH1, NORMal, BYTE, the whole record |
 | `*CLS` | clears the error queue, the event register and pending `*OPC` registrations |
 | `*OPC?` / `*OPC` / `*ESR?` | see [Synchronisation](#synchronisation-opc-esr) |
 | `:RUN`, `:STOP`, `:SINGle` | Run (on the live acquisition, after a Single with the sweep before it, Auto or Normal; a stored replay and SIM go to Normal), Stop, one acquisition then Stop |
