@@ -582,7 +582,17 @@ resync them every time. No frame had the other slope's edge at the trigger point
 0x88 after the FPGA is loaded, and in all 202 recorded settings of that unit with bit 7 set (0x0578xa80 to 0x0586xa80
 while it acquires, 0x80 in roll mode); the DHO800/DHO900's shadow of it is 0, so the arm's stop sequence cleared bit 7
 on every acquisition. From mho-dev-28 on the MHO900's shadow keeps it (`snapshot::S1000`, **assumed** to be a setting);
-with a file `/oos/mho-s1000-zero` the acquisition thread clears it as before, to compare. The trigger: the stock system's level words hold a window around the level (0x2004
+with a file `/oos/mho-s1000-zero` the acquisition thread clears it as before, to compare.
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-28, issue #491), two starts of the board one after the other: in
+the first, with bit 7 kept, the slower rates lay anywhere; in the second, with it cleared, the edge lay at the
+trigger point in 40 to 50 of 50 frames from 500 ns/div to 20 us/div. Over mho-dev-24 to -28 whether the slower rates
+met the trigger changed from one start of the board to the next, whatever the build changed, while 4 GSa/s met it in
+every start: a phase that settles at random at the start would do that. The DHO800/DHO900's cold boot fixes the ADCs'
+phase with the ADC sync (0x1000 bit 1, cold-boot.md `spu_adc_sync`), which the MHO900's start never pulsed. From
+mho-dev-29 on the acquisition thread pulses it after every setting (**assumed** to fix that phase; a file
+`/oos/mho-no-adc-sync` leaves it out), and 0x1000 bit 7 is cleared again as on the DHO800/DHO900 (kept with a file
+`/oos/mho-s1000-stock`). The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.

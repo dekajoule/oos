@@ -51,11 +51,11 @@ pub const NOT_REPLAYED: [(u32, &str); 21] = [
     (LINK_RESET, "link reset: pulsed by the start"),
 ];
 
-/// The MHO900's SPU control word 0x1000 between its pulses: bit 7 set. It reads set after the FPGA is loaded (0x88,
-/// mho-start's bring-up) and in every one of an MHO98's 202 recorded settings (issue #491); the DHO800/DHO900's
-/// shadow is 0, so the arm's stop sequence cleared it on every acquisition. What it does is not known; **assumed** to
-/// be a setting the stock system keeps. The other upper bits it reads with change from one setting to the next and are
-/// gone in roll mode: state, not kept.
+/// The stock system's SPU control word 0x1000 between its pulses: bit 7 set. It reads set after the FPGA is loaded
+/// (0x88, mho-start's bring-up) and in every one of an MHO98's 202 recorded settings (issue #491); the other upper bits
+/// it reads with change from one setting to the next and are gone in roll mode (state). What bit 7 does is not known.
+/// The shadow stays the DHO800/DHO900's (0): with bit 7 kept (mho-dev-28) the slower rates lost the trigger point in
+/// the first run of a start, as they did in other first runs without it; the acquisition thread sets it on request.
 pub const S1000: u32 = 0x80;
 
 /// The record depth in points (`--map`: 0x3e8 at 1 k).
@@ -236,8 +236,7 @@ impl Snapshot {
     ///
     /// The control words 0x4004, 0x400c, 0x1000 and 0x4080 read back with state bits (an MHO934 and an MHO98 read
     /// different values in the same setting, 0x4080 with its done bit set), so they are not taken from the snapshot:
-    /// they start from the DHO800/DHO900's stock values, the same bits (assumed), but for 0x1000's bit 7 (`S1000`). Of
-    /// the mode word 0x4008 the snapshot
+    /// they start from the DHO800/DHO900's stock values, the same bits (assumed). Of the mode word 0x4008 the snapshot
     /// gives the FSM's channel mask and bit 27 (set on every MHO900 read so far); the rest is the DHO's.
     pub fn shadows(&self) -> Shadows {
         let h = Shadows::HANDOVER;
@@ -246,7 +245,7 @@ impl Snapshot {
             s4004: h.s4004 & !(1 | 4 | 1 << 31),
             s4008: (h.s4008 & !0xf) | self.fsm_mask() | (g(MODE, 0) & 1 << 27),
             s400c: h.s400c,
-            s1000: S1000,
+            s1000: h.s1000,
             s1010: g(0x1010, h.s1010),
             s4080: h.s4080 & !(1 << 31),
             s1004: g(0x1004, h.s1004),
@@ -522,7 +521,7 @@ mod tests {
         let mut busy = s.clone();
         busy.fpga.extend([(0x4004, 0x0f00_a829), (0x400c, 0xa280_8dc2), (0x1000, 0x0585_0a80), (0x4080, 0x5c00_0023)]);
         let (h, b) = (Shadows::HANDOVER, busy.shadows());
-        assert_eq!((b.s4004, b.s400c, b.s1000, b.s4080), (0, h.s400c, S1000, h.s4080));
+        assert_eq!((b.s4004, b.s400c, b.s1000, b.s4080), (0, h.s400c, h.s1000, h.s4080));
         assert!(!busy.plan(&[]).unwrap()[2]
             .1
             .iter()

@@ -29,9 +29,10 @@ const SETTINGS: &str = "/oos/mho-settings.txt";
 /// at their own rate (`settings::plan`). On an MHO98 (mho-dev-26, issue #491) their own rate held the trigger better
 /// (the edge at the trigger point at every rate, 100 ns/div to 200 us/div), so it is the default.
 const FAST: &str = "/oos/mho-fast";
-/// With this file there, 0x1000's bit 7 is cleared by the arm as on the DHO800/DHO900 (mho-dev-27 and before) instead
-/// of kept as the stock system keeps it (`snapshot::S1000`): to compare the two on a unit without another build.
-const S1000_ZERO: &str = "/oos/mho-s1000-zero";
+/// With this file there, 0x1000's bit 7 is kept set as the stock system keeps it (`snapshot::S1000`, mho-dev-28),
+/// and with the other no ADC sync is pulsed after a setting: to compare on a unit without another build.
+const S1000_STOCK: &str = "/oos/mho-s1000-stock";
+const NO_ADC_SYNC: &str = "/oos/mho-no-adc-sync";
 /// How long one acquisition may take to complete, the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
 const DONE_MS: u64 = 1000;
@@ -136,9 +137,10 @@ fn run(out: &HwShared) {
         k: 1,
     };
     let mut sh = s.shadows();
-    if std::path::Path::new(S1000_ZERO).exists() {
-        sh.s1000 = 0;
+    if std::path::Path::new(S1000_STOCK).exists() {
+        sh.s1000 = snapshot::S1000;
     }
+    let adc_sync = !std::path::Path::new(NO_ADC_SYNC).exists();
     let mut applied: Option<super::Want> = None;
     status(format!(
         "MHO900: CH{} at {} V/div (snapshot){}",
@@ -175,7 +177,7 @@ fn run(out: &HwShared) {
                     };
                     match plan {
                         Ok((p, k)) => {
-                            apply(&mut bar, afe.as_mut(), &p, sh.s1000);
+                            apply(&mut bar, afe.as_mut(), &p, sh.s1000, adc_sync);
                             // the plan wrote the recorded level words (the stock level, 0 V): the screen's again
                             trig_set = None;
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
@@ -246,7 +248,7 @@ fn run(out: &HwShared) {
 
 /// Sets the board to a plan: the ADCs' registers that read otherwise, the FPGA's words, the front end's words and
 /// select lines (the MHO900's channel n on the bus's chip select 4 - n).
-fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32) {
+fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32, adc_sync: bool) {
     let wait = || std::thread::sleep(Duration::from_micros(acq::ADC_SPI_WAIT_US));
     for (n, regs) in p.adc.iter().enumerate() {
         for (&r, &v) in regs {
@@ -278,6 +280,15 @@ fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32) {
         bar.wr(a, v);
     }
     reset(bar);
+    // the ADC sync of the DHO800/DHO900's cold boot (0x1000 bit 1: clear, set, clear; cold-boot.md, `spu_adc_sync`),
+    // which the MHO900's start never pulsed: whether the slower rates met the trigger changed from one start of the
+    // board to the next (an MHO98, mho-dev-24 to -28, issue #491), as a phase that settles at random would. **Assumed**
+    // to fix that phase. `NO_ADC_SYNC` leaves it out.
+    if adc_sync {
+        for v in [s1000 & !2, s1000 | 2, s1000 & !2] {
+            bar.wr(0x1000, v);
+        }
+    }
     if let Some(afe) = afe {
         for &(c, r, d) in &p.afe {
             afe.write(4 - c, r, d);
