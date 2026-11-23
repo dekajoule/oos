@@ -282,17 +282,30 @@ pub const SPI_CUT: &str = "Frames shorter than a word: too few samples for the c
 
 /// A bus the record does not show: more frames of `cs` (active low) have capture edges of the clock and no whole word
 /// than frames with a word. What a long frame still gives is then no reading of the bus (200 kbit/s in a record of
-/// 125 kSa/s read "05 05 05 05" for a frame of 16 words, and nothing for the frames of one word around it).
+/// 125 kSa/s read "05 05 05 05" for a frame of 16 words, and nothing for the frames of one word around it). A frame
+/// runs from a falling edge of `cs` to the next rising one; a record that starts while `cs` is low starts with one.
 fn spi_frames_cut(clk: &[f32], cs: &[f32], mode: u8, thr: f32, hy: f32, words: &[Packet]) -> bool {
     let rising = matches!(mode, 0 | 3);
-    let cs_e = edges(cs, thr, hy);
-    let falls: Vec<f64> = cs_e.iter().filter(|e| !e.rising).map(|e| e.t).collect();
     let clocks: Vec<f64> = edges(clk, thr, hy).iter().filter(|e| e.rising == rising).map(|e| e.t).collect();
+    let cs_e = edges(cs, thr, hy);
+    let low_at_start = states(cs, thr, hy).first().copied().flatten() == Some(false);
+    // one pass over the edges of CS: each frame's start and end
+    let (mut frames, mut open) = (Vec::new(), low_at_start.then_some(0.0));
+    for e in &cs_e {
+        match (e.rising, open) {
+            (false, None) => open = Some(e.t),
+            (true, Some(start)) => {
+                frames.push((start, e.t));
+                open = None;
+            }
+            _ => {}
+        }
+    }
+    frames.extend(open.map(|start| (start, f64::INFINITY)));
     let (mut read, mut cut) = (0, 0);
-    for (k, &start) in falls.iter().enumerate() {
-        let next = falls.get(k + 1).copied().unwrap_or(f64::INFINITY);
-        let end = cs_e.iter().find(|e| e.rising && e.t > start).map_or(f64::INFINITY, |e| e.t);
-        if words.iter().any(|w| w.t0 >= start && w.t0 < next) {
+    // the words come in the order of their start, as the clocks do
+    for (start, end) in frames {
+        if words.get(words.partition_point(|w| w.t0 < start)).is_some_and(|w| w.t0 < end) {
             read += 1;
         } else if clocks.get(clocks.partition_point(|&t| t <= start)).is_some_and(|&t| t < end) {
             cut += 1;
@@ -672,52 +685,77 @@ mod tests {
         assert!(i2c(&a, &c, 1.65, 0.2).iter().all(|x| !matches!(x.kind, Kind::Addr { .. } | Kind::Data)));
     }
 
-    /// An SPI bus the record has too few samples for: the frames of one word give nothing and a long frame gives
-    /// words that are none. The decoder says what is wrong; it lists no such words.
-    #[test]
-    fn spi_says_when_the_frames_are_shorter_than_a_word() {
+    /// A bus of one word a frame, a frame every 500 us at 200 kHz, every eighth frame 16 words long, recorded from
+    /// `from` for `len` seconds at `dt` and decoded with Data bits `bits`, in `mode`, with CS active high or low.
+    fn spi_burst(
+        from: f64,
+        len: f64,
+        dt: f64,
+        bits: u32,
+        mode: u8,
+        cs_high: bool,
+    ) -> Result<Vec<Packet>, &'static str> {
         use crate::protocols::{Lines, Shared, OPTS};
-        // one word a frame, a frame every 500 us, clock 200 kHz; every eighth frame has 16 words
-        let short = spi_logic(&[(0xa5, 0)], 8, 0, 200e3, 0.0, 3.3);
+        let short = spi_logic(&[(0xa5, 0)], 8, mode, 200e3, 0.0, 3.3);
         let words: Vec<(u32, u32)> = (0..16).map(|k| (k, 0)).collect();
-        let long = spi_logic(&words, 8, 0, 200e3, 0.0, 3.3);
+        let long = spi_logic(&words, 8, mode, 200e3, 0.0, 3.3);
         let (period, burst) = (500e-6, 8.0 * 500e-6);
-        let line = |i: usize, dt: f64| -> Vec<f32> {
+        let line = |i: usize| -> Vec<f32> {
             let v = |t: f64| {
                 let t = t.rem_euclid(burst);
-                if t < 2.0 * period {
-                    long[i].v(t)
+                let v = if t < 2.0 * period { long[i].v(t) } else { short[i].v(t.rem_euclid(period)) };
+                if i == 0 && cs_high {
+                    3.3 - v
                 } else {
-                    short[i].v(t.rem_euclid(period))
+                    v
                 }
             };
-            sample(v, 0.0, dt, (40e-3 / dt) as usize)
+            sample(v, from, dt, (len / dt) as usize)
         };
-        let decode = |dt: f64, bits: u32| {
-            let [cs, clk, mosi] = [0, 1, 2].map(|i| line(i, dt));
-            let sh = Shared {
-                baud: 9600.0,
-                bits,
-                parity: Parity::None,
-                spi_mode: 0,
-                can_rate: 500e3,
-                canh: false,
-                usb_speed: crate::decode::UsbSpeed::Auto,
-                cphy_rate: 0.0,
-                uart_inv: false,
-                spi_timeout: 0.0,
-                spi_cs_high: false,
-            };
-            let lines = [Some(&mosi[..]), Some(&clk[..]), Some(&cs[..]), None];
-            SPI.decode(&Lines { lines, dt, thr: 1.65, hy: 0.2, opt: [0; OPTS], sh, chans: [None; 4], src: [None; 4] })
+        let [cs, clk, mosi] = [0, 1, 2].map(line);
+        let sh = Shared {
+            baud: 9600.0,
+            bits,
+            parity: Parity::None,
+            spi_mode: mode,
+            can_rate: 500e3,
+            canh: false,
+            usb_speed: crate::decode::UsbSpeed::Auto,
+            cphy_rate: 0.0,
+            uart_inv: false,
+            spi_timeout: 0.0,
+            spi_cs_high: cs_high,
         };
-        // 2.5 samples a bit: every word is read
-        let p = decode(2e-6, 8).unwrap();
-        assert!(p.iter().filter(|x| x.kind == Kind::Data).count() > 100);
-        // 8 us a sample: under one sample a bit
-        assert_eq!(decode(8e-6, 8).err(), Some(SPI_CUT));
-        // enough samples, and Data bits 16 on frames of 8: the same note
-        assert_eq!(decode(2e-6, 16).err(), Some(SPI_CUT));
+        let lines = [Some(&mosi[..]), Some(&clk[..]), Some(&cs[..]), None];
+        SPI.decode(&Lines { lines, dt, thr: 1.65, hy: 0.2, opt: [0; OPTS], sh, chans: [None; 4], src: [None; 4] })
+    }
+
+    /// An SPI bus the record has too few samples for: the frames of one word give nothing and a long frame gives
+    /// words that are none. The decoder says what is wrong; it lists no such words. In every mode, with CS active low
+    /// and high.
+    #[test]
+    fn spi_says_when_the_frames_are_shorter_than_a_word() {
+        for mode in 0..4 {
+            for cs_high in [false, true] {
+                let case = format!("mode {mode}, CS active {}", if cs_high { "high" } else { "low" });
+                // 2.5 samples a bit: every word is read
+                let p = spi_burst(0.0, 40e-3, 2e-6, 8, mode, cs_high).unwrap_or_else(|e| panic!("{case}: {e}"));
+                assert!(p.iter().filter(|x| x.kind == Kind::Data).count() > 100, "{case}");
+                // 8 us a sample: under one sample a bit
+                assert_eq!(spi_burst(0.0, 40e-3, 8e-6, 8, mode, cs_high).err(), Some(SPI_CUT), "{case}");
+                // enough samples, and Data bits 16 on frames of 8: the same note
+                assert_eq!(spi_burst(0.0, 40e-3, 2e-6, 16, mode, cs_high).err(), Some(SPI_CUT), "{case}");
+            }
+        }
+    }
+
+    /// A record that starts in a frame: that frame counts like the others. Here it is cut, as is the next one, and
+    /// the long frame after them reads words that are none.
+    #[test]
+    fn spi_counts_the_frame_the_record_starts_in() {
+        let p = 500e-6;
+        // from inside the short frame at 6 periods, through the long frame of the next burst
+        assert_eq!(spi_burst(6.0 * p + 20e-6, 3.6 * p, 8e-6, 8, 0, false).err(), Some(SPI_CUT));
     }
 
     #[test]
