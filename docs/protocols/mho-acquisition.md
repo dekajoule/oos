@@ -573,7 +573,16 @@ bit 6). At its own rate the share of frames with the set slope's edge was 90 to 
 200 us/div, 60 to 80 % from 1 us/div to 20 us/div. From mho-dev-27 on each time base records at its own rate (the 4
 GSa/s recording with a file `/oos/mho-fast`), and the screen's log counts the frames without the set slope's edge that
 have the other slope's at the trigger point (an earlier picture at 1 us/div showed a falling edge there with the slope
-set to rising). The trigger: the stock system's level words hold a window around the level (0x2004
+set to rising).
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-27, issue #491), started at 100 ns/div and taken slower: 100 and
+200 ns/div held the edge at the trigger point in every frame, but from 500 ns/div on it lay anywhere again, as in the
+first mho-dev-24 run, although the code path was mho-dev-26's that held it. So the pre-processing reset does not
+resync them every time. No frame had the other slope's edge at the trigger point. The SPU control word 0x1000 reads
+0x88 after the FPGA is loaded, and in all 202 recorded settings of that unit with bit 7 set (0x0578xa80 to 0x0586xa80
+while it acquires, 0x80 in roll mode); the DHO800/DHO900's shadow of it is 0, so the arm's stop sequence cleared bit 7
+on every acquisition. From mho-dev-28 on the MHO900's shadow keeps it (`snapshot::S1000`, **assumed** to be a setting);
+with a file `/oos/mho-s1000-zero` the acquisition thread clears it as before, to compare. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.

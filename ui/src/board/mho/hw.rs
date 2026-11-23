@@ -29,6 +29,9 @@ const SETTINGS: &str = "/oos/mho-settings.txt";
 /// at their own rate (`settings::plan`). On an MHO98 (mho-dev-26, issue #491) their own rate held the trigger better
 /// (the edge at the trigger point at every rate, 100 ns/div to 200 us/div), so it is the default.
 const FAST: &str = "/oos/mho-fast";
+/// With this file there, 0x1000's bit 7 is cleared by the arm as on the DHO800/DHO900 (mho-dev-27 and before) instead
+/// of kept as the stock system keeps it (`snapshot::S1000`): to compare the two on a unit without another build.
+const S1000_ZERO: &str = "/oos/mho-s1000-zero";
 /// How long one acquisition may take to complete, the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
 const DONE_MS: u64 = 1000;
@@ -133,6 +136,9 @@ fn run(out: &HwShared) {
         k: 1,
     };
     let mut sh = s.shadows();
+    if std::path::Path::new(S1000_ZERO).exists() {
+        sh.s1000 = 0;
+    }
     let mut applied: Option<super::Want> = None;
     status(format!(
         "MHO900: CH{} at {} V/div (snapshot){}",
