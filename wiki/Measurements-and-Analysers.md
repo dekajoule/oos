@@ -95,6 +95,14 @@ record one per record, so the count can differ from one measurement to the next 
 shows each); `Screen` or `Full record` is the gate. With more measurements than fit, **Prev** and **Next** page
 through them (`1-8 / 9`). A tap on the title folds the card to one line and opens it again.
 
+A record of more than 262144 points is measured beside the screen, and a row says `Computing` until its value is
+there. While the scope runs and records come faster than they are measured, the rows show the value of the last record
+that was measured (one measurement late) instead of `Computing`, not in roll and scan. After a change of the time
+base, of the channel (scale, coupling, invert, bandwidth) or of the measurement settings the old value is not shown; a
+change of the trigger picks other records, and their value follows one measurement later as always. With the gate
+`Full record`, Maximum, Minimum and the other values without edges are there at once; with `Screen` they are measured
+with the others.
+
 ![Statistics](https://raw.githubusercontent.com/dekajoule/oos/main/docs/images/meas-stats.png)
 
 The statistics begin again when a measurement is added or removed, the gate changes, a setting of the scope changes
