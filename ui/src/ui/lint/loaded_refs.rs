@@ -175,6 +175,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
         }),
         la: None,
         pairs: false,
+        peak: false,
     });
     let rec = u.last[0].as_ref().unwrap();
     let samp = u.wave_samples(rec, WaveId::Ref(0)).unwrap();
@@ -300,6 +301,7 @@ fn a_loaded_ref_feeds_the_analysers_at_the_files_interval() {
                 raw: None,
                 la: None,
                 pairs: false,
+                peak: false,
             }),
             &[WaveId::Ref(0), WaveId::Ref(1)],
             &[],

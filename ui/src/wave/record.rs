@@ -272,7 +272,8 @@ pub fn resample(
     });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
     let la = f.la.as_ref().map(|l| crate::logic::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
-    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs }
+    let peak = m.acq == AcqMode::Peak && 1.0 / f.dt < m.max_srate() * 0.999;
+    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs, peak }
 }
 
 #[cfg(test)]

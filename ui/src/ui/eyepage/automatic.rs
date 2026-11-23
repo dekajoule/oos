@@ -735,6 +735,7 @@ mod performance_and_timing_tests {
                 conditioned: true,
             }),
             pairs: false,
+            peak: false,
         };
         ui.last[0] = Some(record);
         ui.counts.records = 17;

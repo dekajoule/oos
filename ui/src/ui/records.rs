@@ -425,6 +425,7 @@ impl Ui {
             raw: None,
             la: None,
             pairs: false,
+            peak: false,
         }
     }
 

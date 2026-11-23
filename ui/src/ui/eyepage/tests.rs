@@ -70,7 +70,7 @@ fn record(s: Sig, n: &mut Noise) -> Record {
     }
     let mut ch: [Vec<f32>; NCH] = Default::default();
     ch[0] = v;
-    Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false }
+    Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false, peak: false }
 }
 
 fn page(s: Sig, records: usize) -> Ui {
