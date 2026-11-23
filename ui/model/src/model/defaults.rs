@@ -61,6 +61,7 @@ impl Default for Model {
             nth_n: 1,
             setup: 1e-6,
             hold: 1e-6,
+            trig_kept: TrigKept::default(),
             run: RunState::Run,
             status: TrigStatus::Wait,
             acq: AcqMode::Normal,

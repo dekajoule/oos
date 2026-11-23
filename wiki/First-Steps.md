@@ -94,6 +94,8 @@ A channel's bandwidth is **Auto** unless you choose another: the limit follows t
 
 **Trigger > Coupling** (edge trigger, from 0.1.11): DC, AC, LF reject or HF reject, a filter in the trigger path only; the trace is not filtered. With AC and LF reject the DC is taken out, so a level of 0 V is the zero crossing of the signal whatever its offset. LF reject also weakens slow signals (a 10 kHz sine is already small), HF reject keeps the DC and suppresses fast signals (1 MHz no longer triggers). SCPI: `:TRIGger:COUPling DC|AC|LFR|HFR`.
 
+**Trigger > Type** keeps what you set per type: the width of Pulse, the pattern, the times, the lower level and the second source of a type come back when you choose that type again, even when another type changed the same value in between. The source stays when the type changes. Each channel keeps its own trigger level as the source: choose CH2, then CH1 again, and CH1's level is back. A saved set-up holds the values of the type and source it was saved with.
+
 ## Text size
 
 **From 0.1.6.** **Display > Text size**: Normal, Large or Larger. Normal is the original look; Large and Larger use

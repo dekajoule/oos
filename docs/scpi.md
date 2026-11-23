@@ -71,9 +71,9 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | `:TIMebase[:MAIN]:OFFSet[?]` | Horizontal delay in seconds; `POSition` is an alias. |
 | `:ACQuire:SRATe?` | ADC/model sample rate, not a loaded reference's native rate. |
 | `:ACQuire:MDEPth[?]` | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the numeric configured/effective acquisition depth. |
-| `:TRIGger:MODE[?]` | Actual trigger type. Same OOS handler as `:TRIGger:TYPe[?]`. |
+| `:TRIGger:MODE[?]` | Actual trigger type. Same OOS handler as `:TRIGger:TYPe[?]`. As in the menu, a type chosen again gets back the values it was left with, and the source stays. |
 | `:TRIGger:STATus?` | `STOP|TD|AUTO|WAIT`. A completed Single reports STOP. |
-| `:TRIGger:EDGE:SOURce[?]` | `CHANn|Rn`; available LA inputs can use `D0` through `D15`. |
+| `:TRIGger:EDGE:SOURce[?]` | `CHANn|Rn`; available LA inputs can use `D0` through `D15`. As in the menu, a channel chosen again gets back the level it was left with. |
 | `:TRIGger:EDGE:LEVel[?]` | Volts. |
 | `:TRIGger:RUNT:UPPer[?]` / `:LOWer[?]` | Absolute high/low thresholds; aliases `:TRIGger:RUNT:ALEVel` / `:BLEVel`. A threshold past the other one is refused with `-224`, as `:MEASure:SETup:MAX` / `MIN`. |
 | `:TRIGger:SOURce2[?]` | Secondary CH/ref source for applicable OOS trigger types. |
