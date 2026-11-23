@@ -146,8 +146,11 @@ at the top right, which lead to **Exit**, **Settings** and what fits the view.
 
 If the source of an analyser is switched off, choose another one in its Settings. From 0.1.1 on it takes the first channel that is on by itself.
 
-The Bode plot shows the gain above and the phase below over the frequency. Both axes carry their values at round
-steps (dB, or V/V for an impedance sweep, and degrees); the title line of each half names its whole range. Once a
+The Bode plot shows the gain above and the phase below over the frequency. **Sweep** (Lin or Log) spaces the
+frequencies of the sweep in equal steps or at an equal ratio, and the frequency axis follows it: linear with lines at
+round steps, or logarithmic with a line per decade. **Gain unit** shows the gain in dB or as the linear ratio V/V,
+whatever the mode measures; the phase is always in degrees. An output of 0 has no value in dB and is left out of the
+curve. Both axes carry their values at round steps; the title line of each half names its whole range. Once a
 sweep has points, **Save CSV** in the Bode menu writes them where **Storage > Save to** points, as `bode-....csv`:
 frequency in Hz, gain in dB (or Vout/Vin) and phase in degrees, one line a point. Over SCPI `:BODE:DATA?` returns the
 same points. With the menu closed, the **Multipurpose 2** knob moves the cursor from point to point, so the menu

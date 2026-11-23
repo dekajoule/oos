@@ -536,6 +536,8 @@ pub struct Model {
     pub bode_addr: String,
     /// loop gain, PSRR, or the linear Vout/Vin ratio
     pub bode_mode: oos_dsp::bode::Mode,
+    /// the gain axis, the cursor and the title in V/V instead of dB (#51); the points keep what the mode measures
+    pub bode_vv: bool,
     /// burst idle (0 = one period), which side Time Outside counts, and Duration N
     pub meas_idle: f64,
     pub meas_out: oos_dsp::measure::Outside,
@@ -598,7 +600,7 @@ pub struct Model {
     /// the external generator is on the USB-A port (USBTMC, the first one found) instead of `bode_addr`
     pub bode_usb: bool,
     /// Bode with a generator that sweeps on its own (`model::bode::FREE`, same start/stop): sweep time (s), logarithmic
-    /// (else linear), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
+    /// (else linear; for every generator also the spacing of the frequencies and the frequency axis, #51), sync channel, its edge and level (V), input channel (0 = none, k = CHk: then the gain is against
     /// `bode_ref` dBV)
     pub bode_sw_time: f64,
     pub bode_sw_log: bool,

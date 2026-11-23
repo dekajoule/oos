@@ -10,7 +10,7 @@
 //! <out> <generator> <address>`, `bode_sweep = <time> <log> <sync> <edge> <level> <input> <ref>` for the free sweep),
 //! so the keys of those rows name a field of a line (`bode start`). store.rs writes and reads the lines by hand, its
 //! numbers with `store::p_f64`: a line sets none of its fields after the first that is wrong, the points are kept
-//! within 2..=1000 and the sync channel 0 counts as 1 (quirks kept). `bode_link` and `bode_mode` are keys of their own,
+//! within 2..=1000 and the sync channel 0 counts as 1 (quirks kept). `bode_link`, `bode_mode` and `bode_unit` are keys of their own,
 //! written by their slices where the keys were, so the keys of a setup file keep their order.
 //!
 //! Still written out by hand: the input and the output (the menu offers the waves the screen shows, the free sweep's
@@ -23,7 +23,7 @@ use crate::model::{decades, ladder_step, si_short, Slope};
 use oos_dsp::bode::Mode;
 
 /// The slices, for the docs table and the SCPI handler.
-pub const SLICES: [&[Setting]; 4] = [&MODE, &SWEEP, &LINK, &FREE];
+pub const SLICES: [&[Setting]; 5] = [&MODE, &UNIT, &SWEEP, &LINK, &FREE];
 
 /// The modes by their place in the list.
 const MODES: [Mode; 3] = [Mode::Loop, Mode::Psrr, Mode::Z];
@@ -50,6 +50,26 @@ pub const MODE: [Setting; 1] = [Setting {
     step: None,
     get: |m, _| Val::Index(MODES.iter().position(|&x| x == m.bode_mode).unwrap_or(0)),
     put: |m, _, v| m.bode_mode = MODES[v.index()],
+}];
+
+/// Written after `bode_mode`.
+pub const UNIT: [Setting; 1] = [Setting {
+    key: "bode_unit",
+    scpi: Scpi::Cmd("UNIT"),
+    ty: Ty::Choice(
+        &[Choice { store: "dB", scpi: "DB", label: "dB" }, Choice { store: "V/V", scpi: "RATio", label: "V/V" }],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Gain unit",
+    #[cfg(test)]
+    doc: "How the plot, the cursor and the title show the gain: in dB, 20 log10(Vout/Vin), or as the linear ratio \
+          Vout/Vin (for PSRR Vin/Vout), whatever the mode measures. The CSV file and `:BODE:DATA?` keep what the mode \
+          stores. The menu changes it on an odd step.",
+    accept: None,
+    step: Some(|m, _, d| odd(m.bode_vv, d)),
+    get: |m, _| Val::Index(m.bode_vv as usize),
+    put: |m, _, v| m.bode_vv = v.index() != 0,
 }];
 
 /// The amplitudes the menu steps along, 1-2-5 over the allowed 10 mVpp .. 20 Vpp.
@@ -114,8 +134,8 @@ pub const SWEEP: [Setting; 4] = [
         ty: Ty::U32 { min: 5, max: 200, step: 5, unit: "" },
         label: "Points",
         #[cfg(test)]
-        doc: "The number of frequencies of the sweep, logarithmically spaced. The menu steps by 5 from 5 to 200; a \
-              setup line keeps 2 to 1000.",
+        doc: "The number of frequencies of the sweep, spaced as Sweep sets: logarithmically or linearly. The menu \
+              steps by 5 from 5 to 200; a setup line keeps 2 to 1000.",
         accept: None,
         step: None,
         get: |m, _| Val::U32(m.bode_points as u32),
@@ -183,8 +203,9 @@ pub const FREE: [Setting; 5] = [
         ),
         label: "Sweep",
         #[cfg(test)]
-        doc: "Whether the generator sweeps the frequency linearly or logarithmically over the sweep time. The menu \
-              changes it on an odd step.",
+        doc: "Whether the frequencies of the sweep are spaced linearly (equal steps) or logarithmically (equal \
+              ratio), and the frequency axis of the plot with them; with the free sweep also how the generator \
+              sweeps over the sweep time. The menu changes it on an odd step.",
         accept: None,
         step: Some(|m, _, d| odd(m.bode_sw_log, d)),
         get: |m, _| Val::Index(m.bode_sw_log as usize),

@@ -115,6 +115,7 @@ const SETTERS: &[(&str, &[&str])] = &[
     (":CURSor:MEASure:INDicator", BOOL),
     (":VIEW", &["SCOPE", "SPECTRUM", "EYE", "POWER", "BODE", "MAGNETIC", "INVERTER", "DPT"]),
     (":BODE:MODE", &["LOOP", "PSRR", "IMPedance"]),
+    (":BODE:UNIT", &["DB", "RATio"]),
     (":BODE:GENerator", &["\"10.1.2.3:5555\"", "10.1.2.3:5555", "\"\""]),
     (":CURSor:MODE", &["OFF", "MANual", "TRACk", "XY"]),
     (":CURSor:MANual:TYPE", &["TIME", "AMPLitude"]),

@@ -206,6 +206,7 @@ impl Default for Model {
             auto_fast: false,
             bode_addr: "192.168.1.100:5555".into(),
             bode_mode: oos_dsp::bode::Mode::Loop,
+            bode_vv: false,
             meas_idle: 0.0,
             meas_out: oos_dsp::measure::Outside::Both,
             meas_n: 2,

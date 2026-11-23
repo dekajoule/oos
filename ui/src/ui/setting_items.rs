@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 87] = [
+const ITEMS: [(Item, &str); 88] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -66,6 +66,7 @@ const ITEMS: [(Item, &str); 87] = [
     (Item::BodeLink, "bode_link"),
     (Item::BodeSwTime, "bode_sweep time"),
     (Item::BodeSwLog, "bode_sweep log"),
+    (Item::BodeUnit, "bode_unit"),
     (Item::BodeSyncEdge, "bode_sweep edge"),
     (Item::BodeSyncLvl, "bode_sweep level"),
     (Item::BodeRef, "bode_sweep ref"),
@@ -253,6 +254,7 @@ impl Ui {
             | Item::BodeLink
             | Item::BodeSwTime
             | Item::BodeSwLog
+            | Item::BodeUnit
             | Item::BodeSyncEdge
             | Item::BodeSyncLvl
             | Item::BodeRef => return true,
