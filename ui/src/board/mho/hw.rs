@@ -18,7 +18,7 @@ use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
 use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
 use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
 use oos_hal::mho::settings::{Plan, Settings};
-use oos_hal::mho::{acq, snapshot, tpu};
+use oos_hal::mho::{acq, record, snapshot, tpu};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -79,6 +79,19 @@ impl Now {
             mask: p.mask,
             k,
         }
+    }
+
+    /// The read-out of the record: the points around the trigger of every channel recorded (`mask`), interleaved.
+    fn window(&self, s: &snapshot::Snapshot) -> record::Window {
+        let ratio = record::ratio(self.mask);
+        let mut win = s.window(self.n);
+        (win.n, win.start, win.ratio, win.fsm) = (self.n * ratio, self.start() * ratio, ratio, self.mask);
+        win
+    }
+
+    /// The first point read of the channel's record.
+    fn start(&self) -> u32 {
+        self.pre.saturating_sub(self.n / 2)
     }
 }
 
@@ -158,6 +171,8 @@ fn run(out: &HwShared) {
     let mut edges = EdgeLog::default();
     // the stock system's upper bits of 0x1154 for the pass-through: the snapshot's, then each plan's
     let mut keep_1154 = s.fpga.get(&0x1154).copied().unwrap_or(0);
+    // after a setting, the levels of every channel recorded go to the log once (which word holds which channel)
+    let mut show = false;
     loop {
         let (hold, want) = {
             let g = lock(out);
@@ -183,7 +198,7 @@ fn run(out: &HwShared) {
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
                             now = Now::of(ch, &p, k);
                             status(set_text(ch, &p, k));
-                            settle = SETTLE;
+                            (settle, show) = (SETTLE, true);
                         }
                         Err(e) => status(format!("MHO900: CH{}: {}", ch, e)),
                     }
@@ -199,10 +214,7 @@ fn run(out: &HwShared) {
             }
         }
         sh.s4008 = (sh.s4008 & !0xf) | now.mask;
-        let mut win = s.window(now.n);
-        win.n = now.n;
-        win.start = now.pre.saturating_sub(now.n / 2);
-        win.fsm = now.mask;
+        let win = now.window(&s);
         let pass = snapshot::passthrough_keeping(keep_1154);
         let r = snapshot::acquire_with(
             &mut bar,
@@ -222,8 +234,8 @@ fn run(out: &HwShared) {
         // which status words the acquisitions ended with (0x4034 bit 6, the DHO's "trigger fired", was set on every
         // one of an MHO98's, issue #491: another bit has to tell the trigger from the auto trigger's timeout)
         tally(&mut statuses, a.status, seq);
-        let words: Vec<u16> = match buf.read(&mut c2h, 2 * win.n as usize, |_, _| {}) {
-            Ok(b) => b.as_chunks::<2>().0.iter().map(|w| u16::from_le_bytes(*w)).collect(),
+        let bytes = match buf.read(&mut c2h, 2 * win.n as usize, |_, _| {}) {
+            Ok(b) => b,
             Err(e) => {
                 status(format!("MHO900: read-out: {}", e));
                 std::thread::sleep(Duration::from_millis(500));
@@ -235,8 +247,9 @@ fn run(out: &HwShared) {
             settle -= 1;
             continue;
         }
+        let words = channel_words(bytes, now.mask, now.ch, now.scale, std::mem::take(&mut show));
         let probe = applied.as_ref().map_or(1.0, |w| w.probe);
-        let (words, pre) = thin(&words, now.pre - win.start, now.k);
+        let (words, pre) = thin(&words, now.pre - now.start(), now.k);
         let mut f = frame(&words, now.ch - 1, now.scale, probe, now.dt, pre);
         if let Some((t, ..)) = trig_set {
             edges.align(&mut f, now.ch - 1, t, now.scale * probe, seq);
@@ -301,6 +314,21 @@ fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32, adc_sy
             }
         }
     }
+}
+
+/// The words of channel `ch` from a read-out of the channels in `mask`, interleaved as on the DHO800/DHO900. The stock
+/// system records CH2, CH3 or CH4 alone together with CH1 (`settings::Plan::mask`); with `show`, the levels of each
+/// channel at `scale` go to the screen's log, which tells whether the words are where they are assumed to be.
+fn channel_words(bytes: &[u8], mask: u32, ch: usize, scale: f64, show: bool) -> Vec<u16> {
+    let mut all = record::deinterleave(bytes, mask);
+    if show && record::ratio(mask) > 1 {
+        let text: Vec<String> = (0..4)
+            .filter_map(|c| snapshot::Levels::of(&all[c], scale).map(|l| (c, l)))
+            .map(|(c, l)| format!("CH{} {:.3} V..{:.3} V, mean {:.3} V", c + 1, l.min, l.max, l.mean))
+            .collect();
+        eprintln!("oos-ui mho: record of the channels {:#x} at CH{}'s scale: {}", mask, ch, text.join("; "));
+    }
+    std::mem::take(&mut all[ch - 1])
 }
 
 /// Counts the status word an acquisition ended with; every 50 frames the counts go to the screen's log.
@@ -451,6 +479,15 @@ mod tests {
         assert_eq!(f.ch[1].len(), 10_000);
         assert!((f.ch[1][0] - 0.0).abs() < 1e-3 && (f.ch[1][9999] - 3.0).abs() < 1e-3);
         assert_eq!((f.pre, f.dt, f.acq.1), (5000, 2e-7, 10_000));
+    }
+
+    // Break it catches: CH1's words taken for CH2 when both are recorded, a single channel's words split.
+    #[test]
+    fn a_channel_recorded_with_ch1_is_taken_from_the_odd_words() {
+        let bytes: Vec<u8> = [1u16, 2, 1, 2, 1, 2].iter().flat_map(|w| w.to_le_bytes()).collect();
+        assert_eq!(channel_words(&bytes, 3, 2, 1.0, false), [2, 2, 2]);
+        assert_eq!(channel_words(&bytes, 9, 1, 1.0, false), [1, 1, 1]);
+        assert_eq!(channel_words(&bytes, 1, 1, 1.0, false), [1, 2, 1, 2, 1, 2]);
     }
 
     // Break it catches: the trigger's point dropped by the thinning, the trigger's index off by the points before it.

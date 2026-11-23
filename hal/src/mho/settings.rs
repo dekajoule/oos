@@ -96,9 +96,9 @@ fn num(s: &str) -> Result<u32, String> {
     r.map_err(|_| format!("not a number: {:?}", s))
 }
 
-/// The record's segment size (0x10e0) for `depth` points: a quarter of the DHO800/DHO900's (`hz::mem_size`), which
-/// gives the stock system's 0x200 at 10 k points and 0x8000 at 1 M (an MHO98's recording, issue #491). **Assumed**
-/// between them.
+/// The record's segment size (0x10e0) for `depth` points of one channel: a quarter of the DHO800/DHO900's
+/// (`hz::mem_size`), which gives the stock system's 0x200 at 10 k points and 0x8000 at 1 M (an MHO98's recording, issue
+/// #491); twice that with two channels recorded (0x400 at 10 k). **Assumed** between them.
 pub fn segment(depth: u32) -> u32 {
     (crate::dho::hz::mem_size(depth as i128) / 4) as u32
 }
@@ -130,7 +130,7 @@ impl Settings {
         let mut f = self.plan(ch, t4, scale)?;
         let (depth, pre) = (p.depth * k, p.pre * k);
         f.set(super::snapshot::DEPTH, depth);
-        f.set(0x10e0, segment(depth));
+        f.set(0x10e0, segment(depth) * crate::dho::hz::ratio(f.mask));
         f.set(0x4050, pre);
         f.set(0x4054, depth - pre);
         f.fpga.sort_unstable();
@@ -246,6 +246,10 @@ impl Settings {
         let switch_on = self.get(&format!("CH{}_alone", ch)).map(|s| s.afe.clone()).unwrap_or_default();
         let own = |v: &[(usize, u8, u16)]| v.iter().filter(|f| f.0 == ch).copied().collect::<Vec<_>>();
         let srate = tb.num("srate").filter(|&r| r > 0.0).ok_or("the time base's sample rate is not recorded")?;
+        // the channels the stock system records for this one: CH2, CH3 or CH4 alone together with CH1 (0x4008 bits
+        // 3:0 = 3, 5, 9 in an MHO98's recording, issue #491); the channel's own bit if none is recorded
+        let own_bit = 1 << (ch - 1);
+        let mask = tb.fpga.get(&super::snapshot::MODE).map(|m| m & 0xf).filter(|m| m & own_bit != 0).unwrap_or(own_bit);
         Ok(Plan {
             fpga,
             adc,
@@ -256,7 +260,7 @@ impl Settings {
             srate,
             depth: tb.fpga.get(&super::snapshot::DEPTH).copied().unwrap_or(10_000),
             pre: tb.fpga.get(&0x4050).copied().unwrap_or(5000),
-            mask: 1 << (ch - 1),
+            mask,
         })
     }
 }
@@ -294,7 +298,15 @@ mod tests {
             setting(
                 "CH2_tdiv=2e-4",
                 &st("2e-4", "5e6"),
-                &[(0x10d0, 0), (0x10d8, 50), (0x1098, 1), (0x10e4, 10_000), (0x1014, 0x0480_0000), (0x1024, 7)],
+                &[
+                    (0x10d0, 0),
+                    (0x10d8, 50),
+                    (0x1098, 1),
+                    (0x10e4, 10_000),
+                    (0x1014, 0x0480_0000),
+                    (0x1024, 7),
+                    (0x4008, 0x1888_32a3),
+                ],
                 false,
                 &[],
             ),
@@ -333,7 +345,8 @@ mod tests {
     fn a_time_base_and_a_scale_make_one_state() {
         let s = Settings::parse(&file()).unwrap();
         let p = s.plan(2, 2.1e-4, 0.1).unwrap();
-        assert_eq!((p.tdiv, p.scale, p.srate, p.depth, p.mask), (2e-4, 0.1, 5e6, 10_000, 2));
+        // CH2 recorded together with CH1, as the stock system does it
+        assert_eq!((p.tdiv, p.scale, p.srate, p.depth, p.mask), (2e-4, 0.1, 5e6, 10_000, 3));
         let w: BTreeMap<u32, u32> = p.fpga.iter().copied().collect();
         // the time base's sampling, the scale's bit 23 of 0x1014 cleared against 1 V/div, the scale's lane gain
         assert_eq!(w.get(&0x10d8), Some(&50));
@@ -345,6 +358,8 @@ mod tests {
         let fast = s.plan(2, 1e-9, 1.0).unwrap();
         assert_eq!((fast.tdiv, fast.srate, fast.scale), (2e-9, 4e9, 1.0));
         assert_eq!(fast.fpga.iter().find(|w| w.0 == 0x10d0), Some(&(0x10d0, 0x8001)));
+        assert_eq!(fast.mask, 2, "no mode word recorded: the channel's own bit");
+        assert_eq!(fast.fpga.iter().find(|w| w.0 == crate::mho::snapshot::MODE), None, "the mode word is the arm's");
         // the filter the stock system runs from 1 GSa/s on stays bypassed: OOS loads no coefficients
         assert_eq!(fast.fpga.iter().find(|w| w.0 == FILTER), Some(&(FILTER, 1)));
         assert_eq!(w.get(&FILTER), Some(&1));

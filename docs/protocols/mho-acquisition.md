@@ -598,7 +598,20 @@ mho-dev-29 on the acquisition thread pulses it after every setting (**assumed** 
 other, the edge lay at the trigger point at every time base tried (100 ns, 500 ns, 1, 2, 5, 10, 20 and 200 us/div):
 the median of every block of 50 frames within 3 samples of it, nearly every frame with the edge. So the ADC sync after
 a setting fixes the phase. Single frames still lie off (in about half the blocks at least one); the record's first
-part missing at the slower rates (the trigger before the points before it) is the likely cause, not yet checked. The trigger: the stock system's level words hold a window around the level (0x2004
+part missing at the slower rates (the trigger before the points before it) is the likely cause, not yet checked.
+
+**Seen on the unit** (skluehspies' MHO98, mho-dev-29, issue #491): with CH2, CH3 or CH4 the only channel on and the
+probe on it, the screen stayed flat, and the trigger did not fire (0x4034 0x4c0031a0); CH1 measured. The stock system
+records CH2, CH3 or CH4 alone together with CH1: in that unit's recording 0x4008 bits 3:0 are 3, 5 and 9 (1 for CH1),
+the segment 0x10e0 is twice CH1's at the same depth (0x400 against 0x200 at 10 k points), 0x1120/0x1128 carry 2 where
+CH1's carry 1, the fastest rate is 2 GSa/s instead of 4, and ADC 0 keeps CH1's input mode (0x54 = 0x9460) while ADC 1
+takes the channel's (0x1803, 0x3149, 0x00c5). OOS set the FSM's mask to the channel's own bit. From mho-dev-30 on the
+plan takes the recorded mask, the read-out takes the points of every channel in it (twice the words for two) and keeps
+the channel's: lower channel on the even words, higher on the odd ones, as on the DHO800/DHO900 (**assumed** the same
+on the MHO900). After each setting the screen's log shows the levels of both channels once, so a picture of the probe
+on one of them tells which words hold it. A 10:1 probe set to 10x read 2.2 V for the 3 V signal at 500 mV/div: at the
+BNC that is 50 mV/div, whose range (about 4.3 divisions either side) ends at 0.22 V, so the signal was clipped; the
+screen's vertical offset, which the stock system uses to bring it into range, is not yet sent to the board. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.

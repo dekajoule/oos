@@ -24,6 +24,13 @@ pub mod afe_bus {
     #[cfg(target_os = "linux")]
     pub use crate::dho::gpio::Line;
 }
+/// The record of several channels: the DHO800/DHO900's interleave (`hz::ratio`, `seq::deinterleave`), **assumed** the
+/// same on the MHO900.
+pub mod record {
+    pub use crate::dho::hz::ratio;
+    pub use crate::dho::scu::Window;
+    pub use crate::dho::seq::deinterleave;
+}
 /// The trigger: the TPU of the DHO800/DHO900 at the same addresses (protocols/mho-acquisition.md section 2). **Assumed**
 /// from the unit's recordings: the MHO900's stock 0x201c is the DHO's word for an edge on CH1 (0x00aa4100) and its
 /// level words have the DHO's layout around 0x8000 (section 11).
