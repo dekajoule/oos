@@ -283,12 +283,13 @@ pub const SPI_CUT: &str = "Frames shorter than a word: too few samples for the c
 /// A bus the record does not show: more frames of `cs` (active low) have capture edges of the clock and no whole word
 /// than frames with a word. What a long frame still gives is then no reading of the bus (200 kbit/s in a record of
 /// 125 kSa/s read "05 05 05 05" for a frame of 16 words, and nothing for the frames of one word around it). A frame
-/// runs from a falling edge of `cs` to the next rising one; a record that starts while `cs` is low starts with one.
+/// runs from a falling edge of `cs` to the next rising one; a record whose first known `cs` is low starts with one
+/// (also when it starts in the hysteresis band, where `edges` has no edge for the settling).
 fn spi_frames_cut(clk: &[f32], cs: &[f32], mode: u8, thr: f32, hy: f32, words: &[Packet]) -> bool {
     let rising = matches!(mode, 0 | 3);
     let clocks: Vec<f64> = edges(clk, thr, hy).iter().filter(|e| e.rising == rising).map(|e| e.t).collect();
     let cs_e = edges(cs, thr, hy);
-    let low_at_start = states(cs, thr, hy).first().copied().flatten() == Some(false);
+    let low_at_start = states(cs, thr, hy).into_iter().flatten().next() == Some(false);
     // one pass over the edges of CS: each frame's start and end
     let (mut frames, mut open) = (Vec::new(), low_at_start.then_some(0.0));
     for e in &cs_e {
@@ -686,7 +687,8 @@ mod tests {
     }
 
     /// A bus of one word a frame, a frame every 500 us at 200 kHz, every eighth frame 16 words long, recorded from
-    /// `from` for `len` seconds at `dt` and decoded with Data bits `bits`, in `mode`, with CS active high or low.
+    /// `from` for `len` seconds at `dt` and decoded with Data bits `bits`, in `mode`, with CS active high or low; the
+    /// first `band` samples of CS sit in the hysteresis band.
     fn spi_burst(
         from: f64,
         len: f64,
@@ -694,6 +696,7 @@ mod tests {
         bits: u32,
         mode: u8,
         cs_high: bool,
+        band: usize,
     ) -> Result<Vec<Packet>, &'static str> {
         use crate::protocols::{Lines, Shared, OPTS};
         let short = spi_logic(&[(0xa5, 0)], 8, mode, 200e3, 0.0, 3.3);
@@ -712,7 +715,8 @@ mod tests {
             };
             sample(v, from, dt, (len / dt) as usize)
         };
-        let [cs, clk, mosi] = [0, 1, 2].map(line);
+        let [mut cs, clk, mosi] = [0, 1, 2].map(line);
+        cs.iter_mut().take(band).for_each(|x| *x = 1.65);
         let sh = Shared {
             baud: 9600.0,
             bits,
@@ -739,23 +743,25 @@ mod tests {
             for cs_high in [false, true] {
                 let case = format!("mode {mode}, CS active {}", if cs_high { "high" } else { "low" });
                 // 2.5 samples a bit: every word is read
-                let p = spi_burst(0.0, 40e-3, 2e-6, 8, mode, cs_high).unwrap_or_else(|e| panic!("{case}: {e}"));
+                let p = spi_burst(0.0, 40e-3, 2e-6, 8, mode, cs_high, 0).unwrap_or_else(|e| panic!("{case}: {e}"));
                 assert!(p.iter().filter(|x| x.kind == Kind::Data).count() > 100, "{case}");
                 // 8 us a sample: under one sample a bit
-                assert_eq!(spi_burst(0.0, 40e-3, 8e-6, 8, mode, cs_high).err(), Some(SPI_CUT), "{case}");
+                assert_eq!(spi_burst(0.0, 40e-3, 8e-6, 8, mode, cs_high, 0).err(), Some(SPI_CUT), "{case}");
                 // enough samples, and Data bits 16 on frames of 8: the same note
-                assert_eq!(spi_burst(0.0, 40e-3, 2e-6, 16, mode, cs_high).err(), Some(SPI_CUT), "{case}");
+                assert_eq!(spi_burst(0.0, 40e-3, 2e-6, 16, mode, cs_high, 0).err(), Some(SPI_CUT), "{case}");
             }
         }
     }
 
     /// A record that starts in a frame: that frame counts like the others. Here it is cut, as is the next one, and
-    /// the long frame after them reads words that are none.
+    /// the long frame after them reads words that are none. Also when CS starts in the hysteresis band and settles low.
     #[test]
     fn spi_counts_the_frame_the_record_starts_in() {
         let p = 500e-6;
         // from inside the short frame at 6 periods, through the long frame of the next burst
-        assert_eq!(spi_burst(6.0 * p + 20e-6, 3.6 * p, 8e-6, 8, 0, false).err(), Some(SPI_CUT));
+        for band in [0, 2] {
+            assert_eq!(spi_burst(6.0 * p + 20e-6, 3.6 * p, 8e-6, 8, 0, false, band).err(), Some(SPI_CUT), "{band}");
+        }
     }
 
     #[test]
