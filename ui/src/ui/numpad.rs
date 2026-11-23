@@ -106,9 +106,9 @@ impl Ui {
         if it == Item::BodeAmp {
             use crate::settings::bode::{AMP_RANGE, VPP_PER_VRMS};
             let (k, unit) = if self.m.bode_rms { (VPP_PER_VRMS, "Vrms") } else { (1.0, "Vpp") };
-            // a hair of rounding: 7.07 Vrms is 20 Vpp
+            // within the range; the clamp below only takes up the rounding of Vrms to Vpp at its ends
             let vpp = v * k;
-            if !(AMP_RANGE.0 * (1.0 - 1e-3)..=AMP_RANGE.1 * (1.0 + 1e-3)).contains(&vpp) {
+            if !(AMP_RANGE.0 * (1.0 - 1e-9)..=AMP_RANGE.1 * (1.0 + 1e-9)).contains(&vpp) {
                 let (lo, hi) = (si_short(AMP_RANGE.0 / k, unit), si_short(AMP_RANGE.1 / k, unit));
                 return self.toast(&format!("The amplitude must be {} to {}", lo, hi));
             }

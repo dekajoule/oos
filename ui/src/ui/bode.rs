@@ -1529,6 +1529,13 @@ mod tests {
         }
         assert!((ui.m.bode_amp - VPP_PER_VRMS).abs() < 1e-12);
         assert!(ui.toast.as_ref().unwrap().0.contains("3.54 mVrms to 7.07 Vrms"), "{:?}", ui.toast);
+        // just above the top is refused too, not taken as 20 Vpp
+        ui.open_numpad(Item::BodeAmp);
+        for k in ["7", ".", "0", "8", "Vrms"] {
+            let i = ui.numpad_keys().iter().position(|x| x == k).unwrap();
+            ui.numpad_key(i);
+        }
+        assert!((ui.m.bode_amp - VPP_PER_VRMS).abs() < 1e-12, "7.08 Vrms is above 20 Vpp");
         // the top: 7.07 Vrms is 20 Vpp, no further
         ui.adjust(Item::BodeAmp, 1000);
         assert_eq!(ui.m.bode_amp, 20.0);
