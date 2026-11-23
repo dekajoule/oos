@@ -302,9 +302,9 @@ impl Ui {
             key::REF => self.toggle_menu(MenuId::Ref),
             key::ANALYSE => self.toggle_menu(MenuId::Decode),
             // history: back / forward step through the stored records (stops the acquisition), play-stop = live
-            0x08 => self.history_step(-1),
-            0x06 => self.history_step(1),
-            0x07 | key::NAVIGATE => {
+            key::NAV_BACK => self.history_step(-1),
+            key::NAV_FWD => self.history_step(1),
+            key::NAV_PLAY | key::NAVIGATE => {
                 if self.history.pos.is_some() {
                     self.history.pos = None;
                     self.m.run = RunState::Run;
