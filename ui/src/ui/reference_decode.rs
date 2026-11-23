@@ -524,6 +524,34 @@ mod tests {
         assert_eq!(read(true, true, AcqMode::Peak).2, once.2, "averaged once");
     }
 
+    /// The search of a protocol trigger in the live record (`search_events`) reads points in turn as the decoder
+    /// does: a Peak detect record finds the field, read as samples it finds none.
+    #[test]
+    fn the_search_reads_a_peak_detect_record_like_the_decoder() {
+        let (m, peak, dt) = crate::trig::peak_tests::lin_in_peak_detect();
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.m = m;
+        (ui.m.trig_type, ui.m.trig_src, ui.m.trig_bus, ui.m.trig_bus_val) = (TrigType::Bus, 0, BusWhat::Data, 0x30);
+        let mut hits = |rec_peak: bool| {
+            let ch: [Vec<f32>; NCH] = std::array::from_fn(|c| if c == 0 { peak.clone() } else { Vec::new() });
+            let (t0, triggered) = (0.0, true);
+            ui.last[0] = Some(Record {
+                t0,
+                dt,
+                ch,
+                triggered,
+                partial: false,
+                raw: None,
+                la: None,
+                pairs: false,
+                peak: rec_peak,
+            });
+            ui.search_events().len()
+        };
+        assert_eq!(hits(false), 0, "as samples no byte is read");
+        assert_eq!(hits(true), 1, "the data byte 0x30");
+    }
+
     fn reference(v: Vec<f32>, dt: f64, t0: f64, vpd: f32) -> RefWave {
         RefWave { label: "decoder fixture".into(), vpd, ..RefWave::test(v, dt, t0) }
     }
