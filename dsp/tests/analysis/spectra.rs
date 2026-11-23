@@ -226,6 +226,37 @@ fn distortion_of_noise_alone_is_none_and_a_weak_line_still_counts() {
     }
 }
 
+// Break it catches: noise whose spectrum falls with frequency (the bandwidth limit, any low-pass in front) has its
+// strongest bins far above the median of the whole spectrum, so a test against that median found a "fundamental" in
+// it again. A line stands out of the bins around it; filtered noise does not, whatever the slope.
+#[test]
+fn distortion_of_low_pass_noise_is_none_and_a_line_in_it_still_counts() {
+    let dt = 8e-10;
+    for alpha in [0.8, 0.9, 0.98] {
+        for seed in 1..6 {
+            let mut g = Gauss(seed);
+            let mut y = 0.0;
+            let noise: Vec<f32> = (0..100_000)
+                .map(|_| {
+                    y = alpha * y + (1.0 - alpha) * g.next(0.01);
+                    y as f32
+                })
+                .collect();
+            let rms = (noise.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / noise.len() as f64).sqrt();
+            assert!(spectrum::distortion(&noise, dt, None, 10).is_none(), "alpha {alpha} seed {seed}: a line in noise");
+            // a line at the noise's rms, in the band the noise fills
+            let f = 5e6;
+            let line: Vec<f32> = noise
+                .iter()
+                .enumerate()
+                .map(|(k, &x)| x + (rms * (2.0 * PI * f * k as f64 * dt).sin()) as f32)
+                .collect();
+            let d = spectrum::distortion(&line, dt, None, 10).expect("the line in low-pass noise");
+            assert!(close(d.f1, f, 1e3), "alpha {alpha} seed {seed}: {}", d.f1);
+        }
+    }
+}
+
 #[test]
 fn distortion_enob_of_an_ideal_quantiser() {
     for bits in [8u32, 12] {
