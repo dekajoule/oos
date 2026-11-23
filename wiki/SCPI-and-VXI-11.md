@@ -193,7 +193,7 @@ Example, a single acquisition on a rising edge at 1.5 V:
 | `:WAVeform:PREamble?` | 10 values, below |
 | `:WAVeform:DATA?` | the samples as an IEEE block |
 
-**Modes.** NORM reads the record on screen. RAW reads the samples in memory, also outside the screen; OOS allows RAW while running (the stock firmware only when stopped). MAX is the screen record while running and the memory when stopped. A reference gives its own samples in every mode. While running, two queries can see two different acquisitions: send `:STOP` first when preamble and data must belong together.
+**Modes.** NORM reads the record on screen, also after a STOP of a deep record zoomed out, when the measurements keep the window of the STOP. RAW reads the samples in memory, also outside the screen; OOS allows RAW while running (the stock firmware only when stopped). MAX is the screen record while running and the memory when stopped. A reference gives its own samples in every mode. While running, two queries can see two different acquisitions: send `:STOP` first when preamble and data must belong together.
 
 **Preamble:** `format,type,points,count,xincrement,xorigin,xreference,yincrement,yorigin,yreference`. `format` 0 BYTE, 1 WORD, 2 ASCII; `type` 0 NORM, 1 MAX, 2 RAW; `count` is 1.
 

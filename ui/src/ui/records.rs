@@ -187,14 +187,16 @@ impl Ui {
     }
 
     /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
-    /// acquisition kept one, otherwise the screen record.
+    /// acquisition kept one, otherwise the screen record. The screen record after a STOP is the picture drawn: a view
+    /// read again as pairs while the raw frame of the STOP stays the record measured (`stop_picture`). NORMal gave the
+    /// raw window of the STOP there, 4 of the 40 ms a zoomed-out 50 M record shows (#552).
     fn channel_view(&self, c: usize, memory: bool) -> Option<(&[f32], f64, f64)> {
         if memory {
             if let Some(view) = self.native_view(c) {
                 return Some(view);
             }
         }
-        let rec = self.last[0].as_ref()?;
+        let rec = if memory { None } else { self.stop_picture() }.or(self.last[0].as_ref())?;
         let v = rec.ch.get(c)?;
         (!v.is_empty()).then_some((v.as_slice(), rec.dt, rec.t0))
     }
