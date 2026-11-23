@@ -81,9 +81,17 @@ impl Ui {
         Some((title, format!("{}_", self.keypad)))
     }
 
-    /// The value the row of the number pad has now, shown dim in its field until something is typed.
+    /// The value the row of the number pad (or the generator's frequency) has now, shown dim in its field until
+    /// something is typed.
     pub(super) fn pad_now(&self) -> Option<String> {
-        let it = self.numpad.target.filter(|_| self.keypad.is_empty() && self.pad_entry().is_some())?;
+        if !self.keypad.is_empty() || self.pad_entry().is_none() {
+            return None;
+        }
+        let it = match self.pick?.it {
+            Item::NumEntry => self.numpad.target?,
+            Item::AfgFreqEntry => Item::AfgFreq,
+            _ => return None,
+        };
         Some(self.value(it))
     }
 

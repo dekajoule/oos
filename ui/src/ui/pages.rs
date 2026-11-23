@@ -663,6 +663,18 @@ mod tests {
         }
     }
 
+    /// The cursor page opens centred under the top bar, so the cursor readouts in the strip stay in sight (ADR 0077).
+    #[test]
+    fn the_cursor_page_opens_centred_under_the_top_bar() {
+        let mut ui = crate::ui::testkit::demo_ui();
+        ui.open_menu(MenuId::Cursor);
+        let d = ui.dlg_layout().expect("the cursor page is a dialog");
+        let f = ui.frame();
+        assert!((d.r.x + d.r.w / 2 - ui.scr.w / 2).abs() <= 1, "centred: {:?} on {}", d.r, ui.scr.w);
+        assert_eq!(d.r.y, f.top.bottom() + 4, "under the top bar");
+        assert!(d.r.y + d.r.h < f.bottom.y, "above the strip and the cards");
+    }
+
     /// A picker is answered by one page at most: of the rows of every page, and of the pickers a page opens itself.
     #[test]
     fn a_picker_has_one_page() {
