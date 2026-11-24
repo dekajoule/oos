@@ -18,6 +18,9 @@ stock survey of a DHO924S. The probe of one MHO98 (the same firmware and hardwar
 tree, I2C devices, GPIO use, partitions and drivers are the MHO954's; only the licence files under `/rigol/data`
 differ. The probe of one MHO934 (GitHub issue #248) shows the same again.
 
+The work on the MHO900's acquisition happens on the branch `oos-mho`, not on main, and its test builds are the
+pre-releases `mho-dev-N`. Pull requests for the MHO900 go against `oos-mho`.
+
 ## What the MHO900 shares with the DHO800/DHO900
 
 From the probe (reported by one unit, not checked on hardware by us):

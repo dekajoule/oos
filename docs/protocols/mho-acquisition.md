@@ -124,7 +124,7 @@ table above that are new as a whole):
 | 0x2028 to 0x2080 | trigger A, B and R events, logic operations, delay and holdoff event counts |
 | 0x210c to 0x21cc | serial triggers: I2S, LIN, CAN, FlexRay, MIL-STD-1553B |
 | 0x2264 | external trigger input and its hysteresis |
-| 0x226c to 0x2274 | a second auto trigger (enable, status, two words) |
+| 0x226c to 0x2274 | the auto trigger (on, and its two timeouts; section 12.1) |
 | 0x2438 | mask control of the WAU |
 | 0x401c | hardware version |
 | 0x4044, 0x4048 | FPGA DNA |
@@ -653,8 +653,8 @@ word (`Plan::gain`): the level codes come within 0.2 % (100 mV/div) and 1 % (1 V
 
 **Seen on the unit** (hp197's MHO98 under the stock system, issue #4): the SPU's 0x1004 bit 14 follows the trigger's
 slope (rising 0x04004a40, falling 0x04000a40); the auto trigger is in the TPU (0x226c bit 0 set with AUTO, the
-timeouts in 0x2270 and 0x2274 in 4 ns ticks), and 0x4060/0x4064 never change, so the "auto trigger wait" read above
-is the FPGA's value after its start, not a setting. From mho-dev-33 on the trigger sets bit 14 with the slope, and an
+timeouts in 0x2270 and 0x2274 in 4 ns ticks), and 0x4060/0x4064 never change (the FPGA's
+values after its start, not a setting; section 12.1). From mho-dev-33 on the trigger sets bit 14 with the slope, and an
 acquisition may take 1 s plus twice the record's span (OOS waited 1 s at every time base: a 10-division record at 50
 ms/div alone takes 0.5 s).
 
@@ -662,7 +662,71 @@ ms/div alone takes 0.5 s).
 after the trigger point for both slopes at 100 ns, 1, 2, 5 and 200 us/div (median of three blocks of 50 frames, every
 frame with the edge), where mho-dev-31 had -42 ns rising and +46 ns falling. Under the stock system the tester read
 the level words at +2 divisions on every scale of all four channels: the same `g`, the stock system rounding the
-codes down to a multiple of 16, which OOS leaves out. The trigger: the stock system's level words hold a window around the level (0x2004
-0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
-0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
-holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.
+codes down to a multiple of 16, which OOS leaves out. The stock system's level words hold a window around the level
+(0x2004 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side).
+
+## 12. Further blocks, seen under the stock system
+
+Read on one MHO98 (issue #4) while the setting was changed over the stock system's remote commands, every word set
+back afterwards. **Verified on the unit** where not marked otherwise; one unit, stock system 00.01.00.
+
+### 12.1 Trigger and sweep
+
+- The SPU's 0x1004 bit 14 follows the slope with every analog trigger type: rising edge 0x04004a40, falling
+  0x04000a40; pulse positive 0, negative 1 (the negative pulse also sets bit 4). OOS sets it with the edge trigger
+  from mho-dev-33 on.
+- The auto trigger is in the TPU: 0x226c bit 0 set with sweep AUTO (reads 3; 0 with NORMAL); 0x2270 = t1 and 0x2274 =
+  t2 in 4 ns ticks, t1 = clamp(20 x tdiv, 200 ms, 1 s), t2 = max(5 ms, min(20 x tdiv, 1 s) / 2, holdoff). Seen exactly:
+  1 us/div 200 ms / 5 ms, 1 ms/div 200 ms / 10 ms, 20 ms/div 400 ms / 200 ms. 0x4020 follows the sweep in bits 7 and
+  11 (AUTO 0x6080, NORMAL 0x6800). 0x4060/0x4064 never change (0x4c4b40 / 0x61a8).
+- The TPU's time units: holdoff 4 ns (100 ns: 25, 1 us: 250, 8 ns: 2), pulse width 1 ns (100 ns: 100), the idle time
+  of the Nth-edge trigger 4 ns (1 us: 250). OOS's DHO800/DHO900 conversion scaled by 1.6 at 2 GHz gives the same.
+
+### 12.2 Start
+
+**Verified on the unit** (hp197's MHO98, mho-dev-32, under OOS): `mho-start` with a recipe without its `link` phase
+(no 0x2003c pulse, no 0x200xx words, no 0x10120 pulse) measured the probe compensation signal on CH2 (0 to 0.32 V) in
+all three acquisitions. **Assumed:** the 0x20000 block is not needed for the ADCs' read-out. Only the start was tried
+that way; the live path still writes the recorded 0x200xx words with each setting.
+
+### 12.3 Acquisition
+
+- Roll: with ROLL on the stock system rolls from 50 ms/div on (1 M points): 0x4008 bit 17 set (0x0880d101 to
+  0x0882d101); 0x11fc 1000 to 100 with one channel, 50 with two; 0x1154 0x4c3 to 0xc3 (bit 10 cleared) at 50 ms/div,
+  0x3 at 100 ms/div; 0x1170 0x40000001 to 0xc000000a (bit 31 and a ratio of 10), 0xc0000014 with two channels. How
+  the record is read in roll mode is not yet seen. The scan mode (ROLL off) was refused over the remote commands, so
+  its words are not seen.
+- Peak detect: 0x1004 bit 1 (1 ms/div: 0x04004a84 to 0x04004a86), not set at 4 GSa/s. Average: 0x1004 bit 3, 0x10b0 =
+  the number of averages - 1 (16: 0xf, 256: 0xff). High resolution sets no bit of 0x1004 but runs the digital filter
+  (0x1098 1 to 0).
+- Depth: 0x10e4 = depth, 0x1118 = depth + 56 (1 k, 10 k, 100 k points).
+- 50 ohm changes, of the FPGA's words, only the channel's gain and offset (0x14c8 0x41d to 0x42f, 0x14d0 0xfffffc52
+  to 0xfffffa1f); no SPU word of its own. The front end's words are section 11's.
+- The zoom slots from 0x14f8 (gain and offset alternating every 8 bytes) read as `settings::slot_words` writes them,
+  with 1 to 4 channels on.
+
+### 12.4 Measurement and analysis blocks
+
+- Counter: the gate in 4 ns steps (1 s: 0x0ee6b280, 0.25 s: 0x03b9aca0; the DHO800/DHO900 count 6.4 ns). DVM: 0x2244 =
+  0x38, as on the DHO800/DHO900.
+- Logic analyser: on with 0x4008 bit 26. Thresholds in 0x12d4, low half pod 1, high half pod 2: zero + V x 166 (pod 1)
+  or 168 (pod 2) codes per volt (1.4 V: +232 / +235, 5 V: +830 / +840; the DHO800/DHO900: 310). Deskew 0x128c = 283
+  with one channel; the read-out window 20 times as long (0x1100 0x29e1 to 0x3465c). 0x1280 gets bit 3. The stock
+  system reports 1.25 GSa/s for the digital channels with the analog ones at 1 GSa/s.
+- Mask test: 0x6110 = 0x00100000 for CH1, rule words in 0x6114 with bits 31:28 = 0xf; the frames tested and failed in
+  0x6120 and 0x6128 (they follow the stock system's totals and clear on its reset). 0x610c, 0x4020 bit 15 and 0x4068
+  not settled.
+- Bode plot: 0x5000 = (output - 1) << 4 | (input - 1) (0x10 for CH1 to CH2); the frequency as a phase step
+  0x5008[15:0]:0x5004 = f x 2^48 / 250 MHz (9.1 kHz read during a 1 to 10 kHz sweep); 0x503c **assumed** the
+  integration length; 0x5018[31:16] counts the points; 0x501c..0x5038 change with every point. 0x6058 bit 0 read 0
+  every time.
+
+### 12.5 Generator
+
+- Modulation: AM 100 %, 100 Hz: 0x130070 = 0x9, 0x130048 = 0x13004c = 0x3fff, the rate 0x13000c = 0xd6bf94d5
+  (f / 62.5 MHz x (2^51 - 1)); FM 100 Hz: 0x130070 = 0x11, 0x130050 = 0x0d6bf94d; PM 90 degrees: 0x130070 = 0x21,
+  0x130054 = 0x4000.
+- At a restart of the stock program the board's microcontroller is asked for its identity (it answers as AFG,
+  version 00.01.06) and for the DAC's registers 0x64, 0x6c and 0x6d (1, 0xc007, 0x90); no DAC set-up is sent, only one
+  DAC value (0x02, 0x2082). So with the board powered the DAC keeps its set-up; its state right after a cold power-on
+  is not yet seen.
