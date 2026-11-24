@@ -10,7 +10,8 @@
 //! keys set the board: the first channel on, its scale and the time base go to the nearest recorded setting
 //! (`settings::Settings::plan`): the FPGA's words, the ADCs' registers, the front end's words and select lines.
 //! Without it the board stays at the snapshot's setting. With a recording of `--extended` several channels at once
-//! (`plan_many`) and each channel's offset, AC coupling and bandwidth limit (`vertical`); GND shows 0 V. The trigger
+//! (`plan_many`) and each channel's offset, AC coupling, bandwidth limit and 50 ohm (`vertical`); GND shows 0 V; peak
+//! detect and a fixed depth (`Plan::peak`, `Settings::plan_deep`; not yet verified on hardware). The trigger
 //! is the edge on the trigger's channel (the first one shown when it is off) at the screen's level and slope
 //! (`tpu::edge`, the DHO's TPU, verified on two MHO98). **Verified on the unit** that
 //! the board measures at the snapshot's setting (three units, issues #4, #248, #491) and that the keys set the scale
@@ -139,22 +140,42 @@ fn set_text(p: &Plan, k: u32) -> String {
     )
 }
 
-/// The plan for what the screen asks, with each channel's vertical settings laid over it; what could not be set goes
+/// The plan for what the screen asks: a fixed depth at its rate (`plan_deep`, up to `POINTS_MAX`), else the recorded
+/// setting, then each channel's 50 ohm and vertical settings and peak detect laid over it; what could not be set goes
 /// to the log.
 fn plan_for(st: &Settings, w: &super::Want, fast: bool) -> Result<(Plan, u32), String> {
     let chans: Vec<(usize, f64)> = w.chans.iter().map(|c| (c.ch, c.scale)).collect();
-    let (mut p, k) = match chans.as_slice() {
-        [(ch, scale)] if fast => st.plan_fast(*ch, w.tdiv, *scale)?,
-        _ => (st.plan_many(&chans, w.tdiv)?, 1),
+    let deep = match w.depth {
+        Some((rate, depth)) if depth <= POINTS_MAX => st.plan_deep(&chans, w.tdiv, rate, depth).map_err(|e| {
+            eprintln!("oos-ui mho: depth {} points: {}; the recorded depth instead", depth, e);
+        }),
+        Some((_, depth)) => {
+            eprintln!(
+                "oos-ui mho: depth {} points: more than {} are not read; the recorded depth instead",
+                depth, POINTS_MAX
+            );
+            Err(())
+        }
+        None => Err(()),
+    };
+    let (mut p, k) = match (deep, chans.as_slice()) {
+        (Ok(p), _) => (p, 1),
+        (Err(()), [(ch, scale)]) if fast => st.plan_fast(*ch, w.tdiv, *scale)?,
+        (Err(()), _) => (st.plan_many(&chans, w.tdiv)?, 1),
     };
     for c in &w.chans {
         let scale = p.scales[c.ch - 1];
+        if c.fifty {
+            if let Err(e) = vertical::fifty(st, &mut p, c.ch, scale) {
+                eprintln!("oos-ui mho: {}", e);
+            }
+        }
         for m in vertical::apply(st, &mut p, c.ch, scale, c.vertical) {
             eprintln!("oos-ui mho: {}", m);
         }
-        if c.fifty {
-            eprintln!("oos-ui mho: CH{}: 50 ohm is not set yet, the input stays at 1 Mohm", c.ch);
-        }
+    }
+    if w.peak && (k > 1 || !p.peak()) {
+        eprintln!("oos-ui mho: peak detect: the board runs at its highest rate here, nothing to detect over");
     }
     Ok((p, k))
 }
@@ -235,7 +256,8 @@ fn run(out: &HwShared) {
             continue;
         }
         if let (Some(st), Some(w)) = (&settings, want) {
-            if applied.as_ref().map(|a| (&a.chans, a.tdiv)) != Some((&w.chans, w.tdiv)) {
+            let key = |a: &super::Want| (a.chans.clone(), a.tdiv, a.peak, a.depth);
+            if applied.as_ref().map(key) != Some(key(&w)) {
                 if !w.chans.is_empty() {
                     match plan_for(st, &w, fast) {
                         Ok((p, k)) => {

@@ -92,6 +92,27 @@ fn fmt(x: f64) -> String {
     s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
 }
 
+/// 50 ohm on channel `ch`, whose plan is made for scale `scale`: the front end's words and the channel's digital gain
+/// and offset of its recording `CHn_impedance=FIFTy` (`mho-settings.py --extended`), laid over the plan. The stock
+/// system records it at one scale (100 mV/div on an MHO98, issue #4) and rewrites most of the front end's words for
+/// it; at any other scale nothing is set and the input stays at 1 Mohm. **Not yet verified on hardware.**
+pub fn fifty(s: &Settings, plan: &mut Plan, ch: usize, scale: f64) -> Result<(), String> {
+    let f = s
+        .list
+        .iter()
+        .find(|x| x.name == format!("CH{}_impedance=FIFTy", ch))
+        .ok_or(format!("CH{}: 50 ohm not recorded (mho-settings.py --extended); the input stays at 1 Mohm", ch))?;
+    let at = f.num(&format!("scale{}", ch)).ok_or(format!("CH{}: the 50 ohm recording has no scale", ch))?;
+    if (at / scale).ln().abs() > 0.01 {
+        return Err(format!("CH{}: 50 ohm is recorded at {} V/div only; the input stays at 1 Mohm", ch, at));
+    }
+    let (gain, offset) =
+        super::settings::own_slot(f, ch).ok_or(format!("CH{}: the 50 ohm recording has no gain words", ch))?;
+    plan.afe.extend(f.afe.iter().filter(|x| x.0 == ch).copied());
+    plan.set_slots(ch, gain, offset);
+    Ok(())
+}
+
 /// Lays channel `ch`'s vertical settings over `plan` (made for scale `scale`): the DAC word for the offset, the
 /// coupling word, the bandwidth bits. Returns what could not be set, for the log.
 pub fn apply(s: &Settings, plan: &mut Plan, ch: usize, scale: f64, v: Vertical) -> Vec<String> {
@@ -213,5 +234,32 @@ mod tests {
         assert!(apply(&s, &mut q, 1, 0.1, Vertical::default()).is_empty());
         assert_eq!(q, plan(), "nothing asked, nothing laid over");
         assert_eq!(apply(&s, &mut q, 2, 0.1, Vertical { offset: 0.1, ..Vertical::default() }).len(), 1);
+    }
+
+    // Break it catches: 50 ohm laid over at a scale it was not recorded at, its front-end words or gain left out, the
+    // gain written to another slot than the channel's, the peak bit set at the board's highest rate.
+    #[test]
+    fn fifty_ohm_and_peak_detect_lay_their_words_over_the_plan() {
+        let t = "---- oos settings ----\nformat 1\nmodel MHO98\nsetting CH1_impedance=FIFTy\n\
+                 state on1=1 scale1=1.000000E-01\nfpga 0x14c8 0x462\nfpga 0x14d0 0xfffff3a6\n\
+                 afe 1 0x07 0xe440\nafe 1 0x28 0x7f0f\nendsetting\nend\n";
+        let s = Settings::parse(t).unwrap();
+        let mut p = plan();
+        fifty(&s, &mut p, 1, 0.1).unwrap();
+        assert_eq!(last(&p.afe, 1, 0x28), Some(0x7f0f));
+        assert_eq!(last(&p.afe, 1, 0x07), Some(0xe440));
+        assert!(p.fpga.contains(&(0x14c8, 0x462)) && p.fpga.contains(&(0x1504, 0xffff_f3a6)), "all four slots");
+        assert!((p.gain(1) - 0x462 as f64 / 1024.0).abs() < 1e-9);
+        let mut q = plan();
+        assert!(fifty(&s, &mut q, 1, 1.0).is_err());
+        assert_eq!(q, plan(), "another scale: nothing laid over");
+        assert!(fifty(&s, &mut q, 2, 0.1).is_err());
+        assert!(q.peak());
+        assert_eq!(q.fpga[0], (0x1004, 0x0400_4a86));
+        let mut r = Plan { srate: 4e9, ..plan() };
+        assert!(!r.peak(), "nothing to detect over at 4 GSa/s");
+        r.mask = 3;
+        r.srate = 2e9;
+        assert!(!r.peak(), "nor at 2 GSa/s with two channels");
     }
 }

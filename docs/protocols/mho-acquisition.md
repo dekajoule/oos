@@ -681,6 +681,23 @@ the level words at +2 divisions on every scale of all four channels: the same `g
 codes down to a multiple of 16, which OOS leaves out. The stock system's level words hold a window around the level
 (0x2004 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side).
 
+From mho-dev-34 on (**not yet verified on hardware**), from section 12's words and the recording of `--extended`:
+
+- **Peak detect** (the screen's acquisition mode) sets 0x1004 bit 1 below the board's highest rate for the channels
+  recorded (4 GSa/s alone, 2 with two, 1 with four), as the stock system does; the record then holds the extremes of
+  each interval, and the screen shows the raw points as before (`Plan::peak`). Average and high resolution are
+  computed by the screen from the frames, as before.
+- **A fixed depth** (not Auto) records at the rate the screen computes for it, with the words of the recorded time
+  base that ran at that rate, and the depth (0x10e4), segment (0x10e0) and points before and after the trigger
+  (0x4050/0x4054) set as for the 4 GSa/s recording of mho-dev-25 (`Settings::plan_deep`), up to 1 M points read.
+  Auto keeps the recorded depth (10 k at most time bases). The stock system also sets 0x1118 = depth + 56; OOS leaves
+  it as recorded.
+- **50 ohm** replays the channel's recorded 50 ohm setting (`CHn_impedance=FIFTy`): its front-end words and the
+  channel's gain and offset words in each of its slots (`vertical::fifty`). The stock system records it at one scale
+  (100 mV/div on an MHO98); at any other scale the input stays at 1 Mohm and the log says so. The offset's DAC slope
+  is the 1 Mohm path's (**assumed**).
+- The fan follows the SoC's temperature ([mho.md](../mho.md#fan)).
+
 ## 12. Further blocks, seen under the stock system
 
 Read on one MHO98 (issue #4) while the setting was changed over the stock system's remote commands, every word set

@@ -20,18 +20,21 @@ use std::sync::Mutex;
 /// The Rigol MHO900.
 pub struct Mho;
 
-/// What the screen asks of the board: the channels on (in order, none: nothing measured), the time base in s/div and
-/// the trigger.
+/// What the screen asks of the board: the channels on (in order, none: nothing measured), the time base in s/div, the
+/// trigger, peak detect, and a depth the screen fixes (sample rate in Sa/s, points; `None` with depth Auto: the
+/// recorded depth).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Want {
     pub chans: Vec<Chan>,
     pub tdiv: f64,
     pub trig: Trig,
+    pub peak: bool,
+    pub depth: Option<(f64, u32)>,
 }
 
 /// One channel on: its number (1 to 4), its scale at the BNC in V/div, the probe's ratio (the frames are volts at the
 /// probe tip), offset at the BNC, AC coupling and bandwidth limit (`vertical::Vertical`), GND coupling (a flat line at
-/// 0 V, the board stays at DC) and 50 ohm (not set yet: the input stays at 1 Mohm).
+/// 0 V, the board stays at DC) and 50 ohm (`vertical::fifty`: at the recorded scale only).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chan {
     pub ch: usize,
@@ -103,6 +106,11 @@ impl Board for Mho {
                     crate::model::Slope::Either => oos_hal::mho::tpu::Slope::Either,
                 },
             },
+            peak: m.acq == AcqMode::Peak,
+            depth: (m.mdepth != 0).then(|| {
+                let (rate, depth) = m.srate_depth();
+                (rate, depth.min(u32::MAX as u64) as u32)
+            }),
         }
     }
 

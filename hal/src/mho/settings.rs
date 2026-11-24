@@ -50,7 +50,7 @@ pub struct Setting {
 }
 
 impl Setting {
-    fn num(&self, key: &str) -> Option<f64> {
+    pub fn num(&self, key: &str) -> Option<f64> {
         self.state.get(key).and_then(|v| v.parse().ok())
     }
 }
@@ -86,6 +86,45 @@ impl Plan {
         let w = slot_words(slots(ch, self.mask)[0])[0];
         self.fpga.iter().find(|x| x.0 == w).map_or(1.0, |x| x.1 as f64 / 1024.0).max(1e-3)
     }
+}
+
+/// The SPU's peak-detect bit in 0x1004: an MHO98 under the stock system sets it at 1 ms/div (0x04004a84 to
+/// 0x04004a86) and not at 4 GSa/s (issue #4), as the DHO800/DHO900 do (horizontal-config.md, acquire modes).
+pub const PEAK_1004: u32 = 1 << 1;
+
+impl Plan {
+    /// Sets channel `ch`'s digital gain and offset words (`gain`, `offset`) in every slot it has, main and zoom.
+    pub fn set_slots(&mut self, ch: usize, gain: u32, offset: u32) {
+        for k in slots(ch, self.mask) {
+            let w = slot_words(k);
+            for (a, v) in [(w[0], gain), (w[1], offset), (w[2], gain), (w[3], offset)] {
+                self.set(a, v);
+            }
+        }
+        self.fpga.sort_unstable();
+    }
+
+    /// Peak detect: 0x1004 bit 1, below the board's highest rate for the channels recorded (4 GSa/s alone, 2 with
+    /// two, 1 with four: there is nothing to detect over at that rate). False where it is not set.
+    pub fn peak(&mut self) -> bool {
+        if self.srate >= FAST / crate::dho::hz::ratio(self.mask) as f64 * 0.999 {
+            return false;
+        }
+        match self.fpga.iter_mut().find(|w| w.0 == 0x1004) {
+            Some(w) => {
+                w.1 |= PEAK_1004;
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// The gain and offset words channel `ch` has in a setting recorded of it alone: slot 0 for CH1, slot 1 for the
+/// others (recorded together with CH1).
+pub fn own_slot(s: &Setting, ch: usize) -> Option<(u32, u32)> {
+    let w = slot_words(if ch == 1 { 0 } else { 1 });
+    Some((*s.fpga.get(&w[0])?, *s.fpga.get(&w[1])?))
 }
 
 /// The read path's digital gain and offset of slot `k` (0 to 3) and of its zoom copy (afe-settings.md 4.1): the
@@ -173,6 +212,30 @@ impl Settings {
         f.fpga.sort_unstable();
         (f.depth, f.pre, f.tdiv) = (depth, pre, p.tdiv);
         Ok((f, k))
+    }
+
+    /// The plan for the channels `chans` at `tdiv` with a record `depth` points deep at `rate` Sa/s (a depth the screen
+    /// fixes instead of the recorded 10 k): the words of the recorded time base that ran at `rate` (the slowest of
+    /// them), with the depth (0x10e4), the segment (0x10e0) and the points before and after the trigger
+    /// (0x4050/0x4054) set as `plan_fast` sets them. Err when no setting of these channels ran at `rate`.
+    pub fn plan_deep(&self, chans: &[(usize, f64)], tdiv: f64, rate: f64, depth: u32) -> Result<Plan, String> {
+        let ch = chans.first().ok_or("no channel on")?.0;
+        let mut best: Option<Plan> = None;
+        for (t, _) in self.steps(ch, "tdiv") {
+            let Ok(p) = self.plan_many(chans, t) else { continue };
+            if (p.srate / rate - 1.0).abs() < 1e-6 && best.as_ref().is_none_or(|b| p.tdiv > b.tdiv) {
+                best = Some(p);
+            }
+        }
+        let mut p = best.ok_or(format!("no setting of these channels recorded at {:.4e} Sa/s", rate))?;
+        let pre = depth / 2;
+        p.set(super::snapshot::DEPTH, depth);
+        p.set(0x10e0, segment(depth) * crate::dho::hz::ratio(p.mask));
+        p.set(0x4050, pre);
+        p.set(0x4054, depth - pre);
+        p.fpga.sort_unstable();
+        (p.depth, p.pre, p.tdiv) = (depth, pre, tdiv);
+        Ok(p)
     }
 
     /// Reads the part after `MARK`. An error names the line.
@@ -513,5 +576,18 @@ mod tests {
         );
         assert_eq!(w.get(&0x1014), Some(&0x0400_0000), "the scale's bits stay");
         assert_eq!((segment(10_000), segment(1_000_000)), (0x200, 0x8000));
+    }
+
+    // Break it catches: a fixed depth taken at the screen's time base's own rate, the depth words of the shallow record
+    // kept, a rate no setting ran at made up.
+    #[test]
+    fn a_fixed_depth_takes_the_setting_that_ran_at_its_rate() {
+        let s = Settings::parse(&file()).unwrap();
+        let p = s.plan_deep(&[(2, 0.1)], 2e-3, 5e6, 100_000).unwrap();
+        let w: BTreeMap<u32, u32> = p.fpga.iter().copied().collect();
+        assert_eq!((p.srate, p.tdiv, p.depth, p.pre), (5e6, 2e-3, 100_000, 50_000));
+        assert_eq!((w[&0x10d8], w[&0x10e4], w[&0x4050], w[&0x4054]), (50, 100_000, 50_000, 50_000));
+        assert_eq!(w[&0x10e0], segment(100_000) * 2, "CH2 recorded with CH1");
+        assert!(s.plan_deep(&[(2, 0.1)], 2e-3, 1e9, 100_000).is_err());
     }
 }
