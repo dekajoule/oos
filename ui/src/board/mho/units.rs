@@ -131,18 +131,21 @@ impl Units {
             self.table[n - 1] = Some(wave_key);
         }
         let lines = afg::relays(n, on);
-        match self.mcu.as_mut() {
-            Some(m) => {
-                for l in lines.iter().map(String::as_str).chain(on.then_some(DAC_LINE)) {
-                    let _ = m.write_all(l.as_bytes());
-                    std::thread::sleep(Duration::from_millis(3));
-                }
+        // the output bit only after every relay line went out: else the relays may stand otherwise than the FPGA
+        let relays_set = match self.mcu.as_mut() {
+            Some(m) => lines.iter().map(String::as_str).chain(on.then_some(DAC_LINE)).all(|l| {
+                let ok = m.write_all(l.as_bytes()).is_ok();
+                std::thread::sleep(Duration::from_millis(3));
+                ok
+            }),
+            None => false,
+        };
+        match (on, relays_set) {
+            (true, true) => big.wr(r.out, out_old | 1),
+            (true, false) => {
+                eprintln!("oos-ui mho: generator {}: the relays could not be set over {}; its output stays off", n, MCU)
             }
-            None if on => eprintln!("oos-ui mho: generator: no board answered on {}; its output relay stays open", MCU),
-            None => {}
-        }
-        if on {
-            big.wr(r.out, out_old | 1);
+            _ => {}
         }
         // every word read back, so a report shows which of them the board took
         let back: Vec<String> =

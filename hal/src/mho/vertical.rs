@@ -109,6 +109,11 @@ pub fn fifty(s: &Settings, plan: &mut Plan, ch: usize, scale: f64) -> Result<(),
     let (gain, offset) =
         super::settings::own_slot(f, ch).ok_or(format!("CH{}: the 50 ohm recording has no gain words", ch))?;
     plan.afe.extend(f.afe.iter().filter(|x| x.0 == ch).copied());
+    // the channel's select lines as the recording left them (50 ohm changes a and c, afe-settings.md)
+    let line = format!("_ch{}", ch);
+    let mine = |g: u32| super::acq::afe::select_name(g).is_some_and(|n| n.ends_with(&line));
+    plan.select.retain(|&(g, _)| !mine(g));
+    plan.select.extend(f.select.iter().filter(|&&(g, _)| mine(g)));
     plan.set_slots(ch, gain, offset);
     Ok(())
 }
@@ -240,12 +245,18 @@ mod tests {
     // gain written to another slot than the channel's, the peak bit set at the board's highest rate.
     #[test]
     fn fifty_ohm_and_peak_detect_lay_their_words_over_the_plan() {
-        let t = "---- oos settings ----\nformat 1\nmodel MHO98\nsetting CH1_impedance=FIFTy\n\
-                 state on1=1 scale1=1.000000E-01\nfpga 0x14c8 0x462\nfpga 0x14d0 0xfffff3a6\n\
-                 afe 1 0x07 0xe440\nafe 1 0x28 0x7f0f\nendsetting\nend\n";
-        let s = Settings::parse(t).unwrap();
+        let a1 = crate::mho::acq::afe::SELECT_A[0];
+        let t = format!(
+            "---- oos settings ----\nformat 1\nmodel MHO98\nsetting CH1_impedance=FIFTy\n\
+             state on1=1 scale1=1.000000E-01\nfpga 0x14c8 0x462\nfpga 0x14d0 0xfffff3a6\n\
+             afe 1 0x07 0xe440\nafe 1 0x28 0x7f0f\nselect a{} 1\nendsetting\nend\n",
+            a1
+        );
+        let s = Settings::parse(&t).unwrap();
         let mut p = plan();
+        p.select = vec![(a1, false)];
         fifty(&s, &mut p, 1, 0.1).unwrap();
+        assert_eq!(p.select, [(a1, true)], "the 50 ohm recording's select line, in place of the scale's");
         assert_eq!(last(&p.afe, 1, 0x28), Some(0x7f0f));
         assert_eq!(last(&p.afe, 1, 0x07), Some(0xe440));
         assert!(p.fpga.contains(&(0x14c8, 0x462)) && p.fpga.contains(&(0x1504, 0xffff_f3a6)), "all four slots");

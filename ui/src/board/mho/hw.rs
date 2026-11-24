@@ -264,7 +264,16 @@ fn run(out: &HwShared) {
         lock(out).status = s;
     };
     let Some((s, settings, mut bar, mut c2h)) = open(&status) else { return };
-    let mut afe = settings.as_ref().and_then(|_| GpioAfe::open().ok());
+    // the front ends' bus: without it a setting would set the FPGA and the ADCs but not the front ends, so the keys
+    // set nothing and the board stays at the snapshot's setting
+    let (settings, mut afe) = match settings.map(|st| (st, GpioAfe::open())) {
+        Some((st, Ok(a))) => (Some(st), Some(a)),
+        Some((_, Err(e))) => {
+            status(format!("MHO900: the front ends' bus: {}; the keys don't set the board", e));
+            (None, None)
+        }
+        None => (None, None),
+    };
     let fast = std::path::Path::new(FAST).exists();
     let depth = s.fpga.get(&snapshot::DEPTH).copied().unwrap_or(4000);
     let mut now = Now {
