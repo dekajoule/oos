@@ -90,12 +90,13 @@ pub fn mean_words(frames: &[&[u16]]) -> Vec<u16> {
 }
 
 /// Bits the accumulator of `n` frames of 16-bit words needs (the tests hold the widths against it).
-#[cfg(test)]
+#[cfg(all(test, oos_board = "dho"))]
 fn acc_bits(n: u32) -> u32 {
     16 + n.max(1).next_power_of_two().trailing_zeros()
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
     use crate::dho::seq;

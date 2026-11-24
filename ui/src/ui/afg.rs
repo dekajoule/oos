@@ -5,6 +5,7 @@
 //! amplitude, offset, duty / symmetry. The acquisition thread applies the settings (`Board::gen`) with the
 //! factory calibration; limits as the stock system, frequency caps per shape from the platform limits.
 
+use super::menu_text::on_off;
 use super::*;
 use crate::board::{board, Board};
 
@@ -105,13 +106,7 @@ impl Ui {
         let m = &self.m;
         Some(match it {
             Item::AfgSel => format!("Gen {}", m.gen_sel + 1),
-            Item::AfgOn => {
-                if m.afg_on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::AfgOn => on_off(m.afg_on),
             Item::AfgFreq => si_short(m.afg_freq, "Hz"),
             Item::AfgFreqEntry => "Keypad".into(),
             Item::AfgAmpl => si_short(m.afg_ampl, "Vpp"),
@@ -265,7 +260,7 @@ impl Ui {
             return Err(format!("CH{} has no data", c + 1));
         }
         let text: String = v.iter().filter(|x| x.is_finite()).map(|x| format!("{}\n", x)).collect();
-        let _ = crate::store::write(&self.store_dir.join("arb.csv"), text.as_bytes());
+        let _ = crate::store::write(&self.files.dir.join("arb.csv"), text.as_bytes());
         Ok(v.len())
     }
 
@@ -277,7 +272,7 @@ impl Ui {
                 Err(e) => self.toast(&e),
             },
             Item::AfgArbFile => {
-                let p = self.store_dir.join("arb.csv");
+                let p = self.files.dir.join("arb.csv");
                 let v = std::fs::read_to_string(&p).map(|t| board().arb_parse(&t)).unwrap_or_default();
                 if self.afg_arb_load(&v) {
                     self.toast(&format!("Arb wave: {} points from arb.csv", v.len()));
@@ -315,9 +310,14 @@ mod arb_tests {
         assert!(ui.m.afg_freq < f && ui.menu == MenuId::Afg);
         ui.tap(mid.x + mid.w / 2, mid.y + mid.h / 2);
         assert!(ui.menu == MenuId::Pick && ui.pick.unwrap().it == Item::AfgFreqEntry);
+        // the field shows the frequency now, dim, until a key is typed (ADR 0077)
+        assert_eq!(ui.pad_now(), Some(ui.value(Item::AfgFreq)));
+        ui.activate(Item::PickOpt(FREQ_KEYS.iter().position(|&k| k == "1").unwrap()));
+        assert_eq!(ui.pad_now(), None);
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn frequency_keypad_ends_with_the_unit_and_keeps_the_limit() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.open_menu(MenuId::Afg);
@@ -349,12 +349,13 @@ mod arb_tests {
 
     use super::*;
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn capture_load_and_scpi() {
         let dir = crate::ui::testkit::Scratch::new("ui-arb");
         std::fs::create_dir_all(&dir).unwrap();
         let mut ui = crate::ui::testkit::demo_ui();
-        ui.store_dir = dir.clone();
+        ui.files.dir = dir.clone();
         assert!(ui.afg_arb_capture(0).is_err(), "no record yet");
         for _ in 0..3 {
             ui.step(0.05);

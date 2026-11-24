@@ -210,14 +210,14 @@ fn live_pair_records_keep_the_raw_measurement_and_stop_takes_a_raw_frame() {
     steps(&mut ui, 2);
     let avg = ui.meas(0, Meas::Vavg);
     assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
-    let counted = ui.mstat.first().map_or(0, |s| s.n);
+    let counted = ui.results.rows.first().map_or(0, |s| s.n);
     for seq in 2..5 {
         shared.lock().unwrap().queue.push_back(frame(seq, true, pairs.clone()));
         steps(&mut ui, 2);
         assert_eq!(ui.meas(0, Meas::Vavg), avg);
         assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
     }
-    assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+    assert_eq!(ui.results.rows.first().map_or(0, |s| s.n), counted);
     // STOP on a pair record: the final raw frame is asked for and shown
     ui.m.run = RunState::Stop;
     steps(&mut ui, 1);
@@ -298,7 +298,7 @@ fn deep_raw_records_carry_the_measurements_between_pair_records() {
     step(&mut ui);
     let avg = ui.meas(0, Meas::Vavg);
     assert!((avg - 0.25).abs() < 0.02, "raw mean {}", avg);
-    let counted = ui.mstat.first().map_or(0, |s| s.n);
+    let counted = ui.results.rows.first().map_or(0, |s| s.n);
     // pair records keep the raw record's values, the statistics do not count them
     for seq in 3..6 {
         push(seq, true, pairs(1.5));
@@ -306,7 +306,7 @@ fn deep_raw_records_carry_the_measurements_between_pair_records() {
         assert_eq!(ui.meas(0, Meas::Vavg), avg);
         assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 0.02);
     }
-    assert_eq!(ui.mstat.first().map_or(0, |s| s.n), counted);
+    assert_eq!(ui.results.rows.first().map_or(0, |s| s.n), counted);
     // off: pair records are measured (mean-type NaN, max of the pairs)
     crate::deepmeas::force(Some(false));
     push(6, true, pairs(1.5));
@@ -461,7 +461,7 @@ fn equal_frames_give_equal_brightness_whatever_their_number() {
 fn background_measurements_follow_a_running_record() {
     let mut u = crate::ui::testkit::demo_ui();
     u.measure_in_background();
-    let n = |u: &super::Ui| u.mstat.iter().map(|s| s.n).max().unwrap_or(0);
+    let n = |u: &super::Ui| u.results.rows.iter().map(|s| s.n).max().unwrap_or(0);
     for _ in 0..120 {
         u.step(1.0 / 30.0);
         std::thread::sleep(std::time::Duration::from_millis(3));
@@ -471,6 +471,7 @@ fn background_measurements_follow_a_running_record() {
 // Break it catches: a hardware recording that starts without a new number for the thread, stops on the count of
 // records that reached the screen instead of the thread's read-back, browses the RAM history instead of playing
 // the segment from the FPGA, or loses the stamps in the status line and the table. The thread is played by hand.
+#[cfg(oos_board = "dho")]
 #[test]
 fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
     use super::*;
@@ -539,6 +540,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
 
 // Break it catches: the software limit applied to hardware segments, or the hardware limit to the software history.
 #[test]
+#[cfg(oos_board = "dho")]
 fn segment_counts_follow_the_limit_of_the_set_up() {
     use super::*;
     let shared: crate::board::HwShared = Default::default();
@@ -570,6 +572,11 @@ fn segment_counts_follow_the_limit_of_the_set_up() {
     // roll: no hardware segments
     ui.m.seg_hw = true;
     ui.m.tscale = tscales().iter().position(|&x| x >= 0.2).unwrap();
+    assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
+    // 100 M points: no segment of that size fits below 256 MiB, so the software history records them (no hardware
+    // recording of zero frames)
+    ui.m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-3).abs() < 1e-9).unwrap();
+    ui.m.mdepth = mdepths().iter().position(|d| d.1 == 100_000_000).unwrap();
     assert!(board().seg_max(&ui.m).is_none() && !ui.seg_hw_on());
 }
 
@@ -625,7 +632,7 @@ fn fast_path_draws_every_queued_frame() {
     ui.m.ch[0].offset = 0.0;
     assert!(ui.fast_ok());
     ui.step(0.05);
-    assert_eq!(ui.wfm_total, 10);
+    assert_eq!(ui.counts.wfm_total, 10);
     assert!(shared.lock().unwrap().queue.is_empty());
     assert_eq!(ui.m.status, TrigStatus::Triggered);
     // the zero crossing sits at the centre of the plot in every frame: the centre column is lit at the middle row
@@ -708,8 +715,8 @@ fn fast_path_on_several_cores_draws_as_one_by_one() {
         // measured, which under load (tests in parallel) is less
         let take = ui.fast_max() + 1;
         ui.step(0.05);
-        assert_eq!(ui.wfm_total, 41);
-        assert_eq!(ui.records, 1);
+        assert_eq!(ui.counts.wfm_total, 41);
+        assert_eq!(ui.counts.records, 1);
         assert!(shared.lock().unwrap().queue.is_empty());
         // the thread is told how many of a batch to decode; the record path wants them all
         assert_eq!(shared.lock().unwrap().take, take);
@@ -829,19 +836,19 @@ fn statistics_take_every_frame_of_the_fast_path() {
     // the first record sets up the rows
     shared.lock().unwrap().queue.push_back(frame(0));
     ui.step(0.05);
-    assert_eq!(ui.mstat.len(), 5);
-    assert_eq!(ui.mstat[0].n, 1);
+    assert_eq!(ui.results.rows.len(), 5);
+    assert_eq!(ui.results.rows[0].n, 1);
     // 20 more: 19 by the fast path, the newest as the record
     shared.lock().unwrap().queue.extend((1..=20).map(frame));
     ui.step(0.05);
-    assert_eq!(ui.mstat[0].n, 21, "Pk-pk over every frame");
-    assert_eq!(ui.mstat[4].n, 2, "Freq only over the records");
+    assert_eq!(ui.results.rows[0].n, 21, "Pk-pk over every frame");
+    assert_eq!(ui.results.rows[4].n, 2, "Freq only over the records");
     // the largest Pk-pk is that of frame 20 (amplitude 3), the smallest that of frame 0
     assert!(
-        (ui.mstat[0].max - 6.0).abs() < 0.01 && (ui.mstat[0].min - 2.0).abs() < 0.01,
+        (ui.results.rows[0].max - 6.0).abs() < 0.01 && (ui.results.rows[0].min - 2.0).abs() < 0.01,
         "{} {}",
-        ui.mstat[0].min,
-        ui.mstat[0].max
+        ui.results.rows[0].min,
+        ui.results.rows[0].max
     );
     // a frame's fold gives the values of the measurements on the same samples
     let f = frame(7);
@@ -879,7 +886,7 @@ fn statistics_of_the_fast_path_leave_out_what_pairs_cannot_give() {
         let ch = [v, Vec::new(), Vec::new(), Vec::new()];
         crate::board::Frame { seq, dt, pre: n / 2, ch, envelope, acq: (1.0 / dt, depth), ..Default::default() }
     };
-    let counts = |ui: &Ui| ui.mstat.iter().map(|s| s.n).collect::<Vec<_>>();
+    let counts = |ui: &Ui| ui.results.rows.iter().map(|s| s.n).collect::<Vec<_>>();
     // deep pairs: the newest is the record (Max measured), the fast path draws the other nine
     shared.lock().unwrap().queue.push_back(frame(0, true, 10_000_000));
     ui.step(0.05);
@@ -947,6 +954,7 @@ fn fast_path_keeps_to_its_budget() {
 // Break it catches: an FPGA-averaged frame blended once more in software, the software average lost for frames
 // the FPGA did not average, no clear request on CLEAR / RUN / SINGLE, hardware averaging where the board falls back
 // (roll, a count the FPGA does not take, the switch off).
+#[cfg(oos_board = "dho")]
 #[test]
 fn hardware_average_bypasses_the_blend_and_restarts() {
     use super::*;
@@ -1020,6 +1028,7 @@ fn hardware_average_bypasses_the_blend_and_restarts() {
 /// against 29 screens, through the queue to the frame loop: every record is used, as many as were queued, at 1 and 4
 /// channels. The frame loop's part; whether a batch holds one frame or two (frame 0 left out, issue #5) is the
 /// acquisition thread's.
+#[cfg(oos_board = "dho")]
 #[test]
 fn batch_mode_uses_every_record_at_1_ms_per_div() {
     use super::*;
@@ -1045,7 +1054,7 @@ fn batch_mode_uses_every_record_at_1_ms_per_div() {
         }
         f.basic = std::array::from_fn(|c| crate::board::BasicStats::of(&f.ch[c]));
         ui.step(1.0 / 30.0);
-        let (w0, mut fed) = (ui.wfm_total, 0u64);
+        let (w0, mut fed) = (ui.counts.wfm_total, 0u64);
         for step in 0..87u64 {
             // 38 frames in 29 screens: one or two a screen
             for _ in 0..(38 * (step + 1) / 29 - 38 * step / 29) {
@@ -1055,7 +1064,7 @@ fn batch_mode_uses_every_record_at_1_ms_per_div() {
             ui.step(1.0 / 30.0);
         }
         let left = shared.lock().unwrap().queue.len() as u64;
-        assert_eq!(ui.wfm_total - w0 + left, fed, "mask {:#x}: records used", mask);
+        assert_eq!(ui.counts.wfm_total - w0 + left, fed, "mask {:#x}: records used", mask);
     }
 }
 
@@ -1107,5 +1116,143 @@ fn a_setting_changed_while_running_keeps_the_picture_until_the_next_record() {
         let next = ui.ph.map[0].clone();
         assert!(next.iter().any(|&c| c != 0), "persistence {persist}: the new record is drawn");
         assert!(next != picture, "persistence {persist}: the new record is the picture");
+    }
+}
+
+// Break it catches (#548, a DHO924S on 0.1.15): a new time base while running and waiting for a trigger kept the picture
+// of the old one. A record that filled the screen at 0.2 ms/div still filled it at 10 ms/div, a 1 kHz sine looked like
+// 20 Hz. The held record is drawn again at its own times: it takes the middle fiftieth of the screen.
+#[test]
+fn a_new_time_base_while_waiting_draws_the_held_record_at_its_own_times() {
+    use super::*;
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.run = RunState::Run;
+    for c in 1..NCH {
+        ui.m.ch[c].on = false;
+    }
+    ui.m.meas.clear();
+    ui.m.meas2.clear();
+    let at = |t: f32| tscales().iter().position(|&x| x >= t * 0.999).unwrap();
+    (ui.m.tscale, ui.m.tfine) = (at(2e-4), 1.0);
+    ui.step(0.033);
+    let window = ui.m.time_per_div() as f64 * HDIV as f64;
+    let n = 100_000usize;
+    let v: Vec<f32> = (0..n).map(|k| if (k / 500) % 2 == 1 { 0.3 } else { 0.0 }).collect();
+    shared.lock().unwrap().queue.push_back(crate::board::Frame {
+        seq: 1,
+        stamp: ui.m.hw_stamp,
+        dt: window / n as f64,
+        pre: n / 2,
+        ch: [v, Vec::new(), Vec::new(), Vec::new()],
+        ..Default::default()
+    });
+    ui.step(0.033);
+    let (w, h) = (ui.ph.w, ui.ph.h);
+    let columns = |ui: &Ui| (0..w).filter(|&x| (0..h).any(|y| ui.ph.map[0][y * w + x] != 0)).collect::<Vec<_>>();
+    let wide = columns(&ui);
+    assert!(wide.len() > w * 9 / 10, "the record fills the screen at 0.2 ms/div: {} of {w}", wide.len());
+    ui.m.tscale = at(1e-2);
+    ui.settings_changed();
+    for _ in 0..3 {
+        ui.step(0.033);
+    }
+    let narrow = columns(&ui);
+    let (lo, hi) = (*narrow.first().unwrap(), *narrow.last().unwrap());
+    assert!(hi - lo <= w / 25, "the record takes the middle fiftieth at 10 ms/div: columns {lo}..{hi} of {w}");
+    assert!(lo > w * 2 / 5 && hi < w * 3 / 5, "in the middle: columns {lo}..{hi} of {w}");
+    // the zoom switched on while waiting (no setting marked changed): its pane gets the held record too
+    ui.set_zoom(true);
+    for _ in 0..3 {
+        ui.step(0.033);
+    }
+    assert!(ui.phz.map[0].iter().any(|&c| c != 0), "the zoom pane shows the held record");
+}
+
+// Break it catches (#441, a DHO802 on 0.1.14, 100 ms persistence): the picture aged every screen step whether a record
+// had come or not. With records slower than the persistence time (slow time bases, deep memory) the newest record
+// faded out before the next one, and the trace pulsed. It ages when the next record comes, by the time since the last
+// one; with a record every step that is what it did before. The zoom picture the same way.
+#[test]
+fn timed_persistence_fades_a_record_from_the_next_one_on() {
+    for zoom in [false, true] {
+        timed_persistence_with(zoom);
+    }
+}
+
+fn timed_persistence_with(zoom: bool) {
+    use super::*;
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.run = RunState::Run;
+    ui.m.zoom = zoom;
+    ui.m.persist = PERSIST.iter().position(|p| p.1 == 0.1).unwrap();
+    let persist = PERSIST[ui.m.persist].1 as f64;
+    for c in 1..NCH {
+        ui.m.ch[c].on = false;
+    }
+    ui.m.meas.clear();
+    ui.m.meas2.clear();
+    let push = |ui: &Ui, seq: u64| {
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let n = 100_000usize;
+        let v: Vec<f32> = (0..n).map(|k| if (k / 4000) % 2 == 1 { 0.3 } else { 0.0 }).collect();
+        shared.lock().unwrap().queue.push_back(crate::board::Frame {
+            seq,
+            stamp: ui.m.hw_stamp,
+            dt: window * 1.2 / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        });
+    };
+    // the main and the zoom picture of CH1
+    let maps = |ui: &Ui| [ui.ph.map[0].clone(), ui.phz.map[0].clone()];
+    // the pictures `before` aged for `t` seconds, and one record (`one`) drawn into them
+    let aged = |before: &[Vec<u16>; 2], one: &[Vec<u16>; 2], t: f64| -> [Vec<u16>; 2] {
+        std::array::from_fn(|i| {
+            let mut p = Phosphor::new(1, 1);
+            p.map[0] = before[i].clone();
+            p.decay((-t / persist).exp() as f32);
+            p.map[0].iter().zip(&one[i]).map(|(a, b)| a.saturating_add(*b)).collect()
+        })
+    };
+    let dt = 0.033;
+    ui.step(dt);
+    push(&ui, 1);
+    ui.step(dt);
+    let one = maps(&ui);
+    assert!(one[0].iter().any(|&c| c != 0), "zoom {zoom}: the record is in the picture");
+    assert_eq!(one[1].iter().any(|&c| c != 0), zoom, "the record is in the zoom picture with zoom only");
+    // slow records, one every half second: the newest stays as it was drawn until the next comes
+    let mut seq = 1;
+    let mut picture = one.clone();
+    for _ in 0..3 {
+        let mut waited = 0.0;
+        for _ in 0..15 {
+            ui.step(dt);
+            waited += dt;
+            assert!(maps(&ui) == picture, "zoom {zoom}: the newest record faded before the next one came");
+        }
+        seq += 1;
+        push(&ui, seq);
+        ui.step(dt);
+        waited += dt;
+        // the one before has aged by the half second since it came
+        let want = aged(&picture, &one, waited);
+        assert!(
+            maps(&ui) == want,
+            "zoom {zoom}, slow records: the picture is not the last one aged by the time between"
+        );
+        picture = want;
+    }
+    // fast records, one every step: aged by one step each, as before
+    for _ in 0..10 {
+        seq += 1;
+        push(&ui, seq);
+        ui.step(dt);
+        let want = aged(&picture, &one, dt);
+        assert!(maps(&ui) == want, "zoom {zoom}, fast records: the picture is not the last one aged by one step");
+        picture = want;
     }
 }

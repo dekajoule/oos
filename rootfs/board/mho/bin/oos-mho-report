@@ -43,7 +43,7 @@ collect() {
 }
 
 collect 2>&1 | grep -v -i -E '([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|serial' > "$OUT"
-if mountpoint -q /mnt/usb 2>/dev/null; then
+if grep -q ' /mnt/usb ' /proc/mounts 2>/dev/null; then
 	cp "$OUT" /mnt/usb/ && sync && echo "oos-mho-report: copied to the USB stick"
 fi
 echo "$OUT"

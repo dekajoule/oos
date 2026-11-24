@@ -4,6 +4,7 @@
 //! Wide-bandgap double pulse page. E on and E off are the existing switching-loss pair, not recomputed here.
 
 use super::magnetic::{add_note, clash_wave, missing_wave, needs_more_channels, num, wave_clash};
+use super::menu_text::on_off;
 use super::*;
 use oos_dsp::dpt::{self, Fourth};
 use oos_dsp::power;
@@ -46,13 +47,7 @@ impl Ui {
     pub(super) fn dpt_value(&self, it: Item) -> Option<String> {
         let m = &self.m;
         Some(match it {
-            Item::DptOn => {
-                if m.view == AView::Dpt {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::DptOn => on_off(m.view == AView::Dpt),
             Item::DptV => self.wave_name(m.dpt_v),
             Item::DptI => self.wave_name(m.dpt_i),
             Item::DptG => self.wave_name(m.dpt_g),
@@ -88,25 +83,18 @@ impl Ui {
 
     pub(super) fn dpt_adjust(&mut self, it: Item, d: i32) -> bool {
         if matches!(it, Item::DptV | Item::DptI | Item::DptG | Item::Dpt4) {
-            let cur = match it {
-                Item::DptV => self.m.dpt_v,
-                Item::DptI => self.m.dpt_i,
-                Item::DptG => self.m.dpt_g,
-                _ => self.m.dpt_4ch,
-            };
-            let next = self.step_wave(cur, d);
             match it {
-                Item::DptV => self.m.dpt_v = next,
-                Item::DptI => self.m.dpt_i = next,
-                Item::DptG => self.m.dpt_g = next,
-                _ => self.m.dpt_4ch = next,
+                Item::DptV => self.m.dpt_v = self.step_wave(self.m.dpt_v, d),
+                Item::DptI => self.m.dpt_i = self.step_wave(self.m.dpt_i, d),
+                Item::DptG => self.m.dpt_g = self.step_wave(self.m.dpt_g, d),
+                _ => self.m.dpt_4ch = self.step_wave(self.m.dpt_4ch, d),
             }
             self.analyzer_update();
             return true;
         }
         let m = &mut self.m;
         match it {
-            Item::DptOn => m.view = if m.view == AView::Dpt { AView::Scope } else { AView::Dpt },
+            Item::DptOn => super::analysers::toggle_view(m, AView::Dpt),
             Item::DptFourth => {
                 let order = [DptFourth::Off, DptFourth::Gate, DptFourth::DiodeV, DptFourth::DiodeI];
                 let i = order.iter().position(|x| *x == m.dpt_4th).unwrap_or(0);
@@ -193,7 +181,7 @@ impl Ui {
     }
 
     pub(super) fn draw_dpt(&self, cv: &mut Canvas) {
-        let a = self.area;
+        let a = self.plot.area;
         let fig_w = 250.min(a.w / 3);
         let plot = Rect::new(a.x, a.y, a.w - fig_w, a.h);
         let (t0, t1) = self.azr.dpt_t;

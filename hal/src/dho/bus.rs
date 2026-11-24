@@ -212,6 +212,7 @@ impl Bus for Bar1 {
 unsafe impl Send for Bar1 {}
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     // Break it catches: a `Bar1` that leaves its mapping behind when dropped. The mapping keeps /dev/xdma0_bypass in
     // use, so `rmmod xdma` fails until the process exits (seen on the unit, 2026-11-08: the repeat of the BOOT command

@@ -15,7 +15,8 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert!(!u.menu_open);
     // The bar keeps what is used most. System and SIM are in the start menu (System first in its group), Load file is a
     // row of the Reference menu.
-    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Measure", "Cursor", "Display", "Storage"]);
+    // Measure and Cursor are front-panel keys and in the start menu (ADR 0076)
+    assert_eq!(u.top_buttons().iter().map(|b| b.1).collect::<Vec<_>>(), ["Display", "Storage"]);
     let system = u.main_groups().into_iter().find(|g| g.0 == "System").unwrap().1;
     assert_eq!(system[0], Item::Open(MenuId::Utility));
     assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Sim))));
@@ -36,10 +37,12 @@ fn acquisition_text_in_the_top_bar_opens_the_acquire_page() {
     assert_eq!(u.waveform_destination(), Some(2));
     assert_eq!(u.ref_slot(), 0, "destination selection is separate from the current reference");
     u.open_wave_request = false;
-    // Measurement choices remain one tap away, without going through acquisition or another menu.
-    let (_, _, r) = u.top_buttons().into_iter().find(|b| b.0 == TopBtn::Menu(MenuId::Measure)).unwrap();
-    u.tap(r.x + 5, r.y + 5);
+    // the measurement list: the Measure key, or the start menu
+    u.key(key::MEASURE);
     assert!(u.menu_open && u.menu == MenuId::MeasAdd);
+    u.close_menu();
+    assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Measure))));
+    assert!(u.main_groups().iter().any(|g| g.1.contains(&Item::Open(MenuId::Cursor))));
 }
 
 /// Reference > Load file on the scope: the file comes from storage and lands in the Slot row's reference.
@@ -49,12 +52,12 @@ fn load_file_in_the_reference_menu_takes_a_file_from_storage() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut u = with_two_channels();
-    u.store_dir = dir.clone();
+    u.files.dir = dir.clone();
     u.activate(Item::RefLoad);
     assert!(u.refs.iter().all(Option::is_none), "nothing in storage, nothing loaded");
     let rec = u.last[0].as_ref().unwrap().clone();
     std::fs::write(dir.join("capture.bin"), crate::store::wave_bin(&rec, &u.m)).unwrap();
-    u.ref_sel = 2;
+    u.ref_page.sel = 2;
     u.activate(Item::RefLoad);
     let r = u.refs[2].as_ref().expect("R3");
     assert_eq!(*r.v, rec.ch[0]);
@@ -90,16 +93,16 @@ fn files_go_to_the_stick_while_it_is_there() {
     let mut u = crate::ui::testkit::demo_ui();
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
     assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));
-    u.usb = true;
+    u.stick.mounted = true;
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::USB_DIR));
     assert_eq!(u.menu_title(MenuId::Storage), "Storage \u{b7} USB stick");
     // a directory given by hand stays
-    u.store_dir = "/oos/shots".into();
+    u.files.dir = "/oos/shots".into();
     assert_eq!(u.save_dir(), std::path::Path::new("/oos/shots"));
     assert_eq!(u.saved_where(), "");
     // Local keeps the files in the storage directory while the stick is there, and the title says so
-    u.store_dir = crate::store::DEFAULT_DIR.into();
-    u.store_dest = crate::store::StoreDest::Local;
+    u.files.dir = crate::store::DEFAULT_DIR.into();
+    u.files.dest = crate::store::StoreDest::Local;
     assert_eq!(u.save_dir(), std::path::Path::new(crate::store::DEFAULT_DIR));
     assert_eq!(u.saved_where(), " locally, not on the stick");
     assert!(u.menu_title(MenuId::Storage).contains("lost at power-off"));
@@ -108,7 +111,7 @@ fn files_go_to_the_stick_while_it_is_there() {
 #[test]
 fn system_info_has_the_rates() {
     let mut u = crate::ui::testkit::demo_ui();
-    u.wfm_rate = 123.0;
+    u.counts.wfm_rate = 123.0;
     let mut cv = Canvas::new(PANEL_W, PANEL_H);
     u.render(&mut cv);
     assert!(u
@@ -195,45 +198,70 @@ fn screen_in_order_on(scr: Screen) {
         // top bar, with every mix of the status boxes that can be there (ADR 0063): those that come and go are set by
         // the state their `shown` reads, so a box that is not set up here fails the count below
         let sticks: [fn(&mut Ui, bool); 3] =
-            [|u, on| u.net.wlan_stick = on, |u, on| u.bt.stick = on, |u, on| u.usb = on];
-        for k in 0..1usize << sticks.len() {
-            for (i, set) in sticks.iter().enumerate() {
-                set(&mut u, k & 1 << i != 0);
+            [|u, on| u.net.wlan_stick = on, |u, on| u.bt.stick = on, |u, on| u.stick.mounted = on];
+        // the boxes of two lines are as wide as what they show: a dash without a link, "connected" with the address
+        // hidden, the longest address while System > Network > Show address is on; every mix in each of the three
+        let link = |u: &mut Ui, addr: Option<&str>, shown: bool| {
+            let a = addr.map(String::from);
+            u.net.ifs =
+                a.iter().flat_map(|a| [("eth0".into(), a.clone()), (oos_hal::wlan::IFACE.into(), a.clone())]).collect();
+            u.net.eth_link = addr.is_some();
+            u.sys.show_addr = shown;
+        };
+        for (addr, shown) in [(None, false), (Some("255.255.255.255"), false), (Some("255.255.255.255"), true)] {
+            link(&mut u, addr, shown);
+            for k in 0..1usize << sticks.len() {
+                for (i, set) in sticks.iter().enumerate() {
+                    set(&mut u, k & 1 << i != 0);
+                }
+                let pill = u.run_pill();
+                assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
+                let boxes: Vec<Rect> = u.status_boxes().into_iter().map(|(_, r)| r).collect();
+                assert_eq!(boxes.len(), 1 + k.count_ones() as usize, "a status box without its switch in this lint");
+                for (i, b) in boxes.iter().enumerate() {
+                    assert!(
+                        b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6,
+                        "{:?}: {:?}",
+                        ts,
+                        b
+                    );
+                    assert!(!boxes[i + 1..].iter().any(|o| overlaps(*o, *b)), "{:?}: {:?}", ts, b);
+                }
+                for (_, l, r) in u.top_buttons() {
+                    assert!(r.x > pill.x + pill.w && r.x + r.w <= u.top_right(), "{:?}: {} {:?}", ts, l, r);
+                    assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
+                }
             }
-            let pill = u.run_pill();
-            assert!(f.mb.width("TRIG'D") + 30 <= pill.w, "{:?}: run pill {:?}", ts, pill);
-            let boxes: Vec<Rect> = u.status_boxes().into_iter().map(|(_, r)| r).collect();
-            assert_eq!(boxes.len(), 1 + k.count_ones() as usize, "a status box without its switch in this lint");
-            for (i, b) in boxes.iter().enumerate() {
+            // every status box of two lines has room for both its lines: for the address while it is shown (issue #23),
+            // for the dash while there is no link; with a link and no address shown it is one line, its name in bold
+            for set in sticks {
+                set(&mut u, true);
+            }
+            let second = match (addr, shown) {
+                (Some(a), true) => a,
+                (Some(_), false) => "",
+                (None, _) => "-",
+            };
+            for (b, r) in u.status_boxes().into_iter().filter(|(b, _)| !b.chip) {
+                let first = if b.label == "LAN" { u.lan_box_lines().0 } else { u.wlan_box_lines().0 };
+                assert_eq!(u.link_line(u.addr_of("eth0")), second, "{:?}", ts);
+                let first_w = if second.is_empty() { f.sb.width(first) } else { f.s.width(first) };
                 assert!(
-                    b.y >= 0 && b.bottom() <= u.frame().top.bottom() && b.right() <= u.scr.w - 6,
-                    "{:?}: {:?}",
+                    20 + f.sb.width(second) <= r.w && 20 + first_w <= r.w,
+                    "{:?}: {} box too narrow for '{}' / '{}'",
                     ts,
-                    b
+                    b.label,
+                    first,
+                    second
                 );
-                assert!(!boxes[i + 1..].iter().any(|o| overlaps(*o, *b)), "{:?}: {:?}", ts, b);
             }
-            for (_, l, r) in u.top_buttons() {
-                assert!(r.x > pill.x + pill.w && r.x + r.w <= u.top_right(), "{:?}: {} {:?}", ts, l, r);
-                assert!(f.mb.width(l) + 8 <= r.w, "{:?}: {}", ts, l);
+            for set in sticks {
+                set(&mut u, false);
             }
         }
-        for set in sticks {
-            set(&mut u, false);
-        }
-        // the two lines of the network box: room for an address, the first line's descent above the second's capitals;
-        // every status box of two lines has the room for an address too (issue #23)
+        link(&mut u, None, false);
+        // the two lines of the network box: the first line's descent above the second's capitals
         let n = u.net_box();
-        assert!(20 + f.sb.width("255.255.255.255") <= n.w && 20 + f.sb.width("not connected") <= n.w, "{:?}", ts);
-        for set in sticks {
-            set(&mut u, true);
-        }
-        for (b, r) in u.status_boxes().into_iter().filter(|(b, _)| !b.chip) {
-            assert!(20 + f.sb.width("255.255.255.255") <= r.w, "{:?}: {} box too narrow for an address", ts, b.label);
-        }
-        for set in sticks {
-            set(&mut u, false);
-        }
         assert!(n.y + 5 + cap(&f.s) + f.s.descent <= n.y + n.h - 4 - cap(&f.sb), "{:?}: {:?}", ts, n);
         // a strip row holds its text
         let bh = u.lay().strip_row - 2;
@@ -250,24 +278,29 @@ fn screen_in_order_on(scr: Screen) {
             u.step(0.04);
         }
         u.relayout();
-        assert!(u.grid.h >= 160, "{:?}: {:?}", ts, u.grid);
-        assert!(u.grid.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y, "{:?}: {:?}", ts, u.grid);
+        assert!(u.plot.grid.h >= 160, "{:?}: {:?}", ts, u.plot.grid);
+        assert!(
+            u.plot.grid.bottom() + u.strip_rows() * u.lay().strip_row <= u.frame().bottom.y,
+            "{:?}: {:?}",
+            ts,
+            u.plot.grid
+        );
         let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
         // the statistics card stays in the plot (with as many items as the strip shows on one row each)
         let all = std::mem::replace(&mut u.m.meas, ALL_MEAS.iter().take(12).map(|&k| (k, WaveId::Ch(0))).collect());
-        u.stats_on = true;
+        u.results.on = true;
         u.relayout();
         let (head, body) = u.results_rects().unwrap();
         assert!(
             head.x >= 0
-                && body.y + body.h <= u.grid.y + u.grid.h
+                && body.y + body.h <= u.plot.grid.y + u.plot.grid.h
                 && f.sb.width("Measurements") + 24 + f.s.width("n 999k") + 20 <= head.w,
             "{:?}",
             ts
         );
         u.render(&mut cv);
-        (u.stats_on, u.m.meas) = (false, all);
+        (u.results.on, u.m.meas) = (false, all);
         // the cards in every mix of channels, LA and generator, with long texts
         for c in 0..NCH {
             (u.m.ch[c].offset, u.m.ch[c].probe, u.m.ch[c].invert) = (-12.5, 100.0, true);
@@ -377,11 +410,11 @@ fn the_measurement_strip_docks_on_four_sides() {
     bare.m.dvm_on = false;
     bare.m.cnt_on = false;
     bare.relayout();
-    let empty = bare.grid;
+    let empty = bare.plot.grid;
     for side in StripDock::ALL {
         bare.m.strip_dock = side;
         bare.relayout();
-        assert_eq!(bare.grid, empty, "an empty strip stays where it is on {:?}", side);
+        assert_eq!(bare.plot.grid, empty, "an empty strip stays where it is on {:?}", side);
     }
 
     let mut u = with_two_channels();
@@ -389,7 +422,7 @@ fn the_measurement_strip_docks_on_four_sides() {
     u.m.cursor = CursorMode::Time;
     u.m.strip_dock = StripDock::Under;
     u.relayout();
-    let under = u.grid;
+    let under = u.plot.grid;
     assert_eq!((under.x, under.w, under.y), (0, W, PLOT_Y));
     let band = u.strip_rect().unwrap();
     assert!(!overlaps(band, under), "under {:?}", band);
@@ -397,28 +430,28 @@ fn the_measurement_strip_docks_on_four_sides() {
 
     u.m.strip_dock = StripDock::Above;
     u.relayout();
-    assert_eq!((u.grid.x, u.grid.w, u.grid.h), (0, W, under.h));
-    assert_eq!(u.grid.y, PLOT_Y + u.strip_rows_h());
+    assert_eq!((u.plot.grid.x, u.plot.grid.w, u.plot.grid.h), (0, W, under.h));
+    assert_eq!(u.plot.grid.y, PLOT_Y + u.strip_rows_h());
     let band = u.strip_rect().unwrap();
-    assert!(!overlaps(band, u.grid), "above {:?}", band);
-    assert!(band.y + band.h <= u.grid.y);
+    assert!(!overlaps(band, u.plot.grid), "above {:?}", band);
+    assert!(band.y + band.h <= u.plot.grid.y);
 
     u.m.strip_dock = StripDock::Left;
     u.relayout();
-    assert_eq!((u.grid.x, u.grid.w), (STRIP_SIDE, W - STRIP_SIDE));
-    assert!(u.grid.h > under.h, "the plot gets the rows back");
-    assert_eq!(u.grid.y, PLOT_Y);
+    assert_eq!((u.plot.grid.x, u.plot.grid.w), (STRIP_SIDE, W - STRIP_SIDE));
+    assert!(u.plot.grid.h > under.h, "the plot gets the rows back");
+    assert_eq!(u.plot.grid.y, PLOT_Y);
     let col = u.strip_rect().unwrap();
-    assert!(!overlaps(col, u.grid), "left {:?}", col);
-    assert_eq!(col.x + col.w, u.grid.x);
+    assert!(!overlaps(col, u.plot.grid), "left {:?}", col);
+    assert_eq!(col.x + col.w, u.plot.grid.x);
 
-    let left_h = u.grid.h;
+    let left_h = u.plot.grid.h;
     u.m.strip_dock = StripDock::Right;
     u.relayout();
-    assert_eq!((u.grid.x, u.grid.w, u.grid.h, u.grid.y), (0, W - STRIP_SIDE, left_h, PLOT_Y));
+    assert_eq!((u.plot.grid.x, u.plot.grid.w, u.plot.grid.h, u.plot.grid.y), (0, W - STRIP_SIDE, left_h, PLOT_Y));
     let col = u.strip_rect().unwrap();
-    assert!(!overlaps(col, u.grid), "right {:?}", col);
-    assert_eq!(col.x, u.grid.x + u.grid.w);
+    assert!(!overlaps(col, u.plot.grid), "right {:?}", col);
+    assert_eq!(col.x, u.plot.grid.x + u.plot.grid.w);
 
     // a second pane stays in the plot column (Results is the pane that replaces the strip)
     u.m.pane = 4;
@@ -427,12 +460,12 @@ fn the_measurement_strip_docks_on_four_sides() {
     assert!(!overlaps(u.pane_rect(), u.strip_rect().unwrap()));
     u.m.pane = 0;
 
-    u.full = true;
+    u.full.on = true;
     u.m.strip_dock = StripDock::Above;
     u.relayout();
-    assert_eq!(u.grid.y, u.strip_rows_h());
-    assert!(u.strip_rect().unwrap().y < u.grid.y);
-    u.full = false;
+    assert_eq!(u.plot.grid.y, u.strip_rows_h());
+    assert!(u.strip_rect().unwrap().y < u.plot.grid.y);
+    u.full.on = false;
 
     // the control on the Measure page picks the side
     u.m.strip_dock = StripDock::Under;
@@ -484,7 +517,7 @@ fn the_measurement_strip_docks_on_four_sides() {
     ] {
         u.m.strip_dock = side;
         shot(&mut u, name);
-        let g = u.grid;
+        let g = u.plot.grid;
         let s = u.strip_rect().unwrap();
         assert!(!overlaps(g, s), "{name} plot {g:?} strip {s:?}");
     }
@@ -495,7 +528,7 @@ fn the_measurement_strip_docks_on_four_sides() {
     u.m.meas2 = vec![(0, WaveId::Ch(0), WaveId::Ch(1))];
     shot(&mut u, "strip-left-pair.png");
     let s = u.strip_rect().unwrap();
-    assert!(!overlaps(u.grid, s));
+    assert!(!overlaps(u.plot.grid, s));
 }
 
 /// Display > HDMI = Layout: the monitor's picture leaves the panel's layout and maps as they were (the panel picture
@@ -524,10 +557,15 @@ fn the_hdmi_layout_leaves_the_panel_alone() {
         }
         let mut cv = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut cv);
-        let before = (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.frames, u.scr);
+        let before = (u.plot.grid, u.plot.wins.clone(), u.plot.area, u.ph.w, u.ph.h, u.counts.frames, u.scr);
         let mut hc = Canvas::new(1920, 1080);
         u.render_view(&mut hc);
-        assert_eq!(before, (u.grid, u.wins.clone(), u.area, u.ph.w, u.ph.h, u.frames, u.scr), "{}", name);
+        assert_eq!(
+            before,
+            (u.plot.grid, u.plot.wins.clone(), u.plot.area, u.ph.w, u.ph.h, u.counts.frames, u.scr),
+            "{}",
+            name
+        );
         let mut again = Canvas::new(u.scr.w, u.scr.h);
         u.render(&mut again);
         assert!(again.px == cv.px, "{}: the panel picture changed", name);

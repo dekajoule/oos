@@ -24,6 +24,7 @@ fn fresh() -> &'static Counters {
     Box::leak(Box::default())
 }
 
+#[cfg(oos_board = "dho")]
 fn dec(s: &Settings, p: &hz::Params) -> DecodeInto {
     let (s, p) = (s.clone(), *p);
     Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::decode_into(c, &s, &p, 0, f))
@@ -115,6 +116,7 @@ fn frames_of(
 
 // Break it catches: the workers' codes path (large frames, no per-frame measurements) drawing another picture or
 // other trigger statistics than `draw_frame` on every frame, or frames lost on it
+#[cfg(oos_board = "dho")]
 #[test]
 fn batch_picture_from_the_codes_equals_each_frame_drawn() {
     let (w, h) = (970, 448);
@@ -136,7 +138,7 @@ fn batch_picture_from_the_codes_equals_each_frame_drawn() {
         pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 9, 0, dec(&s, &p), Some(codes));
         settle(&pipe);
         let mut got = Phosphor::new(w, h);
-        let (mut clear, mut edges, mut off) = (false, [0u64; 4], (0.0, 0.0));
+        let (mut clear, mut edges, mut off) = (Renew::Keep, [0u64; 4], (0.0, 0.0));
         let n_got = pipe.merge(&mut got, &mut clear, &mut edges, &mut off);
         let (want, trig, wedges, woff, _) = reference(&bytes, fb, &s, &p, &m, w, h);
         assert_eq!((n_got.frames, n_got.triggered, edges), (9, trig, wedges), "mask {}", mask);
@@ -150,6 +152,7 @@ fn batch_picture_from_the_codes_equals_each_frame_drawn() {
 // Break it catches (`draw_frame_codes`): a picture or trigger statistics from the read-out words that differ from
 // decoding the frame first (column extremes, join, interleaved channels, the near window, the wide fallback),
 // or the codes path taken where it must not be.
+#[cfg(oos_board = "dho")]
 #[test]
 fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
     let (w, h) = (970, 448);
@@ -239,6 +242,7 @@ fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
 
 // Timing guard (tools/perf-guard.sh): a worker frame drawn from the read-out words against decode + draw, lines,
 // no per-frame measurements. The A53 gains more than the host (the f32 copy is 2x the read-out per channel).
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_codes_per_frame() {
@@ -304,7 +308,7 @@ fn pending(p: &Pipe) -> bool {
 fn merge_all(
     p: &Pipe,
     ph: &mut Phosphor,
-    clear: &mut bool,
+    clear: &mut Renew,
     edges: &mut [u64; 4],
     off: &mut (f64, f64),
 ) -> (Merged, Vec<u64>) {
@@ -320,6 +324,7 @@ fn merge_all(
 }
 
 /// The same frames one by one: `draw_frame` and the per-frame statistics on every frame.
+#[cfg(oos_board = "dho")]
 fn reference(
     bytes: &[u8],
     fb: usize,
@@ -344,6 +349,7 @@ fn reference(
 // vectors, frames claimed by several workers and the helper, dense and sparse frames, dots, two channels),
 // trigger or measurement statistics that leave frames out, frames lost or counted twice, a merge that does not
 // clear for minimum persistence, a buffer that does not come back.
+#[cfg(oos_board = "dho")]
 #[test]
 fn batch_picture_equals_each_frame_drawn() {
     let (w, h) = (970, 448);
@@ -375,12 +381,12 @@ fn batch_picture_equals_each_frame_drawn() {
         pipe.help_done(&mut hp);
         let mut got = Phosphor::new(w, h);
         got.map[0][0] = 7;
-        let (mut clear, mut edges, mut off) = (true, [0u64; 4], (0.0, 0.0));
+        let (mut clear, mut edges, mut off) = (Renew::Clear, [0u64; 4], (0.0, 0.0));
         let (n, px) = merge_all(&pipe, &mut got, &mut clear, &mut edges, &mut off);
         let (want, trig, wedges, woff, folds) = reference(&bytes, fb, &s, &p, &m, w, h);
         let what = format!("{} s/div, {} workers, helper {}", tdiv, workers, helper);
         assert_eq!((n.frames, n.triggered), (41, trig), "{}", what);
-        assert!(!clear && trig > 30 && trig < 41, "{}: {} triggered", what, trig);
+        assert!(clear == Renew::Keep && trig > 30 && trig < 41, "{}: {} triggered", what, trig);
         // minimum persistence: the first set swapped in, nothing added on the UI's thread; a parked set after it
         // is added (the blocks with counts of one map a channel on)
         assert_eq!(px[0], 0, "{}", what);
@@ -413,6 +419,7 @@ fn batch_picture_equals_each_frame_drawn() {
 // Break it catches (issue #186): frames lost or merged twice while the workers and the helper fold their maps into
 // one set and the UI takes it meanwhile, a merge that adds more than one set of maps on the UI's thread, or maps of
 // channels that are off.
+#[cfg(oos_board = "dho")]
 #[test]
 fn every_frame_is_merged_once_while_the_workers_fold() {
     let (w, h) = (970, 448);
@@ -429,7 +436,7 @@ fn every_frame_is_merged_once_while_the_workers_fold() {
     let (mut frames, mut merges) = (0, 0);
     let done = std::sync::atomic::AtomicBool::new(false);
     let mut take = |ph: &mut Phosphor| {
-        let got = pipe.merge(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        let got = pipe.merge(ph, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
         assert!(got.px <= (w * h) as u64, "{} pixels added", got.px);
         frames += got.frames;
         merges += (got.frames > 0) as u64;
@@ -459,6 +466,7 @@ fn every_frame_is_merged_once_while_the_workers_fold() {
 }
 
 // Break it catches: the acquisition thread's share drawn differently from the workers', or not handed to the UI.
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_helper_alone_draws_the_same_picture() {
     let (w, h) = (970, 448);
@@ -477,7 +485,7 @@ fn the_helper_alone_draws_the_same_picture() {
         }
         drop(b);
         let mut got = Phosphor::new(w, h);
-        let n = pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        let n = pipe.merge(&mut got, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
         let (want, trig, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
         assert_eq!((k, n.frames, n.triggered), (20, 20, trig), "{} s/div", tdiv);
         assert!((0..NCH).all(|c| got.map[c] == want.map[c]), "{} s/div", tdiv);
@@ -486,6 +494,7 @@ fn the_helper_alone_draws_the_same_picture() {
 
 // Break it catches: frame 0 of a batch (the frame the FPGA held across the arm, issue #5) drawn in batch mode,
 // where the path without batches leaves it out.
+#[cfg(oos_board = "dho")]
 #[test]
 fn frames_before_first_are_left_out() {
     let (w, h) = (970, 448);
@@ -502,14 +511,53 @@ fn frames_before_first_are_left_out() {
     }
     drop(b);
     let mut got = Phosphor::new(w, h);
-    let n = pipe.merge(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+    let n = pipe.merge(&mut got, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
     let (want, trig, ..) = reference(&bytes[fb..], fb, &s, &p, &m, w, h);
     assert_eq!((k, n.frames, n.triggered), (19, 19, trig));
     assert!((0..NCH).all(|c| got.map[c] == want.map[c]));
 }
 
+// Break it catches (#441): timed persistence through the batch merge. The picture ages once, before the first maps of
+// the screen step are added, and not at all when nothing is merged (no record: the newest trace is held).
+#[cfg(oos_board = "dho")]
+#[test]
+fn a_merge_ages_the_picture_once_before_adding() {
+    let (w, h) = (970, 448);
+    let m = model(1e-6, false, false);
+    let (bytes, fb, s, p) = batch(20, 12_512, false);
+    let pipe = Pipe::start(0, false, fresh());
+    pipe.set_view(Some(&m), w, h);
+    // the picture so far: counts on every channel
+    let mut got = Phosphor::new(w, h);
+    for map in got.map.iter_mut() {
+        map.iter_mut().enumerate().for_each(|(i, x)| *x = (i * 37 % 4000) as u16);
+    }
+    let seed = got.map.clone();
+    // nothing to merge: the picture is held, the decay still waits
+    let mut renew = Renew::Decay(0.5);
+    assert_eq!(pipe.merge(&mut got, &mut renew, &mut [0; 4], &mut (0.0, 0.0)), Merged::default());
+    assert_eq!(renew, Renew::Decay(0.5));
+    assert!(got.map == seed, "aged without a record");
+    // a batch: aged by the factor, then its maps added
+    let b = pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 20, 0, dec(&s, &p), None);
+    let mut hp = Helper::default();
+    while pipe.help(&mut hp) {}
+    drop(b);
+    let n = pipe.merge(&mut got, &mut renew, &mut [0; 4], &mut (0.0, 0.0));
+    assert_eq!((n.frames, renew), (20, Renew::Keep));
+    let (frames, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
+    let mut want = Phosphor::new(w, h);
+    want.map = seed;
+    want.decay(0.5);
+    for (c, map) in want.map.iter_mut().enumerate() {
+        map.iter_mut().zip(&frames.map[c]).for_each(|(x, y)| *x = x.saturating_add(*y));
+    }
+    assert!((0..NCH).all(|c| got.map[c] == want.map[c]), "not the picture aged once and the batch added");
+}
+
 // Break it catches: frames of older settings drawn, maps of an older mapping merged, frames nobody drew not
 // counted, batches taken while the fast path does not apply.
+#[cfg(oos_board = "dho")]
 #[test]
 fn stale_work_is_dropped_and_counted() {
     let (w, h) = (970, 448);
@@ -518,7 +566,7 @@ fn stale_work_is_dropped_and_counted() {
     let c = fresh();
     let pipe = Pipe::start(2, false, c);
     let mut ph = Phosphor::new(w, h);
-    let merge = |ph: &mut Phosphor| pipe.merge(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+    let merge = |ph: &mut Phosphor| pipe.merge(ph, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
     assert!(!pipe.accepting());
     // settings stamp older than the view's: dropped
     m.hw_stamp = 3;
@@ -547,7 +595,7 @@ fn stale_work_is_dropped_and_counted() {
         pipe.feed(Box::new(Bytes(big.clone())), fb2, 200, 3, dec(&s2, &p2));
     }
     settle(&pipe);
-    assert_eq!(merge_all(&pipe, &mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).0.frames, 1200);
+    assert_eq!(merge_all(&pipe, &mut ph, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0)).0.frames, 1200);
     assert_eq!(c.read().2, 20);
     // a batch dropped before anybody claimed a frame counts all of them
     let pipe0 = Pipe::start(0, false, c);
@@ -562,6 +610,7 @@ fn stale_work_is_dropped_and_counted() {
 /// Host cost per frame of a worker (decode into kept vectors, trigger refinement, deposit) against the frames
 /// mode's per-frame work on the UI thread (`decode` + `draw_frame`), and the rate of 1, 2 and 4 workers (the
 /// helper runs the same code per frame). Run by tools/perf-guard.sh.
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_deposit_worker_per_frame() {
@@ -627,6 +676,7 @@ fn perf_guard_deposit_worker_per_frame() {
 
 /// One batch of 16 frames of `bytes` as the acquisition thread hands it on in batch mode: frame 0 left out, the
 /// others to the workers and its own share (`help`), until all are drawn and in the mailbox.
+#[cfg(oos_board = "dho")]
 fn feed_batch(pipe: &Pipe, bytes: &[u8], fb: usize, s: &Settings, p: &hz::Params, stamp: u64, hp: &mut Helper) {
     let (cs, cp) = (s.clone(), *p);
     let codes: CodesInto =
@@ -647,6 +697,7 @@ fn feed_batch(pipe: &Pipe, bytes: &[u8], fb: usize, s: &Settings, p: &hz::Params
 /// it does with the frames of a batch the workers do not take. Also the merge alone, with minimum persistence (the
 /// maps swapped in) and with persistence (added): its time and the pixels it adds. Guarded: the workers must not
 /// cost the frame loop more than the queue. Run by tools/perf-guard.sh.
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_batch_step_at_10_us_per_div() {
@@ -700,7 +751,7 @@ fn perf_guard_batch_step_at_10_us_per_div() {
                 }
             }
             // every frame drawn (fast path or pipeline), 15 a step
-            assert_eq!(ui.wfm_total, 15 * 40, "{} frames drawn", ui.wfm_total);
+            assert_eq!(ui.counts.wfm_total, 15 * 40, "{} frames drawn", ui.counts.wfm_total);
             per[k] = median(times);
             let mode = if batch { "workers" } else { "queue" };
             println!("10 us/div mask {:#x} {} pt, {}: frame loop {:.2} ms a step (median)", mask, n, mode, per[k]);
@@ -713,17 +764,18 @@ fn perf_guard_batch_step_at_10_us_per_div() {
         let (w, h) = (970, 448);
         pipe.set_view(Some(&m), w, h);
         let mut ph = Phosphor::new(w, h);
-        for clear in [true, false] {
+        for clear in [Renew::Clear, Renew::Keep] {
             let (mut times, mut px) = (Vec::new(), 0);
             for _ in 0..20 {
                 feed_batch(pipe, &bytes, fb, &s, &p, m.hw_stamp, &mut hp);
                 let t0 = std::time::Instant::now();
-                let got = pipe.merge(&mut ph, &mut clear.clone(), &mut [0; 4], &mut (0.0, 0.0));
+                let mut renew = clear;
+                let got = pipe.merge(&mut ph, &mut renew, &mut [0; 4], &mut (0.0, 0.0));
                 times.push(t0.elapsed().as_secs_f64() * 1e3);
                 assert_eq!(got.frames, frames as u64 - 2);
                 px = got.px;
             }
-            println!("  merge, clear {}: {:.3} ms (median), {} pixels added", clear, median(times), px);
+            println!("  merge, {:?}: {:.3} ms (median), {} pixels added", clear, median(times), px);
         }
         worst = worst.max(per[1] / per[0]);
     }
@@ -733,6 +785,7 @@ fn perf_guard_batch_step_at_10_us_per_div() {
 // Break it catches (unit 2026-11-18, more batches dropped for want of a buffer): a batch's buffer kept until every
 // holder of the batch lets it go (a worker folding its maps into the mailbox, a worker with the batch in its
 // queue) instead of coming back with its last frame drawn.
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_buffer_comes_back_with_the_last_frame_drawn() {
     let m = model(1e-6, false, false);
@@ -750,6 +803,7 @@ fn the_buffer_comes_back_with_the_last_frame_drawn() {
 // Break it catches (unit 2026-11-18, more frames dropped at 4 channels): the drawers folding their maps into the
 // mailbox after every batch (folds a screen that grow with the batches: worker time and memory traffic on the
 // small cores taken from drawing), or frames lost while they park their maps between screens.
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_drawers_fold_once_a_screen() {
     let (w, h) = (970, 448);
@@ -770,10 +824,10 @@ fn the_drawers_fold_once_a_screen() {
             settle(&pipe);
             pipe.help_done(&mut hp);
         }
-        frames += pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames;
+        frames += pipe.merge(&mut ph, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).frames;
     }
     let folds = pipe.mail.lock().unwrap().folds;
-    frames += merge_all(&pipe, &mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
+    frames += merge_all(&pipe, &mut ph, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
     assert_eq!((frames, c.read()), (40 * per * screens, (0, 0, 0)));
     // each of the 5 drawers hands its maps on once a screen at most, the first into the empty mailbox
     assert!(folds <= 4 * screens, "{} folds in {} screens of {} batches", folds, screens, per);
@@ -783,6 +837,7 @@ fn the_drawers_fold_once_a_screen() {
 // map where the traces hold counts in a small part of it (where the batches are fewer than the screens every
 // drawer of a batch folds its maps, at 4 channels four 970 x 448 maps each on a small core), counts left out, or
 // pixels outside the blocks with counts touched wrongly (saturation, the last partial block).
+#[cfg(oos_board = "dho")]
 #[test]
 fn folding_and_clearing_touch_the_blocks_with_counts() {
     let (w, h) = (970, 448);
@@ -818,6 +873,7 @@ fn folding_and_clearing_touch_the_blocks_with_counts() {
 /// while the drawers fold it leaves screens empty). The drops depend on the computer; host (M3), 4 channels, a
 /// batch every 400 us: 31-37 % with a mailbox per drawer, 40 % with the shared one folded after every batch,
 /// 1-13 % with the maps parked between screens. Run by tools/perf-guard.sh.
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_batch_at_a_fixed_rate() {
@@ -879,14 +935,15 @@ fn perf_guard_batch_at_a_fixed_rate() {
                 let mut ph = Phosphor::new(w, h);
                 while !done.load(Ordering::Acquire) {
                     std::thread::sleep(Duration::from_micros(34_000));
-                    let got = pipe.merge(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames;
+                    let got = pipe.merge(&mut ph, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).frames;
                     merged += got;
                     per.push(got);
                 }
             });
             settle(&pipe);
             let screens = per.len() as u64;
-            merged += merge_all(&pipe, &mut Phosphor::new(w, h), &mut true, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
+            merged +=
+                merge_all(&pipe, &mut Phosphor::new(w, h), &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
             per.sort();
             let p50 = per[per.len() / 2];
             println!(

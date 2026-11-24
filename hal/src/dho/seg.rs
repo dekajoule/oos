@@ -449,6 +449,7 @@ pub mod sim {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::sim::*;
     use super::*;

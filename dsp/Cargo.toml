@@ -1,6 +1,6 @@
 [package]
 name = "oos-dsp"
-version = "0.1.14"
+version = "0.1.15"
 repository = "https://github.com/dekajoule/oos"
 edition = "2021"
 description = "OOS signal processing: software triggers, measurements, math, signal generators"
@@ -10,6 +10,12 @@ license = "GPL-2.0-or-later"
 name = "oos_dsp"
 
 [dependencies]
+
+# `example`: the decoder of the example protocol module of oos-ui (ui/src/protocols/example.rs) in
+# `protocols::MODULES`, at the place of the module in oos-ui's registry. oos-ui turns it on for its tests only (its
+# dev-dependency); the program for the scope is built without it.
+[features]
+example = []
 
 # The tests run optimised a little (docs/adr/process/0040): the tests of updates and pictures take seconds instead
 # of minutes. Debug assertions and overflow checks stay on.

@@ -108,21 +108,14 @@ fn record_params(s: &Settings, st: &mut Vec<Step>) -> Result<hz::Params, String>
 }
 
 impl State {
-    /// State after a warm hand-over: the stock values, ADC in the mode of `app_mask`.
-    pub fn handover(app_mask: u32, cal_adc: Option<&adc::CalAdc>) -> State {
-        let mode = adc::mode_of_mask(app_mask).unwrap_or(0);
-        let mut a = adc::Adc::default();
-        if let Some(c) = cal_adc {
-            a.parameter(c, 0);
-            if mode != 0 {
-                a.channel_mode(c, mode);
-            }
-        }
+    /// State from the shadows of the SCU, the AFEs, the ADC and its mode; the TPU shadows are the stock edge values, and
+    /// nothing else has been written by OOS yet.
+    pub fn new(sh: scu::Shadows, afe: [afe::Afe; 4], adc: adc::Adc, mode: usize) -> State {
         State {
-            sh: scu::Shadows::HANDOVER,
+            sh,
             ts: tpu::Shadows::APP,
-            afe: [0, 1, 2, 3].map(afe::Afe::new),
-            adc: a,
+            afe,
+            adc,
             mode,
             gain: [1.0; 4],
             la_was_on: false,
@@ -134,6 +127,19 @@ impl State {
             zone_tabs: [None, None],
             zone_run: None,
         }
+    }
+
+    /// State after a warm hand-over: the stock values, ADC in the mode of `app_mask`.
+    pub fn handover(app_mask: u32, cal_adc: Option<&adc::CalAdc>) -> State {
+        let mode = adc::mode_of_mask(app_mask).unwrap_or(0);
+        let mut a = adc::Adc::default();
+        if let Some(c) = cal_adc {
+            a.parameter(c, 0);
+            if mode != 0 {
+                a.channel_mode(c, mode);
+            }
+        }
+        State::new(scu::Shadows::HANDOVER, [0, 1, 2, 3].map(afe::Afe::new), a, mode)
     }
 
     /// Configuration steps for `s` (ADC mode if the channel set changed, AFEs, trigger, acquisition registers).
@@ -337,20 +343,15 @@ impl State {
             w.extend(mask::load(&cols));
             self.mask_cols = Some(cols);
         }
-        w.push((mask::COMPRESS, mask::compress_word(run.1)));
-        w.extend(mask::select(&mut self.s1190, slot, clear));
-        self.sh.s4020 = mask::scu_bits(self.sh.s4020, true, m.stop_on_fail);
-        w.push((0x4020, self.sh.s4020));
         self.mask_run = Some(run);
-        let mut st = vec![Step::Note(format!(
+        let note = format!(
             "mask test CH{} slot {}, {} samples per column{}",
             m.ch + 1,
             slot,
             run.1,
             if clear { ", counters cleared" } else { "" }
-        ))];
-        st.extend(w.into_iter().map(Step::Wr));
-        st
+        );
+        self.arm(w, run.1, slot, clear, |s4020| mask::scu_bits(s4020, true, m.stop_on_fail), note)
     }
 
     /// The zone unit for `s` (docs/fork/hwzone.md), like `mask_steps`: nothing while it runs as wanted; else off, the
@@ -401,18 +402,34 @@ impl State {
             }
         }
         w.push((zone::CTRL, run.2));
-        w.push((mask::COMPRESS, mask::compress_word(n)));
-        w.extend(mask::select(&mut self.s1190, slot, clear));
-        self.sh.s4020 = zone::scu_bit(self.sh.s4020, true);
-        w.push((0x4020, self.sh.s4020));
         self.zone_run = Some(run);
-        let mut st = vec![Step::Note(format!(
+        let note = format!(
             "zone trigger CH{} slot {}, control {:#x}{}",
             z.ch + 1,
             slot,
             run.2,
             if clear { ", counter cleared" } else { "" }
-        ))];
+        );
+        self.arm(w, n, slot, clear, |s4020| zone::scu_bit(s4020, true), note)
+    }
+
+    /// The end of `mask_steps` and `zone_steps` after the writes `w` of its tables: the compression for `n` samples
+    /// per column, the slot (its counters cleared when `clear`), the SCU word with the unit's bit set (`armed`); the
+    /// note first, then the writes.
+    fn arm(
+        &mut self,
+        mut w: Vec<Write>,
+        n: u32,
+        slot: u32,
+        clear: bool,
+        armed: impl Fn(u32) -> u32,
+        note: String,
+    ) -> Vec<Step> {
+        w.push((mask::COMPRESS, mask::compress_word(n)));
+        w.extend(mask::select(&mut self.s1190, slot, clear));
+        self.sh.s4020 = armed(self.sh.s4020);
+        w.push((0x4020, self.sh.s4020));
+        let mut st = vec![Step::Note(note)];
         st.extend(w.into_iter().map(Step::Wr));
         st
     }

@@ -357,14 +357,10 @@ impl Platform {
 /// The `key = value` lines of a file in the limits format: (line number, key, value); a line without `=` is a warning.
 fn conf_lines<'a>(text: &'a str, warnings: &mut Vec<String>, file: &str) -> Vec<(usize, &'a str, &'a str)> {
     let mut out = Vec::new();
-    for (n, line) in text.lines().enumerate() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        match line.split_once('=') {
-            Some((k, v)) => out.push((n + 1, k.trim(), v.trim())),
-            None => warnings.push(format!("{}:{}: no '=' in {:?}", file, n + 1, line)),
+    for (n, line, kv) in crate::key_value_lines(text, |l| l.split('#').next().unwrap_or("").trim()) {
+        match kv {
+            Some((k, v)) => out.push((n, k.trim(), v.trim())),
+            None => warnings.push(format!("{}:{}: no '=' in {:?}", file, n, line)),
         }
     }
     out
@@ -509,9 +505,6 @@ fn words(b: &[u8]) -> Vec<u32> {
 fn bytes(w: &[u32]) -> Vec<u8> {
     w.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
-fn u32_at(b: &[u8], o: usize) -> Option<u32> {
-    b.get(o..o + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-}
 
 /// The payload of vendor.bin under the outer key `k`; `None` if the checksum says it is the wrong key or no such file.
 pub(crate) fn vendor_payload(file: &[u8], k: &[u32; 4]) -> Option<Vec<u8>> {
@@ -520,8 +513,8 @@ pub(crate) fn vendor_payload(file: &[u8], k: &[u32; 4]) -> Option<Vec<u8>> {
     }
     let mut w = words(file);
     xxtea_decode(&mut w, k);
+    let (crc, len) = (w[0], w[1] as usize);
     let p = bytes(&w);
-    let (crc, len) = (u32_at(&p, 0)?, u32_at(&p, 4)? as usize);
     let payload = p.get(8..8usize.checked_add(len)?)?;
     (crate::crc32(payload) == crc).then(|| payload.to_vec())
 }
@@ -557,13 +550,11 @@ fn items(payload: &[u8], key: &[u32; 4]) -> Vendor {
     let mut v = Vendor::default();
     let mut o = 0;
     while o + 12 <= payload.len() {
-        let (Some(id), Some(n)) = (u32_at(payload, o + 4), u32_at(payload, o + 8)) else { break };
+        let [id, n] = [o + 4, o + 8].map(|at| u32::from_le_bytes(crate::bytes_at(payload, at)));
         let n = n as usize;
         let Some(item) = payload.get(o + 12..(o + 12).saturating_add(n)) else { break };
         o += 12 + n;
-        let (Some(icrc), Some(ilen), Some(slen)) = (u32_at(item, 0), u32_at(item, 4), u32_at(item, 8)) else {
-            continue;
-        };
+        let Some(&[icrc, ilen, slen]) = item.get(..12).map(words).as_deref() else { continue };
         let (ilen, slen) = (ilen as usize, slen as usize);
         let Some(signed) = item.get(8..12 + ilen) else { continue };
         if crate::crc32(signed) != icrc || ilen % 4 != 0 || slen > ilen {
@@ -644,6 +635,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn model_table() {
         let c = lookup("dho802").unwrap();
         assert_eq!(
@@ -660,6 +652,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn detection_and_overrides() {
         let f = encode_vendor(&[(5, "DHO812"), (7, "DHO8A123")]);
         let p = Platform::build(Some(&f), None, None);
@@ -676,6 +669,8 @@ mod tests {
         assert_eq!(p.overrides.len(), 4);
         assert_eq!(p.warnings.len(), 2, "{:?}", p.warnings);
         assert!(p.experimental());
+        let p = Platform::build(Some(&f), Some("  \nla = yes#x\nla#= no\n # la = no\n"), None);
+        assert!(p.caps.la && p.warnings == ["limits.conf:3: no '=' in \"la\""], "{:?}", p.warnings);
 
         // forced model (file or argument), capability overrides stay on top
         let p = Platform::build(Some(&f), Some("model = DHO924S\nafg = no\n"), None);
@@ -693,6 +688,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn another_board_is_not_driven() {
         for m in ["MHO934", "MHO98", "DHO1074", "DHO4204", "HDO1104"] {
             let f = encode_vendor(&[(5, m), (7, "X1234567")]);
@@ -718,6 +714,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn limits_per_channel_count() {
         let l = Limits::standard();
         assert_eq!((l.srate(1), l.srate(2), l.srate(3), l.srate(4)), (1.25e9, 625e6, 312.5e6, 312.5e6));
@@ -726,10 +723,12 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod clock_override_tests {
     use super::*;
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn adc_clock_override() {
         let p = Platform::build(None, Some("adc.clock_hz = 2e9\n"), None);
         assert_eq!(p.limits.adc_clock_hz, 2e9);
@@ -764,12 +763,14 @@ mod bad_limits_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod unit_defaults_tests {
     use super::*;
 
     const DHO804_UNIT: &str = "# physically a DHO804: no generator board, no LA connector\nafg = no\nla = no\n";
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn unit_defaults_change_capabilities_not_identity() {
         let f = encode_vendor(&[(5, "DHO924S"), (7, "DHO9A000000001")]);
         let p = Platform::build_unit(Some(&f), Some(DHO804_UNIT), None, None);
@@ -786,6 +787,7 @@ mod unit_defaults_tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn limits_conf_and_forced_model_on_top() {
         let f = encode_vendor(&[(5, "DHO924S")]);
         // the generator board fitted later: limits.conf switches it on again (experimental)
@@ -802,6 +804,7 @@ mod unit_defaults_tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn unit_file_takes_capability_keys_only() {
         let p = Platform::build_unit(
             None,

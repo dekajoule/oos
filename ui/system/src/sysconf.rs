@@ -10,8 +10,11 @@
 //! tz = CET-1CEST,M3.5.0,M10.5.0/3  # or dhcp: the zone of the DHCP lease (option 100), else tz.fallback
 //! tz.fallback = UTC0        # with tz = dhcp, while no lease names a valid zone
 //! eth.retry_10m = on        # System > Network > 10 Mbit retry
+//! net.show_addr = off       # System > Network > Show address: the address in the LAN and WLAN boxes of the top bar
 //! remote.web = on           # System > Network > Remote services (also remote.scpi, remote.vxi11, remote.ssh,
 //!                           # remote.mdns; remote.telnet of an older version is read and dropped: no telnet, ADR 0054)
+//! usb.net = off            # System > Network > Remote services > USB network (docs/usb-device.md)
+//! usb.tmc = off            # System > Network > Remote services > USB instrument (USBTMC, docs/usb-device.md)
 //! ssh.password = on         # System > Network > Remote services > SSH settings > Password login
 //! net.name = dho924s-123456 # the scope's name on the network (host name, <name>.local); written at the first start
 //! graphics = gpu            # System > Graphics (gpu or cpu)
@@ -55,6 +58,9 @@ pub struct SysConf {
     pub tz_fallback: String,
     /// a link that comes up at 10 Mbit/s gets one more autonegotiation (ethlink.rs)
     pub eth_retry_10m: bool,
+    /// System > Network > Show address: the LAN and WLAN boxes show the address. Off by default: pictures and
+    /// photos of the screen are passed on, and the address is the owner's to show (`net.show_addr`)
+    pub show_addr: bool,
     /// the network services (System > Network > Remote services): web page with the update path (8080), SCPI (5555),
     /// VXI-11 (111 and its core port), SSH (22, `/bin/oos-ssh` reads it too; off by default, docs/network.md 7)
     pub remote_web: bool,
@@ -63,6 +69,12 @@ pub struct SysConf {
     pub remote_ssh: bool,
     /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
     pub ssh_password: bool,
+    /// the rear USB port as a network link to one computer (`/bin/oos-gadget` reads it too; off by default; verified on
+    /// the unit with a Mac, not yet with Windows and Linux, docs/usb-device.md)
+    pub usb_net: bool,
+    /// the rear USB port as a USBTMC instrument for VISA (`oos_remote::usbtmc_device`, `/bin/oos-gadget` reads it too;
+    /// off by default; verified on the unit with pyvisa-py on a Mac, not yet with Linux and Windows, ADR 0080)
+    pub usb_tmc: bool,
     /// the mDNS responder (mdns.rs): `<net_name>.local` and the services for computers that browse
     pub remote_mdns: bool,
     /// the scope's name on the network (`mdns::name_ok`): host name, sent to DHCP, `<name>.local`. Empty: not set yet,
@@ -92,11 +104,14 @@ impl Default for SysConf {
             tz: DEFAULT_TZ.into(),
             tz_fallback: DEFAULT_TZ.into(),
             eth_retry_10m: true,
+            show_addr: false,
             remote_web: true,
             remote_scpi: true,
             remote_vxi11: true,
             remote_ssh: false,
             ssh_password: true,
+            usb_net: false,
+            usb_tmc: false,
             remote_mdns: true,
             net_name: String::new(),
             gpu: true,
@@ -184,13 +199,9 @@ impl SysConf {
     pub fn parse_over(base: SysConf, text: &str) -> (SysConf, Vec<String>) {
         let mut c = base;
         let mut bad = Vec::new();
-        for line in text.lines() {
-            let l = line.trim();
-            if l.is_empty() || l.starts_with('#') {
-                continue;
-            }
-            let Some((k, v)) = l.split_once('=') else {
-                bad.push(format!("not key = value: {}", l));
+        for (_, line, kv) in oos_hal::key_value_lines(text, str::trim) {
+            let Some((k, v)) = kv else {
+                bad.push(format!("not key = value: {}", line));
                 continue;
             };
             let (k, v) = (k.trim(), uncomment(v));
@@ -208,6 +219,7 @@ impl SysConf {
                 "tz" => Tz::parse(v).is_ok().then(|| c.tz = v.into()).is_some(),
                 "tz.fallback" => Tz::parse(v).is_ok().then(|| c.tz_fallback = v.into()).is_some(),
                 "eth.retry_10m" => on_off(v).map(|b| c.eth_retry_10m = b).is_some(),
+                "net.show_addr" => on_off(v).map(|b| c.show_addr = b).is_some(),
                 "remote.web" => on_off(v).map(|b| c.remote_web = b).is_some(),
                 "remote.scpi" => on_off(v).map(|b| c.remote_scpi = b).is_some(),
                 "remote.vxi11" => on_off(v).map(|b| c.remote_vxi11 = b).is_some(),
@@ -220,6 +232,8 @@ impl SysConf {
                 "remote.ssh" => on_off(v).map(|b| c.remote_ssh = b).is_some(),
                 "ssh.password" => on_off(v).map(|b| c.ssh_password = b).is_some(),
                 "remote.mdns" => on_off(v).map(|b| c.remote_mdns = b).is_some(),
+                "usb.net" => on_off(v).map(|b| c.usb_net = b).is_some(),
+                "usb.tmc" => on_off(v).map(|b| c.usb_tmc = b).is_some(),
                 "net.name" => {
                     let n = v.to_ascii_lowercase();
                     crate::mdns::name_ok(&n).then(|| c.net_name = n).is_some()
@@ -263,12 +277,15 @@ impl SysConf {
             s.push_str(&format!("tz.fallback = {}\n", self.tz_fallback));
         }
         s.push_str(&format!("eth.retry_10m = {}\n", word(self.eth_retry_10m)));
+        s.push_str(&format!("net.show_addr = {}\n", word(self.show_addr)));
         s.push_str(&format!("remote.web = {}\n", word(self.remote_web)));
         s.push_str(&format!("remote.scpi = {}\n", word(self.remote_scpi)));
         s.push_str(&format!("remote.vxi11 = {}\n", word(self.remote_vxi11)));
         s.push_str(&format!("remote.ssh = {}\n", word(self.remote_ssh)));
         s.push_str(&format!("ssh.password = {}\n", word(self.ssh_password)));
         s.push_str(&format!("remote.mdns = {}\n", word(self.remote_mdns)));
+        s.push_str(&format!("usb.net = {}\n", word(self.usb_net)));
+        s.push_str(&format!("usb.tmc = {}\n", word(self.usb_tmc)));
         if !self.net_name.is_empty() {
             s.push_str(&format!("net.name = {}\n", self.net_name));
         }
@@ -401,16 +418,9 @@ fn uncomment(v: &str) -> &str {
 /// for the scripts): a line that starts with `#` is a comment, so is the rest of a line from a `#` after a space or a
 /// tab, and of several lines of one key the last wins.
 pub fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    text.lines()
-        .filter_map(|l| {
-            let l = l.trim();
-            if l.starts_with('#') {
-                return None;
-            }
-            let (k, v) = l.split_once('=')?;
-            (k.trim() == key).then(|| uncomment(v))
-        })
-        .next_back()
+    oos_hal::key_value_lines(text, str::trim)
+        .filter_map(|(_, _, kv)| kv.filter(|(k, _)| k.trim() == key).map(|(_, v)| uncomment(v)))
+        .last()
 }
 
 /// `env` if set (an environment variable's value), else the value of `key` in `conf`.
@@ -470,9 +480,18 @@ impl Flag {
     }
 }
 
-/// `/oos/system.conf` when the data partition is there (it has `/oos/setups`), else the file in RAM.
+/// The setups of the slots on the data partition; `oos-mount-data` makes it when it mounts the partition.
+pub const SETUPS_DIR: &str = "/oos/setups";
+
+/// OOS's data partition is there: `SETUPS_DIR` is a directory (the scripts of the image ask the same with
+/// `[ -d /oos/setups ]`).
+pub fn data_partition() -> bool {
+    Path::new(SETUPS_DIR).is_dir()
+}
+
+/// `/oos/system.conf` when the data partition is there (`data_partition`), else the file in RAM.
 pub fn default_path() -> PathBuf {
-    if Path::new("/oos/setups").is_dir() {
+    if data_partition() {
         PATH.into()
     } else {
         TMP_PATH.into()
@@ -502,8 +521,12 @@ mod tests {
         assert_eq!(c.ntp_server, "dhcp");
         assert_eq!(c.zone(), Tz::utc());
         assert!(c.eth_retry_10m);
+        // the top bar shows no address unless the owner switches it on
+        assert!(!c.show_addr);
         // no shell on the network unless an image or the user switches SSH on
         assert!(!c.remote_ssh && c.ssh_password);
+        // the rear USB port stays a plain port until it ran on a unit (ADR 0010)
+        assert!(!c.usb_net && !c.usb_tmc);
         assert_eq!(SysConf::parse("").0, c);
     }
 
@@ -514,24 +537,28 @@ mod tests {
             ntp_server: "ptbtime1.ptb.de".into(),
             tz: "CET-1CEST,M3.5.0,M10.5.0/3".into(),
             eth_retry_10m: false,
+            show_addr: true,
             ..Default::default()
         };
-        (c.remote_web, c.remote_ssh, c.ssh_password, c.remote_mdns) = (false, true, false, false);
+        (c.remote_web, c.remote_ssh, c.ssh_password, c.remote_mdns, c.usb_net) = (false, true, false, false, true);
+        c.usb_tmc = true;
         c.net_name = "lab-scope-3".into();
         let (back, bad) = SysConf::parse(&c.text());
         assert!(bad.is_empty(), "{:?}", bad);
         assert_eq!(back, c);
-        let (d, bad) = SysConf::parse("# by hand\nntp = on # comment\nfuture.key = 7\n");
+        let (d, bad) = SysConf::parse("# by hand\nntp = on # comment\n future.key = 7 \n");
         assert!(bad.is_empty() && d.ntp);
         assert!(d.text().contains("\nfuture.key = 7\n"));
         assert_eq!(SysConf::parse(&d.text()).0, d);
+        let t = "  # a = 0\na = 1 # c\n\n a =#2\nb\na=x#y\t#z\n";
+        assert_eq!((value(t, "a"), value(&t[..20], "a"), value(t, "b")), (Some("x#y"), Some("1"), None));
     }
 
     #[test]
     fn bad_values_keep_the_default() {
         let (c, bad) = SysConf::parse("ntp = maybe\nntp.server = a b;rm\ntz = Mars+99\neth.retry_10m = 2\nnonsense\n");
         assert_eq!(c, SysConf::default());
-        assert_eq!(bad.len(), 5, "{:?}", bad);
+        assert_eq!((bad.len(), bad[4].as_str()), (5, "not key = value: nonsense"), "{:?}", bad);
         for s in ["pool.ntp.org", "192.168.1.1", "fe80::1", "time-a.example"] {
             assert!(server_ok(s), "{}", s);
         }

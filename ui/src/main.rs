@@ -22,7 +22,6 @@
 mod board;
 mod cmd;
 mod compress;
-mod decode;
 mod deepmeas;
 mod drawpipe;
 #[cfg(target_os = "linux")]
@@ -36,16 +35,12 @@ mod hid;
 #[cfg(target_os = "linux")]
 mod input;
 mod layout;
-mod logic;
-mod math;
 mod measures;
-mod model;
 #[cfg(test)]
 mod perfguard;
 mod platform;
 mod protocols;
 mod scpi;
-mod settings;
 mod shots;
 mod site;
 #[cfg(test)]
@@ -57,16 +52,17 @@ mod trignear;
 mod ui;
 mod vpu;
 mod wave;
-mod words;
-mod zone;
 
 // the system services (ADR 0064): their paths in this crate stay `crate::sysconf` and the like
 #[cfg(target_os = "linux")]
 use oos_system::hostname;
 // the transports (ADR 0064), generic over the program they carry: here always `scpi::Program`
 use oos_remote::{announce, hislip, http, vxi11};
+// the model and the settings table (ADR 0064): their paths in this crate stay `crate::model` and the like
+use oos_model::{decode, logic, math, model, settings, words, zone};
 use oos_system::{
-    base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
+    base64, clock, ethlink, gadget, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system,
+    usbtmc,
 };
 
 use gfx::Canvas;
@@ -182,10 +178,10 @@ fn main() {
     if let Some(script) = arg(&args, "--script") {
         // host test runs store next to the script (build.sh: target/test-shots)
         if let Some(d) = std::path::Path::new(&script).parent().filter(|d| !d.as_os_str().is_empty()) {
-            ui.store_dir = d.to_path_buf();
+            ui.files.dir = d.to_path_buf();
         }
         if let Some(d) = arg(&args, "--store-dir") {
-            ui.store_dir = d.into();
+            ui.files.dir = d.into();
         }
         // another screen than the panel (host only: the device shows the panel it has)
         if let Some(s) = arg(&args, "--size") {
@@ -213,7 +209,7 @@ fn main() {
         return;
     }
     if let Some(d) = arg(&args, "--store-dir") {
-        ui.store_dir = d.into();
+        ui.files.dir = d.into();
     }
     if args.iter().any(|a| a == "--serve") {
         return serve(ui, &args);
@@ -236,7 +232,7 @@ fn serve(mut ui: Ui, args: &[String]) {
     let (mut web, mut scpi, mut vxi, mut hislip, mut ann) = lan(false, args, &ui.acl());
     let mut cv = Canvas::new(ui.scr.w, ui.scr.h);
     let live = shots::Live::default();
-    while !ui.quit {
+    while !ui.asks.quit {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
@@ -504,7 +500,7 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
             }
             None => ui.render(cv),
         }
-        if let Some(p) = ui.shot_request.take() {
+        if let Some(p) = ui.asks.shot.take() {
             save_shot(ui, cv, p, shot_n);
         }
     }
@@ -567,7 +563,7 @@ fn run_script(ui: &mut Ui, path: &str, mut gpu: Option<gpu::Gpu>) {
             }
             cmd::Out::None => {}
         }
-        if ui.quit {
+        if ui.asks.quit {
             break;
         }
     }
@@ -609,7 +605,7 @@ fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
     use board::Board;
     eprintln!("oos-ui: power {:?}", a);
     inp.set_leds(0);
-    unsafe { libc::sync() };
+    store::sync_disks();
     match a {
         ui::PowerAction::Off => {
             inp.send(&board::board().panel_cmd(board::PanelCmd::PowerOff));
@@ -632,7 +628,7 @@ fn device_main(mut ui: Ui, args: &[String]) {
     power_on_picture(&mut ui, &mut disp, start_up.as_deref());
     restore_settings(&mut ui);
     let mut d = Device::new(ui, disp, inp, start_up, args);
-    while !d.ui.quit && !input::stop_requested() {
+    while !d.ui.asks.quit && !input::stop_requested() {
         d.pass();
     }
     d.close();
@@ -728,8 +724,10 @@ struct Device {
     listen_t: Option<std::time::Instant>,
     mdns_now: Option<mdns::Config>,
     mdns: mdns::Mdns,
-    remote_now: Option<[bool; 5]>,
+    remote_now: Option<[bool; 7]>,
     hislip: hislip::Server<scpi::Program>,
+    /// the USBTMC instrument on the rear USB port (`usb.tmc`), its endpoints served by threads of its own
+    usbtmc: oos_remote::usbtmc_device::Server<scpi::Program>,
     vxi: vxi11::Server<scpi::Program>,
     scpi: scpi::Scpi,
     web: site::Web,
@@ -792,7 +790,9 @@ impl Device {
         let (web, scpi, vxi, hislip) = lan_servers(scope, args, &acl);
         // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
         // at the start)
-        let remote_now: Option<[bool; 5]> = None;
+        let remote_now: Option<[bool; 7]> = None;
+        // the threads of the USBTMC function start with its switch; only the scope has the gadget
+        let usbtmc = oos_remote::usbtmc_device::Server::new(scope.then_some(gadget::bind as fn()));
         // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
         let mdns = mdns::Mdns::new(None);
         let mdns_now: Option<mdns::Config> = None;
@@ -847,6 +847,7 @@ impl Device {
             mdns,
             remote_now,
             hislip,
+            usbtmc,
             vxi,
             scpi,
             web,
@@ -918,7 +919,7 @@ impl Device {
                 }
                 input::In::Cmd(line) => {
                     if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &line) {
-                        self.ui.shot_request = Some(p);
+                        self.ui.asks.shot = Some(p);
                     }
                 }
             }
@@ -934,12 +935,13 @@ impl Device {
         });
     }
 
-    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) is started by rcS.
+    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) and the USB gadget
+    /// (oos-gadget) are started by rcS; the USBTMC function's threads start here, with their switch.
     fn remote_services(&mut self) {
-        let ui = &self.ui;
-        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
+        let s = &self.ui.sys;
+        let want = [s.remote_web, s.remote_scpi, s.remote_vxi11, s.remote_ssh, s.ssh_password, s.usb_net, s.usb_tmc];
         if self.remote_now != Some(want) {
-            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4]]);
+            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4], want[5], false]);
             if want[0] != was[0] {
                 self.web.set_open(want[0].then_some(self.web_port));
             }
@@ -952,6 +954,13 @@ impl Device {
             }
             if want[3] != was[3] || want[4] != was[4] {
                 ssh::apply(want[3]);
+            }
+            if want[6] != was[6] {
+                self.usbtmc.set_open(want[6]);
+            }
+            // the gadget is built again for a change of either USB switch; at the start rcS built it
+            if want[5] != was[5] || (want[6] != was[6] && self.remote_now.is_some()) {
+                gadget::apply();
             }
             self.offer_ports();
             self.remote_now = Some(want);
@@ -989,14 +998,17 @@ impl Device {
         }
     }
 
-    /// SCPI, VXI-11, HiSLIP and the web server.
+    /// SCPI, VXI-11, HiSLIP, USBTMC and the web server.
     fn serve_lan(&mut self) {
         self.scpi.poll(&mut self.ui, &self.cv);
+        let errors = self.scpi.has_errors();
+        self.usbtmc.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program), errors);
+        self.ui.set_usbtmc_state(self.usbtmc.state().text());
         self.vxi.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program));
         self.hislip.poll_async(&mut |program| self.scpi.poll_program(&mut self.ui, &self.cv, program));
         for c in self.web.poll(&mut site::Ctx::new(&mut self.ui, &self.cv, &mut self.scpi).with_live(&self.live)) {
             if let cmd::Out::Shot(p) = cmd::run(&mut self.ui, &c) {
-                self.ui.shot_request = Some(p);
+                self.ui.asks.shot = Some(p);
             }
         }
     }
@@ -1082,7 +1094,7 @@ impl Device {
             let r: Result<(), String> = (|| {
                 // the picture comes back only for someone who wants it: the web page, a screenshot, and twice a
                 // second for SCPI and the rest
-                let shot = self.ui.shot_request.is_some();
+                let shot = self.ui.asks.shot.is_some();
                 // and every frame for a monitor that gets the panel's picture from the CPU (its buffers could not be
                 // given to the GPU), else it would show a picture up to half a second old
                 let hdmi_cpu = self.hdmi.is_some() && self.hdmi_gpu == Some(false);
@@ -1241,13 +1253,13 @@ impl Device {
             self.led_mask = lm;
             self.led_t = Instant::now();
         }
-        if let Some(p) = self.ui.shot_request.take() {
+        if let Some(p) = self.ui.asks.shot.take() {
             save_shot(&mut self.ui, &self.cv, p, &mut self.shot_n);
         }
-        for c in self.ui.panel_tx.drain(..) {
+        for c in self.ui.asks.panel.drain(..) {
             self.inp.send(&board::board().panel_cmd(c));
         }
-        if let Some(a) = self.ui.power_action.take() {
+        if let Some(a) = self.ui.power.action.take() {
             power(&mut self.inp, a);
         }
         self.save_setup();
@@ -1266,7 +1278,7 @@ impl Device {
         }
         self.fps_n += 1;
         if self.fps_t.elapsed().as_secs_f64() >= 1.0 {
-            self.ui.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
+            self.ui.counts.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
             self.fps_n = 0;
             self.fps_t = Instant::now();
         }
@@ -1283,7 +1295,7 @@ impl Device {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
                     // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
-                    if std::path::Path::new("/oos/setups").is_dir() {
+                    if sysconf::data_partition() {
                         let _ = std::fs::write("/oos/oos-ui.setup.new", &t)
                             .and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
                     }
@@ -1302,6 +1314,10 @@ impl Device {
             h.close();
         }
         self.disp.restore();
+        // the panel's DRM file and the inputs' descriptors are closed by the kernel when the process ends, after the
+        // other parts are dropped
+        self.disp.keep_open();
+        self.inp.keep_open();
     }
 }
 

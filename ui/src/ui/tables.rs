@@ -42,7 +42,7 @@ mod reference_search_navigation_tests {
         ui.m.delay = 0.0;
         ui.set_zoom(true);
         ui.replay.captures = 9;
-        ui.mstat = vec![MStat { n: 7, sum: 14.0, ..MStat::default() }];
+        ui.results.rows = vec![MStat { n: 7, sum: 14.0, ..MStat::default() }];
         ui.adjust(Item::SearchOn, 1);
         ui.activate(Item::SearchTable);
         assert_eq!(ui.table.kind, Some(TableKind::Search));
@@ -57,15 +57,14 @@ mod reference_search_navigation_tests {
         assert!((ui.m.delay as f64 - events[0]).abs() < 1e-12, "overview follows an event outside its former range");
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(ui.replay.captures, 9);
-        assert_eq!((ui.mstat[0].n, ui.mstat[0].sum), (7, 14.0));
+        assert_eq!((ui.results.rows[0].n, ui.results.rows[0].sum), (7, 14.0));
         assert!(ui.last[0].is_none());
         let rows = ui.table_rows(TableKind::Search);
         assert!(rows[0].who.starts_with("R1 #"));
     }
 }
 
-/// What Split puts under the plot. 0 is traces: two stacked windows, and this pane is not drawn.
-pub const PANES: [&str; PANES_N] = ["Traces", "Spectrum", "Results", "Events", "Trend", "Bus view"];
+/// The panes Split puts under the plot, by their place in `model::PANES`.
 pub(super) const PANE_SPECTRUM: usize = 1;
 pub(super) const PANE_RESULTS: usize = 2;
 pub(super) const PANE_EVENTS: usize = 3;
@@ -390,7 +389,7 @@ impl Ui {
 
     /// The second pane: under the plot and the lanes.
     pub(super) fn pane_rect(&self) -> Rect {
-        let g = self.grid;
+        let g = self.plot.grid;
         Rect::new(g.x, g.y + g.h + 2 + self.eye_below() + self.la_strip_h(), g.w, self.pane_h() - 4)
     }
 

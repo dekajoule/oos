@@ -135,6 +135,7 @@ pub fn period_ticked(r: &Raw, gate_s: f64, tick: f64) -> Option<f64> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
     use crate::dho::bus::Recorder;

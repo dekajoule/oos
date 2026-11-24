@@ -593,6 +593,7 @@ pub fn table_for(f_out_hz: f64) -> Result<Table, String> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

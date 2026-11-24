@@ -254,6 +254,7 @@ fn prep_nominal(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Param
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

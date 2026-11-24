@@ -17,30 +17,9 @@ mod record;
 
 pub use levels::*;
 pub use record::resample as resample_record;
-pub use record::{sw_trig_level, to_record, trig_mean, trigger_point};
+pub use record::{edge_near, sw_trig_level, to_record, trig_mean, trigger_point};
 
-pub struct Rng(u64);
-impl Rng {
-    pub fn new(seed: u64) -> Rng {
-        Rng(seed | 1)
-    }
-    pub fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        x
-    }
-    pub fn uniform(&mut self) -> f64 {
-        (self.next() >> 11) as f64 / (1u64 << 53) as f64
-    }
-    /// Approximate standard normal (sum of 4 uniforms).
-    pub fn gauss(&mut self) -> f32 {
-        let s = self.uniform() + self.uniform() + self.uniform() + self.uniform();
-        ((s - 2.0) * 1.7320508) as f32
-    }
-}
+pub use oos_hal::Rng;
 
 /// One acquisition: samples per channel in volts at the probe tip, sample k at time t0 + k*dt relative to the trigger.
 #[derive(Clone)]
@@ -58,6 +37,18 @@ pub struct Record {
     pub la: Option<crate::logic::LaRec>,
     /// the points are min/max pairs (`to_record` peak detect: point 2j the minimum, 2j+1 the maximum of one span)
     pub pairs: bool,
+    /// the acquisition's own samples are minimum and maximum in turn: taken in Peak detect below the full rate (at the
+    /// full rate there is nothing to detect over). Kept with the record, so a later change of the mode does not
+    /// change how it is read.
+    pub peak: bool,
+}
+
+impl Record {
+    /// Whether the points of `ch` are minimum and maximum in turn (`pairs`, or the samples of `peak`): what reads levels
+    /// in time (the decoders) takes the mean of each point and its neighbour (`trig::pair_means`).
+    pub fn alternates(&self) -> bool {
+        self.pairs || self.peak
+    }
 }
 
 #[derive(Clone)]
@@ -790,14 +781,14 @@ fn acquire_demo(m: &Model, t: &mut f64, dt_wall: f64, rng: &mut Rng, g: &ScreenG
         let words = (0..nl).map(|k| demo_la(ttrig + jitter + t_first + k as f64 * dl)).collect();
         crate::logic::LaRec { words: std::sync::Arc::new(words), t0: t_first, dt: dl }
     });
-    Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la, pairs: false })
+    Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw: None, la, pairs: false, peak: false })
 }
 
 /// Where the demo signals from `start` trigger, in seconds; None when they do not.
 fn demo_trigger(m: &Model, cfg: DemoCfg, start: f64, window: f64, dt: f64) -> Option<f64> {
     let used = m.trig_channels();
-    let span = window * 1.5 + m.trig_span();
-    let mut dts = dt.min(m.trig_feature()).max(1e-9);
+    let span = window * 1.5 + crate::trig::span(m);
+    let mut dts = dt.min(crate::trig::feature(m)).max(1e-9);
     let mut ns = (span / dts).ceil() as usize;
     if ns > 400_000 {
         ns = 400_000;
@@ -936,7 +927,7 @@ fn acquire_replay(
         hw_avg: false,
     });
     let raw = Some(Raw { frame, i0: 0, i1: native_len, t0: -ti * xinc, conditioned: true });
-    Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None, pairs: false })
+    Some(Record { t0: t_first, dt, ch: chs, triggered, partial: false, raw, la: None, pairs: false, peak: false })
 }
 
 /// Applies coupling, bandwidth limit and inversion to a record channel (display path).
@@ -968,6 +959,18 @@ pub fn condition(m: &Model, c: usize, v: &mut [f32], dt: f64) {
     }
 }
 
+/// What the picture needs before the first record of a screen step goes into it (`Phosphor::renew`). A step without
+/// a record leaves the picture as it is, so the newest record is never faded before the next one comes (#441).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Renew {
+    /// nothing: infinite persistence, or done for this step
+    Keep,
+    /// replaced: minimum persistence, or a setting changed
+    Clear,
+    /// timed persistence: multiplied by this factor, for the time since the last record
+    Decay(f32),
+}
+
 /// Hit-count maps (one per channel) of the waveform area: the digital phosphor.
 pub struct Phosphor {
     pub w: usize,
@@ -990,6 +993,15 @@ impl Phosphor {
             m.iter_mut().for_each(|x| *x = 0);
         }
     }
+    /// Does what the picture needs before the first record of a screen step goes into it.
+    pub fn renew(&mut self, r: Renew) {
+        match r {
+            Renew::Keep => {}
+            Renew::Clear => self.clear(),
+            Renew::Decay(f) => self.decay(f),
+        }
+    }
+
     /// Multiplies every count by f (0..1).
     pub fn decay(&mut self, f: f32) {
         let k = (f.clamp(0.0, 1.0) * 65536.0) as u32;

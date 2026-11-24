@@ -40,10 +40,10 @@ maintainer=${OOS_MAINTAINER:-${repo%%/*}}
 agent_login=${OOS_AGENT:-dekajoule-oos-agent[bot]}
 # paths whose effect is only seen on a unit: register sequences and the board, updates, how the scope starts
 # (and the compiler: rust-toolchain.toml builds every program for the scope, ADR 0045)
-hardware='^(hal/src/dho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/|rust-toolchain\.toml$)'
+hardware='^(hal/src/dho/|hal/src/mho/|hal/src/update/|ui/src/board/|fpgad/|boot/|kernel/|rootfs/|rust-toolchain\.toml$)'
 # what only a run on a unit proves even for a refactoring (ADR 0042): how the scope starts and updates, and what runs
 # live against the board with its timing (the buses, the read paths, the roll stream, self-calibration, the panel)
-live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/dho/boot/|fpgad/build\.rs$|'
+live='^(rust-toolchain\.toml$|boot/|kernel/|rootfs/|hal/src/update/|hal/src/mho/|hal/src/dho/boot/|fpgad/build\.rs$|'
 live="${live}fpgad/src/(bin/(oos-update|mho-poll)|main|pcie|mho/(mod|bringup|start)|"
 live="${live}dho/(mod|board|afg|bringup|roll|selfcal|tool))\.rs$|ui/src/board/|"
 live="${live}hal/src/dho/(bus|gpio|lines|panel|board|selfcal|coretrim|levels)\.rs$|hal/src/dho/seq/exec\.rs$)"

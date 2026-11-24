@@ -6,10 +6,7 @@
 //! Decoded words are drawn in hex. The read/write bit can be part of the address byte or left out of it.
 
 use super::worker::Worker;
-use super::{
-    Canvas, Item, Kind, MenuId, Rect, Ui, BG, BUS_POS_MAX, BUS_POS_MIN, DARK_TEXT, GREEN, HDIV, LINE, NCH, NREF, RED,
-    TEXT,
-};
+use super::{Canvas, Item, Kind, MenuId, Rect, Ui, BG, DARK_TEXT, GREEN, HDIV, LINE, NCH, NREF, RED, TEXT};
 use crate::gfx::{mix, rgb, scale, Rgb};
 use crate::model::{n_ch, si, BusKind, WaveId};
 use oos_dsp::decode::{i2c_at, Kind as DecKind, Packet};
@@ -81,9 +78,9 @@ impl Ui {
 
     pub(super) fn bus_kind(it: Item) -> Option<Kind> {
         Some(match it {
-            Item::BusPos | Item::BusClkThr | Item::BusDataThr => Kind::Value,
+            Item::BusClkThr | Item::BusDataThr => Kind::Value,
             Item::BusLabel => Kind::Action,
-            Item::BusOn | Item::BusClk | Item::BusData | Item::BusRw => Kind::Choice,
+            Item::BusClk | Item::BusData => Kind::Choice,
             _ => return None,
         })
     }
@@ -91,14 +88,11 @@ impl Ui {
     pub(super) fn bus_label(it: Item) -> Option<&'static str> {
         Some(match it {
             Item::Open(MenuId::Bus) => "Bus",
-            Item::BusOn => "Bus",
             Item::BusLabel => "Label",
-            Item::BusPos => "Position",
             Item::BusClk => "Clock",
             Item::BusClkThr => "Clock threshold",
             Item::BusData => "Data",
             Item::BusDataThr => "Data threshold",
-            Item::BusRw => "R/W bit",
             _ => return None,
         })
     }
@@ -106,34 +100,17 @@ impl Ui {
     pub(super) fn bus_value(&self, it: Item) -> Option<String> {
         let b = &self.m.bus;
         Some(match it {
-            Item::BusOn => {
-                if b.on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
             Item::BusLabel => b.shown_label(),
-            Item::BusPos => format!("{:.1} div", b.pos),
             Item::BusClk => self.wave_name(b.clk),
             Item::BusData => self.wave_name(b.data),
             Item::BusClkThr => si(b.clk_thr as f64, "V"),
             Item::BusDataThr => si(b.data_thr as f64, "V"),
-            Item::BusRw => {
-                if b.addr_rw {
-                    "Included".into()
-                } else {
-                    "Left out".into()
-                }
-            }
             _ => return None,
         })
     }
 
     pub(super) fn bus_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
-            Item::BusOn => vec!["Off".into(), "On".into()],
-            Item::BusRw => vec!["Left out".into(), "Included".into()],
             Item::BusClk | Item::BusData => self.bus_ids().iter().map(|&id| self.wave_name(id)).collect(),
             _ => return None,
         })
@@ -141,17 +118,6 @@ impl Ui {
 
     pub(super) fn bus_adjust(&mut self, it: Item, d: i32) -> bool {
         match it {
-            Item::BusOn => {
-                if d != 0 {
-                    self.m.bus.on = !self.m.bus.on;
-                }
-            }
-            Item::BusRw => {
-                if d != 0 {
-                    self.m.bus.addr_rw = !self.m.bus.addr_rw;
-                }
-            }
-            Item::BusPos => self.m.bus.pos = (self.m.bus.pos + 0.1 * d as f32).clamp(BUS_POS_MIN, BUS_POS_MAX),
             Item::BusClk | Item::BusData => {
                 let ids = self.bus_ids();
                 if ids.is_empty() {
@@ -179,7 +145,7 @@ impl Ui {
 
     /// Vertical centre of the bus, in pixels. Positive position is up.
     pub(super) fn bus_y(&self) -> i32 {
-        let a = self.area;
+        let a = self.plot.area;
         let ppy = a.h as f32 / super::VDIV;
         (a.y as f32 + a.h as f32 / 2.0 - self.m.bus.pos * ppy).round() as i32
     }
@@ -189,7 +155,7 @@ impl Ui {
             return;
         }
         let f = &self.fonts();
-        let a = self.area;
+        let a = self.plot.area;
         if a.w < 40 || a.h < 40 {
             return;
         }
@@ -353,7 +319,7 @@ impl Ui {
             return Vec::new();
         };
         let acquisition = if matches!(self.m.bus.clk, WaveId::Ch(_)) || matches!(self.m.bus.data, WaveId::Ch(_)) {
-            self.wfm_total
+            self.counts.wfm_total
         } else {
             0
         };
@@ -523,8 +489,17 @@ mod tests {
         let mut ch: [Vec<f32>; NCH] = std::array::from_fn(|_| Vec::new());
         ch[0] = scl;
         ch[1] = sda;
-        u.last[0] =
-            Some(Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false });
+        u.last[0] = Some(Record {
+            t0: 0.0,
+            dt,
+            ch,
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+            peak: false,
+        });
         u.m.bus.on = true;
         u.m.bus.clk = WaveId::Ch(0);
         u.m.bus.data = WaveId::Ch(1);
@@ -554,8 +529,17 @@ mod tests {
         let mut u = ui();
         let mut ch: [Vec<f32>; NCH] = std::array::from_fn(|_| Vec::new());
         ch[0] = scl;
-        u.last[0] =
-            Some(Record { t0: 0.0, dt, ch, triggered: true, partial: false, raw: None, la: None, pairs: false });
+        u.last[0] = Some(Record {
+            t0: 0.0,
+            dt,
+            ch,
+            triggered: true,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+            peak: false,
+        });
         let slow: Vec<f32> = sda.iter().step_by(2).copied().collect();
         u.refs[2] = Some(super::super::RefWave {
             src: 1,
@@ -631,18 +615,15 @@ mod tests {
         ] {
             assert!(items.contains(&want));
         }
-        let text: String = items
-            .iter()
-            .map(|&it| format!("{} {}", Ui::bus_label(it).unwrap_or(""), u.bus_value(it).unwrap_or_default()))
-            .collect();
+        let text: String = items.iter().map(|&it| format!("{} {}", u.item_label(it), u.value(it))).collect();
         let low = text.to_ascii_lowercase();
         for banned in ["spi", "uart", "can", "rigol", "tek", "keysight", "siglent"] {
             assert!(!low.contains(banned), "{text}");
         }
-        assert_eq!(u.bus_value(Item::BusRw), Some("Left out".into()));
-        u.bus_adjust(Item::BusRw, 1);
+        assert_eq!(u.value(Item::BusRw), "Left out");
+        u.adjust(Item::BusRw, 1);
         assert!(u.m.bus.addr_rw);
-        u.bus_adjust(Item::BusPos, 5);
+        u.adjust(Item::BusPos, 5);
         assert!((u.m.bus.pos - -2.5).abs() < 1e-4);
         u.select_option(Item::BusClk, "R4");
         let ch = format!("CH{}", n_ch());

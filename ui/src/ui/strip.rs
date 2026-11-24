@@ -7,6 +7,17 @@
 
 use super::*;
 
+/// The statistics panel of the measurements, as the screen keeps it (ADR 0062).
+#[derive(Default)]
+pub(super) struct Results {
+    /// the panel is shown (Measure > Statistics)
+    pub on: bool,
+    /// the panel is folded to its header
+    pub folded: bool,
+    /// the statistics of each measurement row since their reset: count, sum, squares, smallest, largest
+    pub rows: Vec<MStat>,
+}
+
 impl Ui {
     /// Height the strip takes when it sits under the plot or above the trace, with the measurement card if that is
     /// docked there too.
@@ -42,7 +53,7 @@ impl Ui {
         let page = self.results_page_size();
         let lines = total.min(page).div_ceil(self.results_cols()) as i32;
         let nav = if total > page { 38 } else { 0 };
-        30 + if self.results_min { 0 } else { lines * self.results_row(total as i32) + nav + 4 } + 4
+        30 + if self.results.folded { 0 } else { lines * self.results_row(total as i32) + nav + 4 } + 4
     }
 
     /// Left edge and width of the graticule. A side dock keeps a column for the strip and for a docked card.
@@ -62,7 +73,7 @@ impl Ui {
             let top = if self.full_on() { 0 } else { self.frame().body.y };
             return top + 2;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         // the rows sit on the cards: what the plot's whole divisions leave over goes between plot and rows
         (self.plot_bottom() + 2 - self.strip_rows() * self.lay().strip_row)
             .max(g.y + g.h + 4 + self.eye_below() + self.la_strip_h() + self.pane_h())
@@ -70,11 +81,43 @@ impl Ui {
 
     /// The column a side dock reserves, from the graticule down to the cards.
     pub(super) fn strip_column(&self) -> Rect {
-        let y = self.grid.y;
+        let y = self.plot.grid.y;
         let h = (self.plot_bottom() - y).max(0);
         let body = self.frame().body;
         let x = if self.m.strip_dock == StripDock::Left { body.x } else { body.right() - STRIP_SIDE };
         Rect::new(x, y, STRIP_SIDE, h)
+    }
+
+    /// Line `k` of `n` in the side column, a strip row each or closer; none from the first that does not fit.
+    pub(super) fn side_line(&self, col: Rect, k: usize, n: usize) -> Option<Rect> {
+        let (strip_row, n) = (self.lay().strip_row, n as i32);
+        let room = (col.h - 4).max(strip_row);
+        let pitch = if n * strip_row <= room { strip_row } else { (room / n).max(12) };
+        let y = col.y + 2 + k as i32 * pitch;
+        (k == 0 || y + 12 <= col.y + col.h).then(|| Rect::new(col.x + 4, y, col.w - 8, (pitch - 2).max(12)))
+    }
+
+    /// Line `row` of a page of measurements in the side column, under the page's two header lines.
+    pub(super) fn paged_side_line(col: Rect, row: usize) -> Rect {
+        Rect::new(col.x + 4, col.y + 44 + row as i32 * 20, col.w - 8, 18)
+    }
+
+    /// Readout `k` of a page of measurements across the screen, `tools::STRIP_PER_ROW` a row from `y0`.
+    pub(super) fn paged_band_cell(y0: i32, k: usize) -> Rect {
+        let (pitch, per) = ((W - 12) / tools::STRIP_PER_ROW as i32, tools::STRIP_PER_ROW);
+        Rect::new(6 + (k % per) as i32 * pitch, y0 + (k / per) as i32 * STRIP_ROW, pitch - 4, 16)
+    }
+
+    /// The left of the values of a row across the screen, right of the source pill.
+    pub(super) fn band_vx(&self) -> i32 {
+        8 + 42.max(self.fonts().sb.width("CH4").max(self.fonts().sb.width("R10")) + 18) + 8
+    }
+
+    /// The cells of `n` values in a row across the screen at `y`, right of the source pill.
+    pub(super) fn band_cells(&self, y: i32, n: usize) -> impl Iterator<Item = Rect> {
+        let vx = self.band_vx();
+        let (pitch, h) = ((self.scr.w - METRICS.edge - 2 - vx) / n.max(1) as i32, self.lay().strip_row - 2);
+        (0..n as i32).map(move |k| Rect::new(vx + k * pitch, y, pitch, h))
     }
 
     /// Where the strip is drawn. None when it has nothing to show.
@@ -160,8 +203,8 @@ impl Ui {
         // bar height and text baseline of a row; the source pill and the values right of it
         let bh = self.lay().strip_row - 2;
         let base = (bh + f.s.size * 72 / 100) / 2;
-        let pw = 42.max(f.sb.width("CH4").max(f.sb.width("R10")) + 18);
-        let vx = 8 + pw + 8;
+        let vx = self.band_vx();
+        let pw = vx - 16;
         // a row: the width of the screen less the edges
         let row = |y: i32| Rect::new(METRICS.edge, y, self.scr.w - 2 * METRICS.edge, bh);
         let pill = |cv: &mut Canvas, y: i32, label: &str, col: Rgb| {
@@ -179,11 +222,8 @@ impl Ui {
                 for part in mine.chunks(tools::STRIP_PER_ROW) {
                     cv.fill(row(y), BAR);
                     pill(cv, y, &label, col);
-                    // the row's width shared out, whatever the number of values
-                    let pitch = (row(y).right() - 2 - vx) / part.len() as i32;
-                    for (i, r) in part.iter().enumerate() {
-                        let x = vx + i as i32 * pitch;
-                        let x2 = cv.text(&f.s, x, y + base, &r.name, DIM) + 8;
+                    for (cell, r) in self.band_cells(y, part.len()).zip(part) {
+                        let x2 = cv.text(&f.s, cell.x, y + base, &r.name, DIM) + 8;
                         cv.text(&f.sb, x2, y + base, &r.text(), col);
                     }
                     y += self.lay().strip_row;
@@ -233,15 +273,10 @@ impl Ui {
             return;
         }
         let col = self.strip_column();
-        let n = lines.len() as i32;
-        let strip_row = self.lay().strip_row;
-        let room = (col.h - 4).max(strip_row);
-        let pitch = if n * strip_row <= room { strip_row } else { (room / n).max(12) };
         let f = self.fonts();
         cv.set_clip(col);
-        let mut y = col.y + 2;
-        for line in &lines {
-            let bar = Rect::new(col.x + 4, y, col.w - 8, (pitch - 2).max(12));
+        for (k, line) in lines.iter().enumerate() {
+            let Some(bar) = self.side_line(col, k, lines.len()) else { break };
             cv.fill(bar, BAR);
             let mut text_x = bar.x + 6;
             if let Some((label, pill_col)) = &line.pill {
@@ -269,10 +304,6 @@ impl Ui {
                 cv.text(&f.s, text_x, base, &line.name, DIM);
                 cv.set_clip(col);
             }
-            y += pitch;
-            if y + 12 > col.y + col.h {
-                break;
-            }
         }
         cv.no_clip();
     }
@@ -288,7 +319,7 @@ impl Ui {
         let page = self.results_page_size();
         let n = total.min(page).div_ceil(self.results_cols()) as i32;
         let nav = if total > page { 38 } else { 0 };
-        let body_h = if self.results_min { 0 } else { n * self.results_row(total as i32) + nav + 4 };
+        let body_h = if self.results.folded { 0 } else { n * self.results_row(total as i32) + nav + 4 };
         let panel_h = 30 + body_h;
         let rw = self.lay().results_w * self.results_cols() as i32;
         let fr = self.frame();
@@ -363,16 +394,16 @@ impl Ui {
         let all = Rect::new(head.x, head.y, head.w, head.h + body.h);
         cv.round(all, 6, CARD_BORDER, 255);
         cv.round(all.inset(1), 5, BAR, 215);
-        if self.results_min {
+        if self.results.folded {
             chevron(cv, head.x + 13, head.y + 15, 1, DIM);
         } else {
             chevron_down(cv, head.x + 9, head.y + 12, DIM);
         }
         cv.text(&f.s, head.x + 24, head.y + 19, &format!("Meas · {}", self.measurement_gate_label()), TEXT);
-        let n = self.mstat.first().map(|s| s.n).unwrap_or(0);
+        let n = self.results.rows.first().map(|s| s.n).unwrap_or(0);
         let ns = format!("n {}", fmt_count(n as f64));
         cv.text(&f.s, head.x + head.w - 10 - f.s.width(&ns), head.y + 19, &ns, DIM);
-        if self.results_min {
+        if self.results.folded {
             return;
         }
         let rows = self.meas_rows();
@@ -388,7 +419,7 @@ impl Ui {
             let body = Rect::new(body.x + (page_row % cols) as i32 * cw, body.y, cw, body.h);
             let by = body.y + (page_row / cols) as i32 * pitch;
             cv.hline(body.x + 8, body.x + body.w - 9, by, LINE);
-            let st = self.mstat.get(i).copied().unwrap_or_default();
+            let st = self.results.rows.get(i).copied().unwrap_or_default();
             let mean = st.sum / st.n.max(1) as f64;
             let name = self.results_name(i, r);
             let value = r.text();

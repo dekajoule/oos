@@ -1020,6 +1020,7 @@ pub fn force(sh: &Shadows) -> Vec<Write> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -1394,6 +1395,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod la_source_tests {
     use super::*;
 
@@ -1421,6 +1423,7 @@ mod la_source_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod la_pattern_tests {
     use super::*;
 

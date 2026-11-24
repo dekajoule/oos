@@ -33,6 +33,7 @@ pub fn flash_time(seconds: f32) -> [u8; 5] {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

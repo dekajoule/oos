@@ -83,8 +83,7 @@ impl Ui {
         if self.log.next < self.now {
             self.log.next = self.now + step;
         }
-        let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-        let mut row = format!("{:.3},{:.3}", self.now - self.log.start, unix);
+        let mut row = format!("{:.3},{:.3}", self.now - self.log.start, crate::clock::unix_now());
         for r in self.meas_rows() {
             row.push(',');
             if r.v.is_finite() {
@@ -133,6 +132,6 @@ mod catalog_tests {
         let rows = ui.meas_rows();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| row.v.is_nan()));
-        assert_eq!(ui.wfm_total, 0);
+        assert_eq!(ui.counts.wfm_total, 0);
     }
 }

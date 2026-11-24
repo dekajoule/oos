@@ -83,12 +83,12 @@ fn scpi_validation_fixture() {
     assert!(h.port().is_some() && scpi.port().is_some(), "private acceptance ports must bind");
     let mut ui = crate::ui::testkit::demo_ui();
     ui.set_offline(true);
-    ui.store_dir = std::env::var_os("OOS_VALIDATION_STORE_DIR")
+    ui.files.dir = std::env::var_os("OOS_VALIDATION_STORE_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join(format!("oos-scpi-validation-{}", std::process::id())));
     let mut cv = Canvas::new(crate::ui::W, crate::ui::H);
     let end = std::time::Instant::now() + Duration::from_secs(var("OOS_VALIDATION_SECONDS", 90));
-    while !ui.quit && std::time::Instant::now() < end {
+    while !ui.asks.quit && std::time::Instant::now() < end {
         ui.step(0.04);
         ui.render(&mut cv);
         scpi.poll(&mut ui, &cv);
@@ -108,7 +108,7 @@ fn waveform_upload_loads_the_chosen_reference_and_preserves_it_on_error() {
     let mut h = Web::open(0);
     let mut ui = crate::ui::testkit::demo_ui();
     let store = crate::ui::testkit::Scratch::new("http-no-write");
-    ui.store_dir = store.clone();
+    ui.files.dir = store.clone();
     let cv = Canvas::new(crate::ui::W, crate::ui::H);
     let mut scpi = crate::scpi::Scpi::open(0);
     let post = |path: &str, body: &[u8]| {
@@ -870,6 +870,7 @@ fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
 }
 
 #[test]
+#[cfg(oos_board = "dho")]
 fn mcp_session() {
     // over HTTP: a notification gets 202 with no body and no type
     let mut h = Web::open(0);
@@ -900,6 +901,7 @@ fn mcp_session() {
 }
 
 #[test]
+#[cfg(oos_board = "dho")]
 fn scpi_extensions() {
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     for _ in 0..3 {

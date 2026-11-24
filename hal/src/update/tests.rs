@@ -130,6 +130,22 @@ impl Drop for Fake {
 
 const RUN: InstallOpt = InstallOpt { execute: true, downgrade: false, force: false };
 
+/// The header fields of a boot image read through `bytes_at` as the old `le32` did, at every offset of a whole image
+/// and of short ones: the same value, and a panic past the end at the same places.
+#[test]
+fn image_header_reader_matches_the_old_one() {
+    let old = |b: &[u8], at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+    let img = bootimg(3);
+    for n in [0, 3, 4, 5, 607, 608, 2048, img.len()] {
+        let b = &img[..n];
+        for at in 0..n + 6 {
+            let new = std::panic::catch_unwind(|| u32::from_le_bytes(crate::bytes_at(b, at))).ok();
+            assert_eq!(new, std::panic::catch_unwind(|| old(b, at)).ok(), "at {} of {}", at, n);
+            assert_eq!(new.is_some(), at + 4 <= n);
+        }
+    }
+}
+
 #[test]
 fn image_check_matches_the_python_packer() {
     let img = bootimg(1);
@@ -680,6 +696,7 @@ fn first_install_reinstall_with_oos_selected_goes_through_stock() {
 }
 
 #[test]
+#[cfg(oos_board = "dho")]
 fn a_rescue_set_from_another_unit_stops_the_install() {
     let fk = stock_card("first-other-unit");
     let vendor = |sn: &str| crate::model::encode_vendor(&[(5, "DHO924S"), (7, sn), (9, "00:19:AF:00:00:01")]);
@@ -718,6 +735,7 @@ fn only_verified_models_by_default() {
 /// Verified per hardware variant: a model OOS ran on, and the others of its variant (a DHO804 with the identity of
 /// a DHO824, as seen in a user report). The refusal names the model, the verified models, the risk and the way on.
 #[test]
+#[cfg(oos_board = "dho")]
 fn models_are_verified_per_hardware_variant() {
     let check = |m: &str, any: bool| {
         first::check_model(Some(&crate::model::encode_vendor(&[(5, m), (7, "DHO8A000000001")])), any)
@@ -755,6 +773,7 @@ fn models_are_verified_per_hardware_variant() {
 /// The variants of the board family: every model of the table in one at most, and the models of one variant differ
 /// in nothing but the bandwidth code (docs/models.md 2.1).
 #[test]
+#[cfg(oos_board = "dho")]
 fn hardware_variants_differ_only_in_bandwidth() {
     let t = &crate::target::ACTIVE;
     let mut seen = Vec::new();

@@ -327,6 +327,8 @@ const KEYS: &[(&str, P)] = &[
     ("meas_full_record", Bool),
     ("spec_acpr", Fields(&["0 0", "1e3 1e3"])),
     ("bode_mode", Is(&["Loop", "Psrr", "Z", "loop"])),
+    ("bode_unit", Is(&["dB", "V/V", "db"])),
+    ("bode_amp_unit", Is(&["Vpp", "Vrms", "vrms"])),
     ("eye_more", Fields(&["0.001 1 2 1 1 3 2 0", "1e-12 1000 1000000 0 R1 0 R2 1"])),
     ("power_more", Fields(&["50 100000 1 3.3 2", "60 0 R1 - R2"])),
     ("magnetic", Fields(&["1 2 0 1 1 1 BH 1", "1 2 20000 -1 -1 -1 IPsi 0", "R1 R2 5 1 1 1 Bh 0"])),
@@ -540,10 +542,12 @@ fn family(k: &str) -> String {
 /// `set` is a match on text besides the settings table, so its source and the table are the lists of what it reads. When it changes shape this
 /// scan fails by its own checks below and has to follow it.
 fn set_keys() -> Vec<String> {
-    let src = include_str!("../setup_read.rs");
+    let src = include_str!("../../../store/src/setup_read.rs");
     let start = src.find("\npub fn set(").expect("setup_read.rs has no `pub fn set(`: update this scan");
     let end = start
-        + src[start..].find("\npub fn parse_setup(").expect("setup_read.rs has no `pub fn parse_setup(` after set");
+        + src[start..]
+            .find("\npub fn parse_setup_lenient(")
+            .expect("setup_read.rs has no `pub fn parse_setup_lenient(` after set");
     let mut keys = Vec::new();
     // the prefix of the current block, and the indentation of its arms once its match is seen
     let (mut prefix, mut arms): (Option<&str>, Option<usize>) = (None, None);

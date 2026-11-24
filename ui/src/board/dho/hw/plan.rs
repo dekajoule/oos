@@ -12,27 +12,36 @@ use crate::board::Frame;
 use oos_hal::dho::hz;
 use oos_hal::dho::seq::Settings;
 
+/// Sets `prearm_on` for the calling thread (tests: the live run, `liverun.rs`).
+#[cfg(test)]
+pub(super) fn force_prearm(on: Option<bool>) {
+    PREARM_ON.force(on);
+}
+
 /// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
 /// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
 /// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
 ///.
 pub(super) fn prearm_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get())
+    PREARM_ON.get()
 }
+
+static PREARM_ON: crate::board::policy::Switch =
+    crate::board::policy::Switch::new(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get());
 
 pub(super) const PREARM: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.prearm", env: None, on: "on" };
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
 #[cfg(any(target_os = "linux", test))]
-pub(super) fn disarm<B: oos_hal::dho::bus::Bus, R: std::io::Read>(
+pub(super) fn disarm<B: oos_hal::dho::bus::Bus, R: std::io::Read, C: oos_hal::dho::boot::Clock>(
     armed: &mut Option<(Settings, u64)>,
     state: &mut oos_hal::dho::seq::State,
     bar: &mut B,
     c2h: &mut R,
+    clock: &mut C,
 ) {
     if armed.take().is_some() {
-        if let Err(e) = oos_hal::dho::seq::disarm(state, bar, c2h, |_| {}) {
+        if let Err(e) = oos_hal::dho::seq::disarm(state, bar, c2h, clock, |_| {}) {
             eprintln!("oos-ui hw: disarm: {}", e);
         }
     }

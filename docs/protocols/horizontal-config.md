@@ -181,6 +181,37 @@ neither the samples nor their spread. A signal above half the rate folds down at
 every sample of the full rate) shows what lies between the kept samples. OOS notes it in Acquire while the rate
 is below the ADC's.
 
+### 1.8 Frame memory above 256 MiB: not usable
+
+Frames the FPGA records above 256 MiB (16,777,216 bursts, the memory size of 1.4/1.5) land on the lower 256 MiB.
+**Assumed**: the FPGA logic addresses only 256 MiB, whatever the memory chip holds. OOS records hardware segments
+below 256 MiB only, like the stock system.
+
+- 0.1.15 recorded a second part of hardware segments from burst 16,777,216 on. **Verified on the unit** (DHO924S,
+  2026-11-22) that these frames land on the lower part: with a 37.3 Hz sine and segments of 1 M points (60 below, 60
+  above), segment *k* above read back the waveform of segment *k* - 60 below, within the noise, although their trigger
+  times put them 0.81 periods of the sine apart. The same was found on a DHO804, and at 10 M points.
+- The trigger time stamps and frame headers of the upper frames looked right and left the lower ones unchanged
+  (**verified on the unit**, 2026-11-21). They do not live in the memory the samples are written to, so a check of
+  stamps alone cannot show where the samples went. A check of memory compares sample data.
+- **Verified on the unit**: a record that writes into 240..256 MiB, the top 1 M bursts that 1.4 keeps free, spoils
+  the read-back of the frames recorded before it in that record. **Assumed**: the FPGA keeps something of its own
+  there. A record must not reach it.
+- **A single record stays at most 2^27 = 134,217,728 points deep**. **Verified on the unit** (DHO924S,
+  2026-11-21, `oos-fpgad run --depth D --n 50000000 --at ...` windows of single records):
+  - Setup: the generator at 2 Hz on CH1, so that a record is shorter than half a period and any jump in time shows
+    as a step in the codes.
+  - 125 M points: no step over the whole record.
+  - 170 M and 200 M points (segment 0x2000000): one step, 134,217,728 points before the end of the record (at points
+    35.78 M and 65.78 M).
+  - 250 M points: steps 67.1 M, 134.2 M and 201.3 M points before the end (points 48.67 M, 115.78 M, 182.89 M), at the
+    same points in every run and at 20 and 50 ms/div.
+  - The parts between the steps are clean, but they do not join up in time.
+  - The compressed read-out of the whole 250 M-point record (k = 400) timed out on the C2H stream; windows read fine.
+  - OOS keeps the depths of 1.1.
+  - **Assumed** for every DHO800/DHO900 unit, since they all load the same FPGA image (fpga-image.md); measured on
+    one DHO924S only.
+
 ## 2. Channel set -> mask, interleave, ADC mode, stream layout
 
 ### 2.1 Mask, ratio, lanes
@@ -239,7 +270,7 @@ Acquire mode numbers: 0 normal, 1 peak detect, 2 average, 3 high resolution (ass
 | item | registers | notes |
 |---|---|---|
 | normal (0) | 0x1004 bits 0,1,3,12 cleared | |
-| peak (1) | 0x1004 bit1 = 1 | use normal (0) when rate == max rate: there is no decimation to detect over. Verified on the unit 2026-11-07: a 2.4 us pulse at 50 kSa/s shows in full, in normal mode not at all |
+| peak (1) | 0x1004 bit1 = 1 | use normal (0) when rate == max rate: there is no decimation to detect over. Verified on the unit 2026-11-07: a 2.4 us pulse at 50 kSa/s shows in full, in normal mode not at all. The points of the record are minimum and maximum in turn, so an edge that takes a few points shows a pulse of one point before and after it (seen on a unit 2026-11-20 with a derived build, in the record of a LIN line at 2.5 MSa/s read over SCPI; not yet verified on hardware with this tree). What reads levels in time (the decoders, the protocol trigger) takes the mean of every point and its neighbour, by the mode the record was taken in (a later change of the mode does not change how a held record is read) |
 | average (2) | 0x1004 bit3 = 1; 0x10b0 = count-1 (1 for count 1 or 2); 0x1148 = 640/ratio + 32; 0x404c = 10 instead of 5; segment size uses the average layout (1.4); 0x1110/0x1114 = average offset; 0x10b4 = 1, then 0 (average clear) on STOP/SINGLE | averaging runs in the FPGA memory (assumed, from the register set; another project reports a read-modify-write in DDR tied to the frame read-out, not checked) |
 | high res (3) | no SPU mode bit | OOS does it in software: each screen point is the mean of the record's samples behind it, so it gains only where the record has more samples than the screen has points |
 | ultra (7) | own frame count, 524,288,000 / (memsel*ratio) | not analysed, not used by OOS |

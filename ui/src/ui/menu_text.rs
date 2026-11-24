@@ -48,7 +48,7 @@ impl Ui {
             Item::DecSrc4 if self.m.dec_proto.roles()[3].is_some() => self.m.dec_proto.roles()[3].unwrap_or("Source 4"),
             Item::DecThr if self.m.dec_proto == Proto::CPHY => "Min level gap",
             Item::TrigT1 if matches!(self.m.trig_when, WhenKind::In | WhenKind::Out) => "Lower limit",
-            Item::NavHist if self.hist_pos.is_some() => "Live",
+            Item::NavHist if self.history.pos.is_some() => "Live",
             _ => Self::label(it),
         }
     }
@@ -59,11 +59,8 @@ impl Ui {
         }
         match menu {
             MenuId::Pick => match self.pick {
-                Some(p) if Self::hex_item(p.it) => format!("{} \u{b7} 0x{}_", self.item_label(p.it), self.keypad),
-                Some(p) if p.it == Item::NumEntry => self.numpad_title(),
-                Some(p) if p.it == Item::AfgFreqEntry => {
-                    format!("Frequency \u{b7} {}_ (max {})", self.keypad, si_short(self.m.gen_max_hz(), "Hz"))
-                }
+                // an entry pad: its title; the entry shows large above the keys
+                _ if self.pad_entry().is_some() => self.pad_entry().map(|e| e.0).unwrap_or_default(),
                 Some(p) => format!("{} \u{b7} {}", self.menu_title(p.menu), self.item_label(p.it)),
                 None => String::new(),
             },
@@ -98,7 +95,7 @@ impl Ui {
             | Item::DecThr => Kind::Value,
             Item::MathAuto | Item::ZoneBox | Item::ZoneShape | Item::ZoneClear => Kind::Action,
             Item::DecBits => Kind::Value,
-            Item::TrigLevel2 | Item::VidLine | Item::PatLevel | Item::NthN => Kind::Value,
+            Item::TrigLevel2 | Item::PatLevel => Kind::Value,
             Item::ChScale(_)
             | Item::ChOffset(_)
             | Item::HScale
@@ -142,7 +139,6 @@ impl Ui {
             | Item::HZero
             | Item::Trig50
             | Item::MeasAdd(_)
-            | Item::AddMeas
             | Item::MeasCfg(_)
             | Item::MeasRemove(_)
             | Item::MeasClear
@@ -185,7 +181,6 @@ impl Ui {
             Item::Open(MenuId::Horizontal) => "Horizontal",
             Item::Open(MenuId::ChMore(_)) => "More",
             Item::Open(MenuId::Measure) => "Measure",
-            Item::AddMeas => "Add meas",
             Item::Open(MenuId::Cursor) => "Cursor",
             Item::Open(MenuId::Display) => "Display",
             Item::Open(MenuId::Utility) => "System",
@@ -217,10 +212,7 @@ impl Ui {
             Item::MaskReset => "Reset counts",
             Item::MaskClear => "Clear mask",
             Item::MeasStats => "Statistics",
-            Item::MeasLabels => "Labels on trace",
-            Item::StripDock => "Dock",
             Item::Zoom => "Zoom",
-            Item::AutoRoll => "Auto Roll",
             _ => return None,
         })
     }
@@ -236,7 +228,6 @@ impl Ui {
             Item::SearchTable => "Event list",
             Item::SearchSave => "Save events",
             Item::StoreBin => "Save waveform (binary)",
-            Item::PaneSel => "Lower",
             Item::TrendSel(0) => "Trend chart 1",
             Item::TrendSel(_) => "Trend chart 2",
             Item::DecSrc => "Source",
@@ -310,13 +301,11 @@ impl Ui {
             Item::TrigLevel2 => "Level 2",
             Item::TrigSrc2 => "Source B",
             Item::TrigWhen => "When",
-            Item::VidLine => "Line",
             Item::Pat(0) => "CH1",
             Item::Pat(1) => "CH2",
             Item::Pat(2) => "CH3",
             Item::Pat(_) => "CH4",
             Item::PatLevel => "Level",
-            Item::NthN => "Edge no.",
             Item::AcqSeg => "Segments",
             Item::AcqSegIvl => "Seg. interval",
             Item::AcqSegTable => "Segment times",
@@ -339,7 +328,6 @@ impl Ui {
             Item::ChBiasZero(_) => "Zero this input",
             Item::ChSkew(_) => "Deskew",
             Item::HFine => "Fine time base",
-            Item::HExpandI => "Expand around",
             Item::RefColor => "Slot color",
             Item::RefLabel => "Slot name",
             Item::RefSel => "Slot",
@@ -372,8 +360,6 @@ impl Ui {
             Item::CurC => "Y1",
             Item::CurD => "Y2",
             Item::ClearDisp => "Clear",
-            Item::Hdmi => "HDMI",
-            Item::TextSize => "Text size",
             Item::ZoneSel => "Zone",
             Item::ZoneOn => "Enable",
             Item::ZoneSrc => "Source",
@@ -444,7 +430,6 @@ impl Ui {
     /// Values of the channel, horizontal, trigger and acquire rows.
     fn value_inputs(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::ChCoupling(c) => m.ch[c].coupling.name().into(),
             Item::ChProbe(c) => format!("{}x", m.ch[c].probe),
@@ -452,23 +437,17 @@ impl Ui {
             Item::ChOffset(c) => si(m.ch[c].offset as f64, m.unit(c)),
             Item::ChBias(c) => si(m.ch[c].bias as f64, m.unit(c)),
             Item::ChSkew(c) => si(m.ch[c].skew as f64, "s"),
-            Item::HFine => onoff(m.fine_t),
-            Item::HExpandI => format!("{:?}", m.h_expand),
-            Item::RefColor => {
-                self.refs[self.ref_sel].as_ref().map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0).into()
-            }
+            Item::HFine => on_off(m.fine_t),
+            Item::RefColor => self.refs[self.ref_page.sel]
+                .as_ref()
+                .map_or("-", |r| REF_COLORS[r.color.min(REF_COLORS.len() - 1)].0)
+                .into(),
             Item::HScale => si_short(m.time_per_div() as f64, "s"),
             Item::HDelay => si(m.delay as f64, "s"),
             Item::TrigSrc => self.trigger_source_label(),
             Item::TrigLevel => si(m.trig_level as f64, m.unit(m.trig_src)),
             Item::TrigType => m.trig_type.name().into(),
-            Item::SearchOn => {
-                if self.search_on {
-                    "On".into()
-                } else {
-                    "Off".into()
-                }
-            }
+            Item::SearchOn => on_off(self.search_on),
             Item::TrigLevel2 => si(m.trig_level2 as f64, m.unit(m.trig_src)),
             Item::TrigSrc2 => Self::trigger_wave_label(m.trigger_wave2()),
             Item::TrigWhen => match m.trig_when {
@@ -478,7 +457,6 @@ impl Ui {
                 WhenKind::In => "Inside".into(),
                 WhenKind::Out => "Outside".into(),
             },
-            Item::VidLine => format!("{}", m.video_line),
             Item::Pat(c) => match m.pat[c] {
                 Bit::H => "H".into(),
                 Bit::L => "L".into(),
@@ -487,7 +465,6 @@ impl Ui {
                 Bit::F => "Fall".into(),
             },
             Item::PatLevel => si(m.pat_levels[m.trig_src] as f64, "V"),
-            Item::NthN => format!("{}", m.nth_n),
             Item::AcqSeg => {
                 if m.segments == 0 {
                     "Off".into()
@@ -507,11 +484,10 @@ impl Ui {
     /// Values of the measure, cursor, logger, slot, display, zone, math operator and view rows.
     fn value_measure(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
-            Item::MeasSrc => self.wave_name(self.meas_src),
+            Item::MeasSrc => self.wave_name(self.sources.a),
             Item::MeasCopyTo => "Pick".into(),
-            Item::MeasSrcB => self.wave_name(self.meas_src_b),
+            Item::MeasSrcB => self.wave_name(self.sources.b),
             Item::CurSrcB => self.wave_name(self.cursor_b_source()),
             Item::MathExprI => {
                 if m.math_expr[m.math_sel].is_empty() {
@@ -520,16 +496,18 @@ impl Ui {
                     m.math_expr[m.math_sel].clone()
                 }
             }
-            Item::LogOn => onoff(self.log.file.is_some()),
+            Item::LogOn => on_off(self.log.file.is_some()),
             Item::LogIvl => si_short(logger::LOG_STEPS[m.log_ivl.min(logger::LOG_STEPS.len() - 1)], "s"),
             Item::LogInfo => self.log_info(),
             Item::CurC => self.cursor_values().get(2).map_or(format!("{:.0} %", m.cur_c * 100.0), |v| v.1.clone()),
             Item::CurD => self.cursor_values().get(3).map_or(format!("{:.0} %", m.cur_d * 100.0), |v| v.1.clone()),
-            Item::RefSel => format!("R{}", self.ref_sel + 1),
-            Item::RefVpd => {
-                self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V")))
+            Item::RefSel => format!("R{}", self.ref_page.sel + 1),
+            Item::RefVpd => self.refs[self.ref_page.sel]
+                .as_ref()
+                .map_or("-".into(), |r| format!("{}/div", si_short(r.vpd as f64, "V"))),
+            Item::RefOffset => {
+                self.refs[self.ref_page.sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V"))
             }
-            Item::RefOffset => self.refs[self.ref_sel].as_ref().map_or("-".into(), |r| si_short(r.offset as f64, "V")),
             Item::DvmSrc => format!("CH{}", m.dvm_src + 1),
             Item::CntSrc => format!("CH{}", m.cnt_src + 1),
             Item::MathLinA => format!("{:.3}", m.math_lin.0),
@@ -541,10 +519,8 @@ impl Ui {
                 .cursor_values()
                 .get(if m.cursor == CursorMode::Track { 2 } else { 1 })
                 .map_or(format!("{:.0} %", m.cur_b * 100.0), |v| v.1.clone()),
-            Item::Hdmi => format!("{:?}", m.hdmi),
-            Item::TextSize => m.text_size.name().into(),
             Item::ZoneSel => format!("Z{}", self.zone_trig.sel + 1),
-            Item::ZoneOn => onoff(m.zones[self.zone_trig.sel].on),
+            Item::ZoneOn => on_off(m.zones[self.zone_trig.sel].on),
             Item::ZoneSrc => format!("CH{}", m.zones[self.zone_trig.sel].src + 1),
             Item::ZoneMode => {
                 if m.zones[self.zone_trig.sel].inside {
@@ -556,25 +532,20 @@ impl Ui {
             Item::ZInput => m.z_src.map_or("Off".to_string(), |c| format!("CH{}", c + 1)),
             Item::AuxOut => m.aux_out.name().into(),
             Item::MathOpI => m.math.name().into(),
-            Item::MathFam => self.math_fam.name().into(),
-            Item::StoreDest => self.store_dest.name().into(),
-            Item::MeasStats => onoff(self.stats_on),
-            Item::MeasLabels => onoff(self.m.meas_labels),
-            Item::StripDock => self.m.strip_dock.label().into(),
-            Item::Zoom => onoff(m.zoom),
-            Item::AutoRoll => onoff(m.auto_roll),
+            Item::MathFam => self.math.family.name().into(),
+            Item::StoreDest => self.files.dest.name().into(),
+            Item::MeasStats => on_off(self.results.on),
+            Item::Zoom => on_off(m.zoom),
             _ => return None,
         })
     }
 
-    /// Values of the decoder, pane, trend, bus trigger, zoom and XY rows.
+    /// Values of the decoder, trend, bus trigger, zoom and XY rows.
     fn value_decode(&self, it: Item) -> Option<String> {
         let m = &self.m;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
-            Item::DecOn => onoff(m.dec_on),
+            Item::DecOn => on_off(m.dec_on),
             Item::DecSel => format!("D{}", m.dec_sel + 1),
-            Item::PaneSel => tables::PANES[m.pane.min(tables::PANES.len() - 1)].into(),
             Item::TrendSel(k) => self.trend_options().get(m.trend_sel[k]).cloned().unwrap_or_else(|| "Auto".into()),
             Item::DecSrc => decode_source_name(m.dec_src),
             Item::DecBaud => format!("{}", crate::decode::BAUDS[m.dec_baud]),
@@ -646,7 +617,7 @@ impl Ui {
             Item::BootMode => self.boot_mode().into(),
             Item::Overclock => overclock::label(self.overclock.hz),
             Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan => self.net_value(it),
-            Item::RefSrc => format!("CH{}", self.ref_src + 1),
+            Item::RefSrc => format!("CH{}", self.ref_page.src + 1),
             Item::RefShow(i) => match &self.refs[i] {
                 None => "empty".into(),
                 Some(r) => {
@@ -659,7 +630,7 @@ impl Ui {
             Item::MathSel => format!("M{}", m.math_sel + 1),
             Item::MathScale => self.math_scale_text(),
             Item::MathOffset => format!("{:.2} div", m.math_offset),
-            Item::StoreSlot => format!("{}  (setup{}.txt)", self.store_slot, self.store_slot),
+            Item::StoreSlot => format!("{}  (setup{}.txt)", self.files.slot, self.files.slot),
             Item::MaskSrc => format!("CH{}", m.mask_src + 1),
             Item::MaskX => format!("{:.2} div", m.mask_x),
             Item::MaskY => format!("{:.2} div", m.mask_y),
@@ -667,4 +638,9 @@ impl Ui {
             _ => String::new(),
         }
     }
+}
+
+/// The value of a switch, as a menu row shows it.
+pub(super) fn on_off(on: bool) -> String {
+    if on { "On" } else { "Off" }.into()
 }

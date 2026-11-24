@@ -6,6 +6,10 @@
 //! into `header_import_tests.rs`.
 
 use super::*;
+use crate::model::*;
+use crate::wave::Record;
+use oos_dsp::decode::Parity;
+use std::path::Path;
 
 // Break it catches: an importer that indexes past the end of a damaged file and panics (the UI thread with it)
 // instead of refusing it. Random bodies behind each recognised header, some with small numbers where counts and
@@ -37,10 +41,6 @@ fn damaged_waveform_files_are_refused_not_a_panic() {
         let _ = parse_wave(&b, ["a.bin", "a.wfm", "a.isf", "a.trc", "a.bin", "a.bin"][it % 6]);
         let _ = parse_ff(&b);
     }
-    let f = Fields::new(b"\x01\x02\x03", true);
-    assert_eq!((f.u16(1), Fields::new(b"\x01\x02\x03", false).u16(1)), (Ok(0x0302), Ok(0x0203)));
-    assert_eq!(f.u32(0), Err("truncated waveform".to_string()));
-    assert_eq!(f.u16(usize::MAX), Err("truncated waveform".to_string()));
 }
 use crate::gfx::{rgb, Canvas};
 use crate::math::{MathOp, Window};
@@ -64,6 +64,52 @@ fn a_save_does_not_follow_links_or_write_to_devices() {
     write(&d.join("ok.txt"), b"2").unwrap();
     assert_eq!(std::fs::read(d.join("ok.txt")).unwrap(), b"2");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+// Break it catches: a setup line that is reported as refused but keeps the fields it read before the one it refused
+// (#120): `spec` kept the window of a line whose trace was out of range, `magnetic` the core of a line with an unknown
+// mode, `zone1` the switch of a line with a bad point. A refused line leaves the setup as it was, whichever field fails.
+#[test]
+fn a_refused_setup_line_leaves_the_setup_as_it_was() {
+    let (empty, none) = parse_setup_lenient("");
+    assert!(none.is_empty(), "{none:?}");
+    let mut changed = Vec::new();
+    for line in [
+        "bode_sweep = -1 false 2 Fall 1 2 3",
+        "bode_sweep = inf false 2 Fall 1 2 3",
+        "bode = 5 6 40 7 1 x 0 10.1.2.3:5555",
+        "spec = 2 1 2 3 Hann 4 0 true true",
+        "eye = 2",
+        "magnetic = R1 R2 5 1 1 1 Bh 0",
+        "inverter = Dq0 1 2 3 Phase 33 4 true off off off 1 1 0 false 0 1 16 0 false 0 1 2",
+        "zone1 = true 1 true 0.1",
+        "zone1 = true 4 true x:1",
+        "zone2 = true 5 true",
+        "dec_la = 1 a - - -",
+        "sim = 0 10",
+    ] {
+        let (m, bad) = parse_setup_lenient(&format!("{line}\n"));
+        assert_eq!(bad.len(), 1, "{line}: refused with one error: {bad:?}");
+        if m != empty {
+            changed.push(line);
+        }
+    }
+    assert!(changed.is_empty(), "refused, yet they changed the setup: {changed:#?}");
+    // the same lines with every field good are taken whole, as before
+    for (line, taken) in [
+        ("bode_sweep = 2 false 2 Fall 1 2 3", &|m: &Model| m.bode_sw_time == 2.0 && m.bode_ref == 3.0),
+        ("bode = 5 6 40 7 1 2 0 10.1.2.3:5555", &|m: &Model| m.bode_start == 5.0 && m.bode_addr == "10.1.2.3:5555"),
+        ("spec = 2 1 2 3 Hann 3 0 true true", &|m: &Model| m.spec_win == crate::math::WINDOWS[1] && m.spec_trace == 3),
+        ("eye = 2 1e6", &|m: &Model| m.eye_rate == 1e6),
+        ("magnetic = R1 R2 5 1 1 1 IPsi 0", &|m: &Model| m.mag_n == 5.0 && m.mag_ae == 1.0),
+        ("zone1 = true 4 true 0:1 1:1", &|m: &Model| m.zones[0].on && m.zones[0].pts.len() == 2),
+        ("dec_la = 1 0 15 16 -", &|m: &Model| m.dec_la[0] == Some(0)),
+        ("sim = 0 1", &|m: &Model| m.sim_preset == 0 && m.sim_slot == 1),
+    ] as [(&str, &dyn Fn(&Model) -> bool); 8]
+    {
+        let (m, bad) = parse_setup_lenient(&format!("{line}\n"));
+        assert!(bad.is_empty() && taken(&m), "{line}: a good line is taken whole: {bad:?}");
+    }
 }
 
 // Break it catches: the hardware average switch lost in a setup or on by default, the count not stored with it.
@@ -440,6 +486,7 @@ fn csv_of_a_record() {
         raw: None,
         la: None,
         pairs: false,
+        peak: false,
     };
     rec.ch[0] = vec![0.5, 1.25, f32::NAN];
     rec.ch[2] = vec![-1.0, 0.0, 3.3];
@@ -547,6 +594,7 @@ fn oos_bin_and_wfm_round_trip() {
         raw: None,
         la: None,
         pairs: false,
+        peak: false,
     };
     let bin = wave_bin(&rec, &m);
     let t = &parse_wave(&bin, "wave.bin").unwrap()[0];
@@ -661,6 +709,7 @@ fn wave_and_fast_frame_round_trip() {
         raw: None,
         la: None,
         pairs: false,
+        peak: false,
     };
     rec.ch[0] = vec![0.5, 1.25];
     rec.ch[2] = vec![-1.0, 0.0];
@@ -730,6 +779,7 @@ fn waveform_file_time_base_is_finite() {
         raw: None,
         la: None,
         pairs: false,
+        peak: false,
     };
     rec.ch[1] = vec![0.25, -0.5, 1.0];
     let good = wave_bin(&rec, &m);
@@ -1129,4 +1179,37 @@ fn next_free_name() {
     write(&dir.join("shot-002.png"), b"x").unwrap();
     assert_eq!(file_name(&next_name(&dir, "shot", "png")), "shot-003.png");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A value of every row of the settings table other than its default survives the setup file, in its own line.
+#[test]
+fn a_changed_value_survives_the_setup_file() {
+    for s in crate::settings::all() {
+        for n in crate::settings::testkit::instances(s) {
+            let m = crate::settings::testkit::changed(s, n);
+            let back = parse_setup(&setup_text(&m)).expect("the setup loads");
+            assert_eq!((s.get)(&back, n), (s.get)(&m, n), "{} {}", s.key, n);
+            // the line of the fields of a setup line is written by hand
+            if s.line().is_some() {
+                continue;
+            }
+            let line = format!("{} = {}", s.key_at(n), s.store(&m, n));
+            assert!(setup_text(&m).lines().any(|l| l == line), "{}: no line {:?}", s.key, line);
+        }
+    }
+}
+
+// Break it catches (rdtsc in the forum): a setup naming a protocol this build does not have, or a key of a newer
+// build, failing to load as a whole
+#[test]
+fn a_setup_loads_what_it_can() {
+    let m = Model { dec_on: true, tscale: 5, ..Default::default() };
+    // unknown keys were always passed over; a protocol this build lacks and a value out of range were not
+    let text = setup_text(&m).replace("dec_proto = ", "dec_proto = NoSuchDecoder # was ") + "avg_hw = maybe\n";
+    assert!(parse_setup(&text).is_err(), "strict parse names the first bad line");
+    let (back, bad) = parse_setup_lenient(&text);
+    assert_eq!(back.tscale, 5, "the rest of the setup stands");
+    assert!(!back.dec_on, "the decoder without its protocol is off");
+    assert!(bad.len() == 2 && bad[0].contains("dec_proto") && bad[1].contains("avg_hw"), "{:?}", bad);
+    assert_eq!(parse_setup_lenient(&setup_text(&m)).1, Vec::<String>::new());
 }

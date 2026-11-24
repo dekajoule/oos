@@ -1,0 +1,284 @@
+// Copyright (C) 2026 dekajoule
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+//! The Display group: how the waveform is drawn and how the graticule looks. Their commands are `:DISPlay:...`
+//! (scpi/display.rs), their rows the Display menu (ui/setting_items.rs). The three slices are the three places of
+//! `store::setup_text` that write them, so the keys of a setup file keep their order.
+//!
+//! Still written out by hand: the monitor of the HDMI Layout (`hdmi_view`: over SCPI it needs two views), the Z input
+//! (an optional wave), the views (two values in one line), and of the Windows page the windows (`windows`: no menu
+//! row of its own; the density sets them), the lower pane Split keeps (`split_pane`: no menu row) and the window of
+//! each trace (the menu offers the windows the layout has).
+
+use super::{Arg, Choice, CustomIo, Scpi, Setting, Ty, Unknown, Val};
+use crate::model::{step_index, Density, Grid, HDMI_MODES, PANES, PANES_N, PERSIST, TEXT_SIZES};
+
+/// The slices, in the order of the docs table.
+pub const SLICES: [&[Setting]; 5] = [&VIEW, &DENSITY, &PANE, &DRAW, &TEXT];
+
+/// Written after `mdepth`.
+pub const VIEW: [Setting; 5] = [
+    Setting {
+        key: "persist",
+        scpi: Scpi::Cmd("GRADing:TIME"),
+        ty: Ty::Custom(&PERSIST_IO),
+        label: "Persistence",
+        #[cfg(test)]
+        doc: "How long a drawn waveform stays on the screen.",
+        accept: None,
+        step: None,
+        get: |m, _| Val::Index(m.persist),
+        put: |m, _, v| m.persist = v.index(),
+    },
+    Setting {
+        key: "intensity",
+        scpi: Scpi::Cmd("WBRightness"),
+        ty: Ty::U32 { min: 10, max: 100, step: 5, unit: "%" },
+        label: "Intensity",
+        #[cfg(test)]
+        doc: "Brightness of the waveforms; 0 is refused, a value below 10 sets 10.",
+        accept: Some((1.0, 100.0)),
+        step: None,
+        get: |m, _| Val::U32(m.intensity),
+        put: |m, _, v| m.intensity = v.index() as u32,
+    },
+    Setting {
+        key: "grid",
+        scpi: Scpi::Cmd("GRID"),
+        ty: Ty::Choice(
+            &[
+                Choice { store: "Full", scpi: "FULL", label: "Full" },
+                Choice { store: "Light", scpi: "HALF", label: "Light" },
+                Choice { store: "None", scpi: "NONE", label: "None" },
+            ],
+            Unknown::Value,
+            Arg::Keyword,
+        ),
+        label: "Grid",
+        #[cfg(test)]
+        doc: "The graticule: every division line, a lighter one, or none.",
+        accept: None,
+        step: None,
+        get: |m, _| Val::Index(GRIDS.iter().position(|&g| g == m.grid).unwrap_or(0)),
+        put: |m, _, v| m.grid = GRIDS[v.index()],
+    },
+    Setting {
+        key: "grid_bright",
+        scpi: Scpi::Cmd("GBRightness"),
+        ty: Ty::U32 { min: 10, max: 100, step: 10, unit: "%" },
+        label: "Grid bright.",
+        #[cfg(test)]
+        doc: "Brightness of the graticule; a value below 10 sets 10.",
+        accept: Some((0.0, 100.0)),
+        step: None,
+        get: |m, _| Val::U32(m.grid_bright),
+        put: |m, _, v| m.grid_bright = v.index() as u32,
+    },
+    Setting {
+        key: "grid_frame",
+        scpi: Scpi::Cmd("RULers"),
+        ty: Ty::Bool,
+        label: "Grid frame",
+        #[cfg(test)]
+        doc: "A frame around the graticule with ticks every fifth of a division; none with the grid off.",
+        accept: None,
+        step: None,
+        get: |m, _| Val::Bool(m.grid_frame),
+        put: |m, _, v| m.grid_frame = v.index() != 0,
+    },
+];
+
+/// Written after `windows`.
+pub const DENSITY: [Setting; 1] = [Setting {
+    key: "density",
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
+    ty: Ty::Choice(
+        &[
+            Choice { store: "Scope", scpi: "", label: "Scope" },
+            Choice { store: "Full", scpi: "", label: "Full" },
+            Choice { store: "Split", scpi: "", label: "Split" },
+            Choice { store: "Four", scpi: "", label: "Four" },
+        ],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Density",
+    #[cfg(test)]
+    doc: "On the Windows page: what the screen shows around the plot, the bars and cards, the plot alone, the plot \
+          over a lower pane or two stacked traces, or four panes; a change sets the windows and the lower pane up \
+          again. A setup without it takes it from its windows and pane.",
+    accept: None,
+    step: None,
+    get: |m, _| Val::Index(Density::ALL.iter().position(|&d| d == m.density).unwrap_or(0)),
+    put: |m, _, v| m.density = Density::ALL[v.index()],
+}];
+
+/// Written first of the panes and the views, after the decoders and the bus.
+pub const PANE: [Setting; 1] = [Setting {
+    key: "pane",
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
+    ty: Ty::Custom(&PANE_IO),
+    label: "Lower",
+    #[cfg(test)]
+    doc: "On the Windows page with Split: what shows under the plot, two stacked traces or a pane of the spectrum, \
+          the results, the events, the trend or the bus view.",
+    accept: None,
+    step: None,
+    get: |m, _| Val::Index(m.pane),
+    put: |m, _, v| m.pane = v.index(),
+}];
+
+/// Written after `zdelay`.
+pub const DRAW: [Setting; 4] = [
+    Setting {
+        key: "color_grade",
+        scpi: Scpi::Cmd("COLor"),
+        ty: Ty::Bool,
+        label: "Colour grade",
+        #[cfg(test)]
+        doc: "Colours the persistence by how often a point was hit.",
+        accept: None,
+        step: None,
+        get: |m, _| Val::Bool(m.color_grade),
+        put: |m, _, v| m.color_grade = v.index() != 0,
+    },
+    Setting {
+        key: "dots",
+        scpi: Scpi::Cmd("TYPE"),
+        ty: Ty::Custom(&DOTS_IO),
+        label: "Dots",
+        #[cfg(test)]
+        doc: "Draws every sample as a dot instead of joining them with lines.",
+        accept: None,
+        step: None,
+        get: |m, _| Val::Bool(m.dots),
+        put: |m, _, v| m.dots = v.index() != 0,
+    },
+    Setting {
+        key: "bar",
+        scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
+        ty: Ty::Choice(
+            &[
+                Choice { store: "cards", scpi: "", label: "Cards" },
+                Choice { store: "compact", scpi: "", label: "Compact" },
+            ],
+            Unknown::Names,
+            Arg::Keyword,
+        ),
+        label: "Bottom bar",
+        #[cfg(test)]
+        doc: "The bottom bar as cards or as one compact line.",
+        accept: None,
+        step: None,
+        get: |m, _| Val::Index(m.bar_compact as usize),
+        put: |m, _, v| m.bar_compact = v.index() != 0,
+    },
+    Setting {
+        key: "hdmi",
+        scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
+        ty: Ty::Choice(
+            &[
+                Choice { store: "Mirror", scpi: "", label: "Mirror" },
+                Choice { store: "Waveform", scpi: "", label: "Waveform" },
+                Choice { store: "Layout", scpi: "", label: "Layout" },
+            ],
+            Unknown::Value,
+            Arg::Keyword,
+        ),
+        label: "HDMI",
+        #[cfg(test)]
+        doc: "What a monitor on the HDMI port shows: the panel, the waveform alone, or a layout of its own; the menu \
+              steps to the end of the list and stops.",
+        accept: None,
+        step: Some(|m, _, d| {
+            let i = HDMI_MODES.iter().position(|&h| h == m.hdmi).unwrap_or(0);
+            Val::Index(step_index(i, HDMI_MODES.len(), d))
+        }),
+        get: |m, _| Val::Index(HDMI_MODES.iter().position(|&h| h == m.hdmi).unwrap_or(0)),
+        put: |m, _, v| m.hdmi = HDMI_MODES[v.index()],
+    },
+];
+
+/// Written after `quick`.
+pub const TEXT: [Setting; 1] = [Setting {
+    key: "text_size",
+    scpi: Scpi::none("a choice of the screen's layout, not of the measurement"),
+    ty: Ty::Choice(
+        &[
+            Choice { store: "Normal", scpi: "", label: "Normal" },
+            Choice { store: "Large", scpi: "", label: "Large" },
+            Choice { store: "Larger", scpi: "", label: "Larger" },
+        ],
+        Unknown::Value,
+        Arg::Keyword,
+    ),
+    label: "Text size",
+    #[cfg(test)]
+    doc: "The size of the text on the screen; the menu steps to the end of the list and stops.",
+    accept: None,
+    step: Some(|m, _, d| Val::Index(step_index(m.text_size.index(), TEXT_SIZES.len(), d))),
+    get: |m, _| Val::Index(m.text_size.index()),
+    put: |m, _, v| m.text_size = TEXT_SIZES[v.index()],
+}];
+
+const GRIDS: [Grid; 3] = [Grid::Full, Grid::Light, Grid::None];
+
+const PERSIST_LABELS: [&str; PERSIST.len()] = super::names(&PERSIST);
+
+/// An index into `PERSIST` in a setup; over SCPI `MIN`, `INFinite` or seconds, snapped to the nearest time of the
+/// ladder.
+const PERSIST_IO: CustomIo = CustomIo {
+    store: |v| v.index().to_string(),
+    load: |t| crate::words::p_idx(t, PERSIST.len()).map(Val::Index),
+    query: |v| persist_token(v.index()),
+    take: |a| persist_index(a).map(Val::Index),
+    labels: &PERSIST_LABELS,
+    #[cfg(test)]
+    values: "`MIN`, `INFinite`, or seconds, set to the nearest time of the persistence ladder; the query answers \
+             `MIN`, the seconds or `INF`",
+};
+
+/// An index into `PANES` in a setup; no command.
+const PANE_IO: CustomIo = CustomIo {
+    store: |v| v.index().to_string(),
+    load: |t| crate::words::p_idx(t, PANES_N).map(Val::Index),
+    query: |v| v.index().to_string(),
+    take: |_| None,
+    labels: &PANES,
+    #[cfg(test)]
+    values: "none",
+};
+
+/// A switch in a setup and in the menu; over SCPI the stock words of the drawing type.
+const DOTS_IO: CustomIo = CustomIo {
+    store: |v| (v.index() != 0).to_string(),
+    load: |t| crate::words::p_bool(t).map(Val::Bool),
+    query: |v| if v.index() != 0 { "DOTS" } else { "VECT" }.to_string(),
+    take: |a| super::switch_word(a, "VECTors", "DOTS"),
+    labels: &["Off", "On"],
+    #[cfg(test)]
+    values: "`DOTS`, `VECTors`; the query answers `DOTS` or `VECT`",
+};
+
+fn persist_index(arg: &str) -> Option<usize> {
+    let a = arg.trim();
+    if crate::words::kw(a, "MIN") {
+        return Some(0);
+    }
+    if crate::words::kw(a, "INFinite") {
+        return Some(PERSIST.len() - 1);
+    }
+    let v = crate::words::num64(a).filter(|v| *v >= 0.0)?;
+    // the f32 seconds of PERSIST in f64 as written (whole milliseconds), so a time half-way picks as before
+    let times: Vec<f64> = PERSIST.iter().filter(|p| p.1 >= 0.0).map(|p| (p.1 as f64 * 1e3).round() / 1e3).collect();
+    Some(crate::words::nearest_index(&times, v))
+}
+
+/// The answer to `:DISPlay:GRADing:TIME?` for entry `i` of `PERSIST`.
+fn persist_token(i: usize) -> String {
+    match PERSIST.get(i).map(|p| p.1) {
+        Some(0.0) => "MIN".into(),
+        Some(s) if s > 0.0 => s.to_string(),
+        _ => "INF".into(),
+    }
+}

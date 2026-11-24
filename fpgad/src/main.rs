@@ -6,17 +6,17 @@
 //! is built. The commands of the DHO800/DHO900 and their options are listed at the top of `dho/mod.rs`; `oos-fpgad
 //! help` prints them.
 
-#[cfg(oos_board = "dho")]
-mod dho;
-#[cfg(oos_board = "mho")]
-mod mho;
+// The board family of this build, the one of `oos_hal::target::ACTIVE`: `OOS_BOARD` when OOS is built, `dho` by
+// default (ADR 0067). A port adds a block like this one for its folder.
+oos_hal::if_board! { dho:
+    mod dho;
+    use dho as board;
+}
+oos_hal::if_board! { mho:
+    mod mho;
+    use mho as board;
+}
 mod pcie;
-
-/// The board family of this build, chosen by `cfg(oos_board)` like `oos_hal::target::ACTIVE` (fpgad/build.rs).
-#[cfg(oos_board = "dho")]
-use dho as board;
-#[cfg(oos_board = "mho")]
-use mho as board;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

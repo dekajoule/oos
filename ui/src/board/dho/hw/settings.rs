@@ -160,14 +160,11 @@ pub fn settings(m: &Model, program_afe: bool) -> Settings {
         slope: match (m.trig_type, m.slope) {
             // frames start with a falling edge (start bit, SOF, break, I2C start, CS); I2S and the modules that say so
             // (1553, ARINC 429): either edge
-            (TrigType::Bus, _) if m.dec_proto.module().is_some() => {
-                match m.dec_proto.module().map(|p| p.start_edge()) {
-                    Some(Slope::Rise) => tpu::Slope::Rising,
-                    Some(Slope::Either) => tpu::Slope::Either,
-                    _ => tpu::Slope::Falling,
-                }
-            }
-            (TrigType::Bus, _) => tpu::Slope::Falling,
+            (TrigType::Bus, _) => match m.dec_proto.start_edge() {
+                Slope::Rise => tpu::Slope::Rising,
+                Slope::Either => tpu::Slope::Either,
+                Slope::Fall => tpu::Slope::Falling,
+            },
             (_, Slope::Rise) => tpu::Slope::Rising,
             (_, Slope::Fall) => tpu::Slope::Falling,
             (_, Slope::Either) => tpu::Slope::Either,
@@ -297,13 +294,14 @@ fn hw_segments_ok(m: &Model) -> bool {
 }
 
 /// Most hardware segments for the model's set-up (`Board::seg_max`): the whole-memory limit of its segment size.
+/// None where no segment of that size fits (100 M and 125 M points): the software history records them.
 pub fn seg_max(m: &Model) -> Option<usize> {
     if !hw_segments_ok(m) {
         return None;
     }
     let s = settings(m, false);
     let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
-    Some(hz::max_record_frames(p.seg) as usize)
+    Some(hz::max_record_frames(p.seg) as usize).filter(|&n| n > 0)
 }
 
 /// Settings for reading hardware segments back: the live batch plan (compression above 1 M points) with the header

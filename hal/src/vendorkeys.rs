@@ -302,12 +302,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn finds_both_keys_in_an_image() {
         let v = encode_vendor_with(&[(5, "DHO924S"), (7, "DHO9X1")], &TEST_KEYS);
         assert_eq!(find(&image(), &v), Some(TEST_KEYS));
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn finds_an_image_stored_in_a_package() {
         let v = encode_vendor_with(&[(5, "DHO924S")], &TEST_KEYS);
         let mut b = vec![0x50u8; 0x3000];
@@ -317,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn finds_an_image_packed_in_a_package() {
         let v = encode_vendor_with(&[(5, "DHO924S")], &TEST_KEYS);
         let img = image();
@@ -352,6 +355,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn bogus_headers_are_passed_over() {
         let mut b = image();
         // a second "image" whose part claims an offset and size far beyond the bytes

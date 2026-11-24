@@ -5,8 +5,45 @@
 //! decodes the record with the Decode menu's settings and triggers at the end of the matching field.
 
 use crate::model::*;
+use crate::protocols::Decoder;
 use oos_dsp::decode::{Kind, Packet};
 use oos_dsp::trigger::Input;
+
+/// Time scale of the trigger condition of `m` (s): the search resolution must resolve it.
+pub fn feature(m: &Model) -> f64 {
+    let t = |x: f32| x as f64;
+    match m.trig_type {
+        TrigType::Edge | TrigType::Pattern => f64::INFINITY,
+        TrigType::Bus => m.bus_bit() / 20.0,
+        TrigType::Video => 0.25e-6,
+        TrigType::SetupHold => t(m.setup.min(m.hold)) / 4.0,
+        TrigType::Timeout => t(m.trig_t1) / 20.0,
+        TrigType::NthEdge => t(m.nth_idle) / 20.0,
+        TrigType::Runt if m.trig_when == WhenKind::Off => f64::INFINITY,
+        TrigType::Window if m.win_mode != WinMode::Inside => f64::INFINITY,
+        _ => {
+            t(m.trig_t1.min(if matches!(m.trig_when, WhenKind::In | WhenKind::Out) { m.trig_t2 } else { f32::MAX }))
+                / 20.0
+        }
+    }
+}
+
+/// Record length the trigger of `m` needs to decide (s).
+pub fn span(m: &Model) -> f64 {
+    let t = |x: f32| x as f64;
+    match m.trig_type {
+        TrigType::Video => match m.video_sync {
+            VSync::AllLines => 4.0 * m.video_std.line(),
+            _ => 1.1 * m.video_std.lines() as f64 * m.video_std.line(),
+        },
+        TrigType::Timeout | TrigType::Duration => 3.0 * t(m.trig_t1.max(m.trig_t2)) + 6e-3,
+        TrigType::NthEdge => 4.0 * t(m.nth_idle) + 2e-3,
+        // room for a whole frame of the protocol before the trigger point (a module may say: USB auto, low-speed packets)
+        TrigType::Bus => m.bus_frame_span(),
+        TrigType::Edge | TrigType::Pattern => 0.0,
+        _ => 3.0 * t(m.trig_t1.max(m.trig_t2)) + 3e-3,
+    }
+}
 
 /// Packets of the decoder settings in `m` on the channels of `inp` (times = fractional sample indices).
 pub fn decode(m: &Model, ch: [&[f32]; NCH], dt: f64) -> Result<Vec<Packet>, &'static str> {
@@ -14,6 +51,13 @@ pub fn decode(m: &Model, ch: [&[f32]; NCH], dt: f64) -> Result<Vec<Packet>, &'st
         return Err("stored decoder inputs need the reference adapter");
     }
     decode_at(m, ch, dt, m.dec_thr, 0.1 * m.ch[m.dec_src].volts_per_div())
+}
+
+/// The mean of every point and its neighbour: the line a decoder reads of points that are minimum and maximum in
+/// turn (`Record::alternates`: Peak detect, the pairs of a screen record). Same length; an edge crosses a level once,
+/// where the points themselves pass it three times and every bit begins with two pulses of one point.
+pub(crate) fn pair_means(v: &[f32]) -> Vec<f32> {
+    (0..v.len()).map(|i| (v[i] + v[(i + 1).min(v.len() - 1)]) / 2.0).collect()
 }
 
 /// Packets of logic analyser lines (`Model::dec_la`, the decoder's roles source / second / third / fourth line). The
@@ -178,6 +222,59 @@ pub fn find_all(m: &Model, inp: &Input) -> Vec<f64> {
 /// The first trigger point after `from`.
 pub fn find_first(m: &Model, inp: &Input, from: f64) -> Option<f64> {
     find_all(m, inp).into_iter().find(|&t| t > from)
+}
+
+#[cfg(test)]
+pub(crate) mod peak_tests {
+    use super::*;
+
+    /// A LIN frame (identifier 0x21, four bytes) as a Peak detect record gives it: points 0.4 us apart, each the
+    /// largest or the smallest of the four point times around it, in turn. With the decoder set for it, at another
+    /// rate than the bus has: the frame is read by its sync or not at all.
+    pub(crate) fn lin_in_peak_detect() -> (Model, Vec<f32>, f64) {
+        let frame = (0x21u8, vec![0x10u8, 0x20, 0x30, 0x40], true);
+        let mut line = oos_dsp::sim::lin_logic(&[frame], 19200.0, 0.6, 4.1);
+        line.tr = 4e-6;
+        let (dt, n) = (0.4e-6, 30_000);
+        let fine = |k: i64| line.v(k as f64 * dt / 4.0 - 1e-3) as f32;
+        let peak: Vec<f32> = (0..n as i64)
+            .map(|i| {
+                let span = (4 * (i - 2)..4 * (i + 2)).map(fine);
+                if i % 2 == 0 {
+                    span.fold(f32::MIN, f32::max)
+                } else {
+                    span.fold(f32::MAX, f32::min)
+                }
+            })
+            .collect();
+        let mut m = Model::default();
+        (m.dec_proto, m.dec_src, m.dec_thr) = (Proto::LIN, 0, 2.35);
+        m.dec_baud = 0;
+        (m, peak, dt)
+    }
+
+    /// The data bytes of the packets of `v`, and whether every packet is good.
+    pub(crate) fn lin_read(m: &Model, v: &[f32], dt: f64) -> (Vec<u32>, bool) {
+        let ch: [&[f32]; NCH] = std::array::from_fn(|c| if c == 0 { v } else { &[][..] });
+        let p = decode(m, ch, dt).unwrap();
+        (p.iter().filter(|x| x.kind == Kind::Data).map(|x| x.value).collect(), p.iter().all(|x| x.ok))
+    }
+
+    /// The bytes of the frame of `lin_in_peak_detect`, with its sync, all good.
+    pub(crate) fn lin_right() -> (Vec<u32>, bool) {
+        (vec![0x55, 0x10, 0x20, 0x30, 0x40], true)
+    }
+
+    /// Break it catches: a decoder read the points of a Peak detect record as samples. They are minimum and maximum
+    /// in turn, so an edge of a few points passed the threshold three times (LIN at 2.5 MSa/s: the sync of no frame
+    /// measured, every byte wrong; the same line in Normal decoded). The means of neighbours read like the line.
+    #[test]
+    fn a_peak_detect_record_decodes_like_its_signal() {
+        let (m, peak, dt) = lin_in_peak_detect();
+        assert_ne!(lin_read(&m, &peak, dt), lin_right(), "the record made here has doubled edges");
+        assert_eq!(lin_read(&m, &pair_means(&peak), dt), lin_right());
+        assert_eq!(pair_means(&[0.0, 2.0, 2.0]), [1.0, 2.0, 2.0]);
+    }
 }
 
 #[cfg(test)]

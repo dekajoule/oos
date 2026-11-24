@@ -23,10 +23,11 @@
 //! `Counters`, ADR 0074); `set_enabled` registers them there.
 
 use crate::board::pipe::{counters, CodeLayout, CodesInto, Counters, DecodeInto, RawBatch};
-use crate::board::Frame;
+use crate::board::{lock, Frame};
 use crate::fastdraw::EdgeSeek;
 use crate::model::*;
-use crate::wave::Phosphor;
+use crate::platform::Platform;
+use crate::wave::{Phosphor, Renew};
 use std::any::Any;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -299,7 +300,7 @@ pub(crate) struct Batch {
 impl Batch {
     /// The next `n` frames nobody has taken yet, with a share of the buffer to draw them from.
     fn claim(&self, n: usize) -> Option<(Range<usize>, Arc<Lease>)> {
-        let mut lease = self.lease.lock().unwrap();
+        let mut lease = lock(&self.lease);
         let i = self.next.load(Ordering::Relaxed);
         if i >= self.frames {
             return None;
@@ -435,7 +436,7 @@ impl Mail {
     const SPARES: usize = 8;
 
     /// The mailbox locked. It is whole between two moves, so a drawer that panicked stops neither the others nor the
-    /// UI.
+    /// UI. (The other states of the pipeline are locked with `board::lock`, which panics then.)
     fn lock(m: &Mutex<Mail>) -> std::sync::MutexGuard<'_, Mail> {
         m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -531,7 +532,7 @@ impl Pipe {
 
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
     pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize) {
-        let mut v = self.view.lock().unwrap();
+        let mut v = lock(&self.view);
         let Some(m) = m else {
             (v.view, v.key) = (None, None);
             return;
@@ -552,12 +553,12 @@ impl Pipe {
 
     /// The fast path applies: the workers take frames.
     pub fn accepting(&self) -> bool {
-        self.view.lock().unwrap().view.is_some()
+        lock(&self.view).view.is_some()
     }
 
     /// A buffer back from the workers, to read the next batch into (None: all are still out).
     pub fn take_buffer(&self) -> Option<Box<dyn Any + Send>> {
-        self.pool.lock().unwrap().try_recv().ok().map(|r| r.into_any())
+        lock(&self.pool).try_recv().ok().map(|r| r.into_any())
     }
 
     /// `feed_codes` without the board's view of the read-out words (tests).
@@ -597,7 +598,7 @@ impl Pipe {
         });
         self.live.fetch_add(1, Ordering::Acquire);
         {
-            let mut open = self.open.lock().unwrap();
+            let mut open = lock(&self.open);
             open.retain(|w| w.strong_count() > 0);
             open.push_back(Arc::downgrade(&b));
         }
@@ -614,7 +615,7 @@ impl Pipe {
     /// helper's maps. False when there is none (the helper's maps then go to the UI).
     pub fn help(&self, h: &mut Helper) -> bool {
         let b = {
-            let mut open = self.open.lock().unwrap();
+            let mut open = lock(&self.open);
             loop {
                 match open.front().map(|w| w.upgrade()) {
                     None => break None,
@@ -655,17 +656,18 @@ impl Pipe {
     }
 
     fn view_now(&self) -> (Option<Arc<View>>, u64) {
-        let s = self.view.lock().unwrap();
+        let s = lock(&self.view);
         (s.view.clone(), s.stamp)
     }
 
     /// Adds what the workers drew under the current mapping to `ph` and the trigger statistics to `edges`, `off`.
-    /// `clear`: minimum persistence, the picture is replaced: by the drawn maps themselves if anything is merged.
+    /// `renew`: what `ph` needs before the first frames of the screen step, done (and set to `Keep`) when anything is
+    /// merged; a picture to clear (minimum persistence) is replaced by the drawn maps themselves.
     /// One set of maps a call, whatever the number of workers (they fold theirs into one, `publish`): the frame loop
-    /// adds the maps of the channels on, or with `clear` swaps them in and adds nothing (issue #186). Without a
+    /// adds the maps of the channels on, or with `Clear` swaps them in and adds nothing (issue #186). Without a
     /// whole set it takes a parked one: the frames of a drawer that has no more batches come with a later screen.
-    pub fn merge(&self, ph: &mut Phosphor, clear: &mut bool, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
-        let gen = self.view.lock().unwrap().view.as_ref().map(|v| v.gen);
+    pub fn merge(&self, ph: &mut Phosphor, renew: &mut Renew, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
+        let gen = lock(&self.view).view.as_ref().map(|v| v.gen);
         let mut got = Merged::default();
         let full = {
             let mut mb = Mail::lock(&self.mail);
@@ -677,16 +679,17 @@ impl Pipe {
         };
         let Some(mut a) = full else { return got };
         if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
-            if *clear {
+            if *renew == Renew::Clear {
                 // the picture cleared and the maps added is the maps: the old picture goes back to be cleared
                 std::mem::swap(&mut ph.map, &mut a.ph.map);
                 a.used = [true; NCH];
-                *clear = false;
             } else {
+                ph.renew(*renew);
                 for c in (0..NCH).filter(|&c| a.used[c]) {
                     got.px += add_map(&mut ph.map[c], &a.ph.map[c]);
                 }
             }
+            *renew = Renew::Keep;
             for (x, y) in edges.iter_mut().zip(a.edges) {
                 *x += y;
             }
@@ -834,7 +837,7 @@ fn work(id: usize, rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mut
     let (mut spare, mut seen): (Option<Acc>, Option<u64>) = (None, None);
     while let Ok(b) = rx.recv() {
         let (v, stamp) = {
-            let s = view.lock().unwrap();
+            let s = lock(view);
             (s.view.clone(), s.stamp)
         };
         let Some(v) = v.filter(|_| b.stamp >= stamp) else {

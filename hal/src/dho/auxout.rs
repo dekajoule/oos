@@ -107,6 +107,7 @@ pub fn writes(a: &AuxOut) -> Vec<Write> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

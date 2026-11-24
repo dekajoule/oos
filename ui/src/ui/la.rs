@@ -9,6 +9,7 @@
 //! (bit n = Dn): the demo source generates them, the hardware source reads them after the analog record
 //! (`board/dho/hw.rs`). Hidden on models without the LA port (`platform().caps.la`).
 
+use super::menu_text::on_off;
 use super::*;
 // the settings are the model's, the record the signal's (ADR 0049); the page names them from here
 pub use crate::logic::LaRec;
@@ -99,7 +100,16 @@ type ColKey = (usize, usize, u64, u64, usize);
 
 /// Columns of the last drawn LA record (the screen redraws ~30 times a second; deep records are walked once).
 #[derive(Default)]
-pub struct Cache(Option<(ColKey, Arc<Vec<Col>>)>);
+struct Cache(Option<(ColKey, Arc<Vec<Col>>)>);
+
+/// The logic analyser between frames (ADR 0062).
+#[derive(Default)]
+pub(super) struct Lanes {
+    /// the probe detect: None = not known (no hardware, not read yet)
+    probe: Option<bool>,
+    /// pixel columns of the last LA record drawn
+    cols: std::cell::RefCell<Cache>,
+}
 
 impl Ui {
     pub(super) fn la_items(&self) -> Vec<Item> {
@@ -144,13 +154,12 @@ impl Ui {
 
     pub(super) fn la_value(&self, it: Item) -> Option<String> {
         let l = &self.m.la;
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::LaShow => GROUPS.iter().take(3).find(|g| g.1 == l.show).map_or(GROUPS[3].0, |g| g.0).into(),
             Item::LaThr(p) => PRESETS[l.preset[p.min(1)].min(USER)].0.into(),
             Item::LaUser(p) => format!("{:.2} V", l.user[p.min(1)]),
             Item::LaHeight => HEIGHTS[l.height.min(HEIGHTS.len() - 1)].0.into(),
-            Item::LaLine(n) => onoff(l.show >> n.min(15) & 1 == 1),
+            Item::LaLine(n) => on_off(l.show >> n.min(15) & 1 == 1),
             Item::LaPat(n) => {
                 ["H", "L", "X"][PAT_BITS.iter().position(|&b| b == self.m.pat_la[n.min(15)]).unwrap_or(2)].into()
             }
@@ -305,22 +314,22 @@ impl Ui {
     /// without a probe. SCPI can still switch it on afterwards (no change of the state here), which is the way out if the
     /// detection ever reads wrong.
     pub(super) fn la_probe_set(&mut self, p: Option<bool>) {
-        if self.la_probe != Some(false) && p == Some(false) && self.m.la.on {
+        if self.la.probe != Some(false) && p == Some(false) && self.m.la.on {
             self.m.la.on = false;
             self.settings_changed();
             self.toast("No LA probe: LA off");
         }
-        self.la_probe = p;
+        self.la.probe = p;
     }
 
     /// The LA can be switched on: the probe is there, or nobody knows otherwise (demo signals, not read yet).
     pub(super) fn la_probe_ok(&self) -> bool {
-        self.la_probe != Some(false)
+        self.la.probe != Some(false)
     }
 
     /// Page title with the probe state (GPIO 120 on the unit).
     pub(super) fn la_title(&self) -> String {
-        let probe = match (&self.src, self.la_probe) {
+        let probe = match (&self.src, self.la.probe) {
             (Source::Hw { .. }, Some(true)) => "probe connected",
             (Source::Hw { .. }, Some(false)) => "no probe",
             (Source::Hw { .. }, None) => "probe not read",
@@ -371,7 +380,7 @@ impl Ui {
     /// The lane strip under the graticule: (rectangle, lane pitch) for `n` lanes. In a split plot the lanes stand at
     /// the bottom of their window: over its lower half while a channel shares the window, all of it when not.
     pub(super) fn la_band(&self, n: usize) -> (Rect, i32) {
-        if self.wins.len() > 1 {
+        if self.plot.wins.len() > 1 {
             let w = self.lane_area();
             let shared = self.win_has_analog(self.la_win_of());
             // the time labels of the window stay readable under the lanes
@@ -384,7 +393,7 @@ impl Ui {
             return (Rect::new(w.x, w.y + w.h - AXIS_ROW - h, w.w, h), pitch);
         }
         let (h, pitch) = self.la_fit(n);
-        let g = self.grid;
+        let g = self.plot.grid;
         (Rect::new(g.x, g.y + g.h + 2 + self.eye_below(), g.w, h - 2), pitch)
     }
 
@@ -422,22 +431,22 @@ impl Ui {
         )
         .hash(&mut h);
         let key = h.finish();
-        if let Some(e) = self.dec_cache.borrow().iter().find(|e| e.0 == key) {
-            return Ok(e.1.clone());
+        if let Some(p) = self.decoded.get(key) {
+            return Ok(p);
         }
         let mut p = crate::trig::decode_la(m, &la.words, la.dt)?;
         for x in p.iter_mut() {
             x.t0 = la.t0 + x.t0 * la.dt;
             x.t1 = la.t0 + x.t1 * la.dt;
         }
-        self.dec_cache_put(key, &p);
+        self.decoded.put(key, &p);
         Ok(p)
     }
 
     /// The columns of the LA record for the trace width `w` with sample k at x0 + k xps, cached.
     fn la_columns(&self, la: &LaRec, x0: f64, xps: f64, w: usize) -> Arc<Vec<Col>> {
         let key = (Arc::as_ptr(&la.words) as usize, la.words.len(), x0.to_bits(), xps.to_bits(), w);
-        let mut c = self.la_cols.borrow_mut();
+        let mut c = self.la.cols.borrow_mut();
         if let Some((k, v)) = &c.0 {
             if *k == key {
                 return v.clone();
@@ -567,6 +576,7 @@ mod tests {
         assert!(LaSet::parse("true ffff 9 0 1 1 1").is_err());
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn la_memory_and_rate_limits() {
         // the DHO924S limits: 125 M / 1.25 GSa/s with one channel, 31.25 M with the LA, rate halved with a
@@ -883,6 +893,7 @@ mod trigger_tests {
         assert_eq!((at(-5e-6), at(5e-6)), (1, 0), "falling edge");
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hardware_settings_carry_the_line() {
         let mut m = Model::default();
@@ -944,6 +955,7 @@ mod pattern_tests {
         assert_eq!(back.pat_la, ui.m.pat_la);
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hardware_slots() {
         let mut m = Model::default();
@@ -993,6 +1005,7 @@ mod bus_tests {
         assert!(t < 3.0 * dl, "field end {} s from the trigger, LA sample {}", t, dl);
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hardware_edge_on_the_frame_line() {
         let mut m = Model::default();
@@ -1009,9 +1022,11 @@ mod bus_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod duration_tests {
     use super::*;
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn duration_on_a_line() {
         // D14 = the 1 kHz square, high for 500 us: "longer than 300 us" fires 300 us after the rising edge
@@ -1038,10 +1053,12 @@ mod duration_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod review_tests {
     use super::*;
 
     /// Roll and scan keep the LA: a D line as the source reaches `seq` together with the LA settings it needs.
+    #[cfg(oos_board = "dho")]
     #[test]
     fn slow_time_bases_keep_the_la() {
         let mut m = Model::default();
@@ -1059,6 +1076,7 @@ mod review_tests {
         assert!(wr.iter().rev().find(|w| w.0 == 0x4008).unwrap().1 & (1 << 24 | 1 << 26) == 1 << 24 | 1 << 26);
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn newest_la_word_at_the_newest_analog_point() {
         // 1000 analog points of 1 ms, pre at 400: the newest is 599 ms after pre; 2000 LA words of 0.5 ms
@@ -1067,6 +1085,7 @@ mod review_tests {
     }
 
     /// The channel the trigger reads is acquired hidden, with the LA on or off.
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hidden_trigger_channel() {
         let mut m = Model::default();

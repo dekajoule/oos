@@ -4,12 +4,19 @@
 //! The ADC core offsets matched on the unit (`cal.core_offset`, `coretrim`): the unit side of the trim, the kept
 //! overlay and the trim run of the acquisition thread. A new way of matching the cores goes here.
 
+/// Sets `core_offset_tight` for the calling thread (tests: the live run, `liverun.rs`).
+#[cfg(test)]
+pub(super) fn force_core_offset(on: Option<bool>) {
+    TIGHT.force(on);
+}
+
 /// `cal.core_offset = tight` in system.conf (docs/fork/core-offset.md): the core offsets of every ADC mode used are
 /// matched to each other at its first configuration, and kept in OOS's own cal_adc.hex. Off by default.
 pub(super) fn core_offset_tight() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| CORE_OFFSET.get())
+    TIGHT.get()
 }
+
+static TIGHT: crate::board::policy::Switch = crate::board::policy::Switch::new(|| CORE_OFFSET.get());
 
 pub(super) const CORE_OFFSET: crate::sysconf::Flag =
     crate::sysconf::Flag { key: "cal.core_offset", env: None, on: "tight" };
@@ -221,7 +228,7 @@ impl TrimRun {
             // not while the generator runs: its signal is locked to the ADC clock (coretrim gate)
             if !gen_on && t.mode == state.mode.min(10) {
                 if let Some(c) = cal_adc {
-                    super::plan::disarm(armed, state, bar, c2h);
+                    super::plan::disarm(armed, state, bar, c2h, clock);
                     self.tries[t.mode] += 1;
                     self.done[t.mode] = core_trim(bar, clock, state, c, &mut self.overlay, t.mask);
                 }

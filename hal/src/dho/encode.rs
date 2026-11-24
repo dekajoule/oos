@@ -95,6 +95,7 @@ fn words_le(w: [u16; 8]) -> [u8; 16] {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
     use crate::dho::{roll, seg, seq};

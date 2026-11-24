@@ -139,6 +139,7 @@ fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
     };
     // a square of a quarter duty, 2 V high: mean 0.5, RMS 1, std dev and AC RMS sqrt(0.75)
     let raw: Vec<f32> = (0..n).map(|i| if (i / 50) % 4 == 0 { 2.0 } else { 0.0 }).collect();
+    let raw_head = raw[..200].to_vec();
     let pairs: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.0 } else { 2.0 }).collect();
     let steps = |ui: &mut Ui, k: usize| {
         for _ in 0..k {
@@ -164,7 +165,7 @@ fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
     steps(&mut ui, 2);
     assert!(ui.stop.final_until.is_none());
     check(&ui, "the final raw frame");
-    let counted = ui.mstat[0].n;
+    let counted = ui.results.rows[0].n;
     assert!(counted > 0);
     // the view of the STOP read again as pairs: drawn, while the raw frame stays the record measured
     steps(&mut ui, 1);
@@ -172,11 +173,19 @@ fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
     shared.lock().unwrap().replay = Some(view(3, true, pairs.clone()));
     steps(&mut ui, 2);
     check(&ui, "the view read as pairs");
-    assert_eq!(ui.mstat[0].n, counted, "the view counted in the statistics");
+    assert_eq!(ui.results.rows[0].n, counted, "the view counted in the statistics");
     let measured = |ui: &Ui| ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
     let drawn = |ui: &Ui| ui.stop_picture().and_then(|r| r.raw.as_ref()).map(|r| (r.frame.seq, r.frame.envelope));
     assert_eq!(measured(&ui), Some(2));
     assert_eq!(drawn(&ui), Some((3, true)), "the pairs read for the view are drawn");
+    // `:WAVeform` NORMal reads that picture, RAW the raw frame of the STOP (#552: NORMal gave the raw window)
+    let pic = ui.stop_picture().map(|r| r.ch[0].clone()).unwrap();
+    let norm = ui.channel_page(0, false, 1, 0).map(|(v, _, _)| v).unwrap();
+    let finite = |v: &[f32]| v.iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect::<Vec<_>>();
+    assert_eq!(norm, finite(&pic), "NORMal reads the picture drawn, not the record measured");
+    let raw = ui.channel_page(0, true, 1, 0).map(|(v, _, _)| v).unwrap();
+    assert_eq!(raw.len(), n, "RAW reads the raw frame of the STOP");
+    assert_eq!(raw[..200], raw_head[..], "RAW: its samples");
     // zoomed in and out (a new time base clears the statistics, as any setting): the screen part of the raw frame
     for d in [-1, 1] {
         ui.adjust(Item::HScale, d);
@@ -184,7 +193,7 @@ fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
         shared.lock().unwrap().replay = Some(view(4, true, pairs.clone()));
         steps(&mut ui, 2);
         check(&ui, "a new view read as pairs");
-        assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
+        assert!(ui.results.rows.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
         assert_eq!(measured(&ui), Some(2));
         assert_eq!(drawn(&ui), Some((4, true)));
     }
@@ -203,7 +212,7 @@ fn stop_measures_the_final_raw_frame_while_the_views_are_drawn_from_pairs() {
     steps(&mut ui, 2);
     assert_eq!((measured(&ui), drawn(&ui)), (Some(2), Some((6, true))));
     check(&ui, "pairs after the raw window");
-    assert!(ui.mstat.iter().all(|s| s.n == 0));
+    assert!(ui.results.rows.iter().all(|s| s.n == 0));
     // RUN: the record of the STOP is let go
     ui.m.run = RunState::Run;
     shared.lock().unwrap().queue.push_back(frame(7, true, pairs.clone()));
@@ -236,7 +245,7 @@ fn stop_reads_the_record_again_without_counting_it() {
     };
     shared.lock().unwrap().queue.push_back(frame(1, 1.0));
     ui.step(0.05);
-    assert_eq!(ui.mstat[0].n, 1);
+    assert_eq!(ui.results.rows[0].n, 1);
     let seq = |ui: &Ui| ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq);
     ui.m.run = RunState::Stop;
     ui.step(0.05);
@@ -251,7 +260,7 @@ fn stop_reads_the_record_again_without_counting_it() {
     // the view was a record of another length and origin, which replaced it between two queries of a client)
     assert!(shared.lock().unwrap().stop_view.is_none(), "the whole record of the STOP read again");
     assert_eq!(seq(&ui), Some(1));
-    assert_eq!(ui.mstat[0].n, 1, "the record of the STOP counted again");
+    assert_eq!(ui.results.rows[0].n, 1, "the record of the STOP counted again");
     // a new view: the statistics start over, the record of the STOP is drawn and measured for it from its own
     // samples, not counted
     for k in [1, -1] {
@@ -261,7 +270,7 @@ fn stop_reads_the_record_again_without_counting_it() {
         assert!(shared.lock().unwrap().stop_view.is_none(), "the whole record of the STOP read again for a view");
         assert_eq!(seq(&ui), Some(1));
         assert!((ui.meas(0, Meas::Vmax) - 1.0).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
-        assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
+        assert!(ui.results.rows.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
     }
     crate::deepmeas::force(None);
 }

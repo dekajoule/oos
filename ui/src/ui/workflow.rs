@@ -24,7 +24,7 @@ mod slot_loading_tests {
     fn destination_choice_is_modal_and_cancel_changes_no_source_or_model() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.m.meas.clear();
-        ui.ref_sel = 3;
+        ui.ref_page.sel = 3;
         let before = ui.m.clone();
         ui.request_waveform();
         assert!(ui.load_slot_ask && !ui.open_wave_request);
@@ -33,7 +33,7 @@ mod slot_loading_tests {
         tap(&mut ui, Ui::load_slot_cancel());
         assert!(!ui.load_slot_ask && !ui.open_wave_request && ui.waveform_destination().is_none());
         assert_eq!(ui.m, before);
-        assert_eq!(ui.ref_sel, 3);
+        assert_eq!(ui.ref_page.sel, 3);
         assert!(ui.refs.iter().all(Option::is_none));
         ui.request_waveform();
         ui.dismiss_context();
@@ -46,22 +46,22 @@ mod slot_loading_tests {
         ui.m.ch[1].on = true;
         ui.m.trig_mode = TrigMode::Normal;
         ui.m.delay = 6e-6;
-        ui.ref_sel = 3;
+        ui.ref_page.sel = 3;
         let before = ui.m.clone();
         ui.request_waveform();
         tap(&mut ui, Ui::load_slot_button(9));
         assert_eq!(ui.waveform_destination(), Some(9));
         assert!(ui.open_wave_request && !ui.load_slot_ask);
-        assert_eq!(ui.ref_sel, 3, "choosing a destination does not change focus before commit");
+        assert_eq!(ui.ref_page.sel, 3, "choosing a destination does not change focus before commit");
         assert!(ui.commit_waveform_traces_at(vec![trace("A"), trace("B")], "two", 9).is_err());
         assert_eq!(ui.m, before);
-        assert_eq!(ui.ref_sel, 3);
+        assert_eq!(ui.ref_page.sel, 3);
         assert!(ui.refs.iter().all(Option::is_none), "overflow validates before replacing any slot");
-        ui.ref_sel = 7; // A different source may be selected while the worker is reading.
+        ui.ref_page.sel = 7; // A different source may be selected while the worker is reading.
         ui.commit_waveform_traces_at(vec![trace("R10")], "chosen", 9).unwrap();
         assert_eq!(ui.m, before, "live ADC/run/timebase/trigger/catalog are preserved");
         assert!(!ui.record_mode() && ui.m.ch[0].on && ui.m.ch[1].on);
-        assert_eq!(ui.ref_sel, 9);
+        assert_eq!(ui.ref_page.sel, 9);
         assert!(ui.refs[7].is_none() && ui.refs[9].as_ref().unwrap().on);
         assert_eq!(ui.replay.captures, 0);
         assert!(ui.set_trigger_source(WaveId::Ref(9), false));
@@ -134,7 +134,7 @@ mod import_measurement_tests {
         assert_eq!((ui.m.meas.clone(), ui.m.meas2.clone()), expected);
         assert!(ui.m.meas_full_record && ui.m.meas_labels);
         assert_eq!((ui.m.meas_lpct, ui.m.meas_hpct), (0.2, 0.8));
-        assert_eq!(ui.meas_src, WaveId::Ref(2), "new source is selected without replacing existing readouts");
+        assert_eq!(ui.sources.a, WaveId::Ref(2), "new source is selected without replacing existing readouts");
     }
 
     #[test]
@@ -165,8 +165,8 @@ mod tests {
     fn replay() -> Ui {
         let mut u = crate::ui::testkit::demo_ui();
         u.remember_live();
-        u.offline = true;
-        u.offline_ref = 0;
+        u.offline.on = true;
+        u.offline.slot = 0;
         u.m.trig_ref = Some(0);
         for ch in &mut u.m.ch {
             ch.on = false;
@@ -187,7 +187,7 @@ mod tests {
             })
             .collect();
         u.refs[0] = Some(RefWave { label: "Test record".into(), vpd: 0.5, ..RefWave::test(values, 1e-9, 0.0) });
-        u.meas_src = WaveId::Ref(0);
+        u.sources.a = WaveId::Ref(0);
         u.m.meas = vec![(Meas::Vpp, WaveId::Ref(0))];
         u.m.run = RunState::Stop;
         u
@@ -224,7 +224,7 @@ mod tests {
         let second = u.meas_at(WaveId::Ref(0), Meas::Vpp);
         assert!((first - 1.0).abs() < 0.01 && (second - 2.0).abs() < 0.01, "{first} {second}");
         assert!(u.replay.captures > count);
-        assert_eq!(u.mstat[0].n, 2);
+        assert_eq!(u.results.rows[0].n, 2);
         u.key(key::RUNSTOP);
         let held = (u.replay.captures, u.view(), second);
         u.step(0.5);
@@ -476,6 +476,7 @@ mod tests {
             raw: None,
             la: None,
             pairs: false,
+            peak: false,
         });
         u.refs[3] = Some(RefWave { color: 1, vpd: 0.2, ..RefWave::test(square(80), 1e-9, 0.0) });
         u.refs[4] = Some(RefWave { color: 2, vpd: 0.2, on: false, ..RefWave::test(square(200), 1e-9, 0.0) });
@@ -617,13 +618,13 @@ impl Ui {
             return;
         }
         let rows = self.meas_rows();
-        self.mstat.resize(rows.len(), MStat::default());
+        self.results.rows.resize(rows.len(), MStat::default());
         pending.rows.retain(|&index| {
             let Some(row) = rows.get(index) else { return false };
             if row.computing {
                 return true;
             }
-            Self::add_capture_statistic(&mut self.mstat[index], row.v);
+            Self::add_capture_statistic(&mut self.results.rows[index], row.v);
             false
         });
         if !pending.rows.is_empty() {
@@ -632,16 +633,16 @@ impl Ui {
     }
     pub fn record_mode(&self) -> bool {
         // A reference drawn with the live channels is not a session. Take over, Offline waveforms, and SIM are.
-        self.offline || self.session_is_sim || self.sim_play
+        self.offline.on || self.session_is_sim || self.sim_play
     }
 
     pub(super) fn active_reference(&self) -> usize {
         if self.session_is_sim {
             self.m.sim_slot
-        } else if self.offline {
-            self.offline_ref
-        } else if self.refs.get(self.ref_sel).is_some_and(Option::is_some) {
-            self.ref_sel
+        } else if self.offline.on {
+            self.offline.slot
+        } else if self.refs.get(self.ref_page.sel).is_some_and(Option::is_some) {
+            self.ref_page.sel
         } else {
             self.refs.iter().position(Option::is_some).unwrap_or(0)
         }
@@ -715,7 +716,7 @@ impl Ui {
         self.open_wave_request = false;
         self.load_destination = None;
         self.load_slot_ask = true;
-        self.power_dlg = false;
+        self.power.open = false;
         self.dialog = None;
         self.cancel_pointer();
     }
@@ -806,7 +807,7 @@ impl Ui {
         name: &str,
         auto: bool,
     ) -> Result<(), String> {
-        let destination = if auto { None } else { Some(self.ref_sel.min(NREF - 1)) };
+        let destination = if auto { None } else { Some(self.ref_page.sel.min(NREF - 1)) };
         self.commit_waveform_traces_to(traces, name, destination)
     }
 
@@ -886,7 +887,7 @@ impl Ui {
                 on: true,
             });
         }
-        self.ref_sel = first;
+        self.ref_page.sel = first;
         if reference_session {
             self.m.set_trigger_wave(WaveId::Ref(first), false);
             self.m.trig_ref2 = None;
@@ -902,7 +903,7 @@ impl Ui {
         if reference_session {
             self.clear_measurement_statistics();
         }
-        self.meas_src = WaveId::Ref(first);
+        self.sources.a = WaveId::Ref(first);
         if self.look == reflook::RefLook::TakeOver {
             self.solo_reference(first);
         }
@@ -958,8 +959,9 @@ impl Ui {
         if self.record_mode() {
             return;
         }
-        let slot = if self.refs.get(self.ref_sel).and_then(|r| r.as_ref()).is_some_and(|r| r.on && r.v.len() >= 2) {
-            self.ref_sel
+        let slot = if self.refs.get(self.ref_page.sel).and_then(|r| r.as_ref()).is_some_and(|r| r.on && r.v.len() >= 2)
+        {
+            self.ref_page.sel
         } else {
             match (0..NREF).find(|&i| self.refs[i].as_ref().is_some_and(|r| r.on && r.v.len() >= 2 && r.dt > 0.0)) {
                 Some(i) => i,
@@ -975,7 +977,7 @@ impl Ui {
         if note.is_empty() || self.view_on() || self.eye_open() {
             return None;
         }
-        let g = self.grid;
+        let g = self.plot.grid;
         Some(Rect::new(g.x + 8, g.y + g.h - 48, 52, 22))
     }
 
@@ -1120,9 +1122,9 @@ impl Ui {
         self.measure_refs();
         self.analyzer_update();
         let rows = self.meas_rows();
-        self.mstat.resize(rows.len(), MStat::default());
+        self.results.rows.resize(rows.len(), MStat::default());
         let mut pending = Vec::new();
-        for (index, (row, stat)) in rows.iter().zip(&mut self.mstat).enumerate() {
+        for (index, (row, stat)) in rows.iter().zip(&mut self.results.rows).enumerate() {
             if row.computing {
                 pending.push(index);
             } else {

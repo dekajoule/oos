@@ -292,6 +292,7 @@ impl Ui {
             Item::NetEth,
             Item::NetRetry10,
             Item::NetMac,
+            Item::NetShowAddr,
             Item::Open(MenuId::Remote),
             Item::NetPorts,
             Item::NetWlan,
@@ -407,7 +408,7 @@ impl Ui {
     pub(super) fn main_groups(&self) -> Vec<(&'static str, Vec<Item>)> {
         use Item::*;
         let mut disp = vec![Open(MenuId::Display), Open(MenuId::Horizontal), NavHist];
-        if self.hist_pos.is_some() {
+        if self.history.pos.is_some() {
             disp.extend([NavBack, NavFwd]);
         }
         // System > Features: what is left out is not offered

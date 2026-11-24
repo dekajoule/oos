@@ -7,6 +7,25 @@
 
 use super::*;
 
+/// The USB stick as the screen keeps it (ADR 0062).
+#[derive(Default)]
+pub(super) struct Stick {
+    /// a USB stick is mounted (the top bar's USB box, where files go, SSH key import)
+    pub mounted: bool,
+    /// when `usb_poll` looks for the USB, WLAN and Bluetooth sticks next (`Ui::now`)
+    pub next_look: f64,
+}
+
+/// Where files are stored, as the screen keeps it (ADR 0062).
+pub struct Files {
+    /// the storage folder (setups, CSV, PNG), created when missing
+    pub dir: std::path::PathBuf,
+    /// Auto / USB stick / desktop for waveform, mask and screenshot files
+    pub(super) dest: crate::store::StoreDest,
+    /// setup slot n = file setup<n>.txt
+    pub(super) slot: u32,
+}
+
 impl Ui {
     /// The band the external display scales when it shows the waveform: between the top bar and the cards.
     /// HDMI workspace: the waveform area as it is now (one canvas: the band between the bars; with layers: the layer
@@ -41,19 +60,19 @@ impl Ui {
 
     /// A USB stick is mounted and the storage directory was not set by hand: files go to it.
     pub fn usb_used(&self) -> bool {
-        self.usb && self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR)
+        self.stick.mounted && self.files.dir == std::path::Path::new(crate::store::DEFAULT_DIR)
     }
 
     /// Where screenshots, CSV, mask copies and fast-frame files go now.
     pub fn save_dir(&self) -> std::path::PathBuf {
-        match self.store_dest {
+        match self.files.dest {
             crate::store::StoreDest::Stick => std::path::PathBuf::from(crate::store::USB_DIR),
-            crate::store::StoreDest::Local => self.store_dir.clone(),
+            crate::store::StoreDest::Local => self.files.dir.clone(),
             crate::store::StoreDest::Auto => {
                 if self.usb_used() {
                     std::path::PathBuf::from(crate::store::USB_DIR)
                 } else {
-                    self.store_dir.clone()
+                    self.files.dir.clone()
                 }
             }
         }
@@ -61,8 +80,8 @@ impl Ui {
 
     /// For the message after saving.
     pub fn saved_where(&self) -> &'static str {
-        match self.store_dest {
-            crate::store::StoreDest::Local if self.usb => " locally, not on the stick",
+        match self.files.dest {
+            crate::store::StoreDest::Local if self.stick.mounted => " locally, not on the stick",
             crate::store::StoreDest::Stick => " on the USB stick",
             crate::store::StoreDest::Auto if self.usb_used() => " on the USB stick",
             _ => "",
@@ -78,17 +97,17 @@ impl Ui {
 
     /// From `step`: is a stick mounted (`/bin/oos-usb`); says so when that changes.
     pub(super) fn usb_poll(&mut self) {
-        if cfg!(test) || self.now < self.usb_check {
+        if cfg!(test) || self.now < self.stick.next_look {
             return;
         }
-        self.usb_check = self.now + 2.0;
+        self.stick.next_look = self.now + 2.0;
         self.net.wlan_stick = wlan::stick_there();
         self.bt.stick = bt::stick_there();
         self.bt.inputs = bt::inputs_connected(&bt::inputs());
         let on = std::fs::read_to_string("/proc/mounts").is_ok_and(|t| crate::store::usb_mounted(&t));
-        if on != self.usb {
-            self.usb = on;
-            if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) {
+        if on != self.stick.mounted {
+            self.stick.mounted = on;
+            if self.files.dir == std::path::Path::new(crate::store::DEFAULT_DIR) {
                 self.toast(if on { "USB stick ready: files are saved to it" } else { "USB stick removed" });
             }
         }
@@ -97,13 +116,13 @@ impl Ui {
     /// File of the current setup slot: a setup is small and has to survive a power cycle, so the default storage directory
     /// in RAM is not used for it when OOS's data partition is there.
     pub(super) fn setup_path(&self) -> std::path::PathBuf {
-        let keep = std::path::Path::new("/oos/setups");
-        let dir = if self.store_dir == std::path::Path::new(crate::store::DEFAULT_DIR) && keep.is_dir() {
-            keep
-        } else {
-            self.store_dir.as_path()
-        };
-        dir.join(format!("setup{}.txt", self.store_slot))
+        let dir =
+            if self.files.dir == std::path::Path::new(crate::store::DEFAULT_DIR) && crate::sysconf::data_partition() {
+                std::path::Path::new(crate::sysconf::SETUPS_DIR)
+            } else {
+                self.files.dir.as_path()
+            };
+        dir.join(format!("setup{}.txt", self.files.slot))
     }
 
     /// The `ref<N>.*` lines of a setup: how each loaded ref slot looks (on/off, scale, offset, colour, name).
@@ -169,8 +188,7 @@ impl Ui {
                 // the text size is a preference of this screen, not part of a set-up
                 m.text_size = self.m.text_size;
                 if m.mask_src != self.m.mask_src {
-                    self.mask = None;
-                    self.mask_ref = None;
+                    self.mask_sw.forget();
                 }
                 m.keep_session(&self.m);
                 self.m = m;
@@ -178,10 +196,10 @@ impl Ui {
                 self.m.order_trigger_levels();
                 // what Bus switched on belongs to the set-up before: leaving Bus leaves the recalled one as it is
                 self.bus_auto = None;
-                self.math_state.borrow_mut().forget_fit();
-                self.math_fam = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
+                self.math.state.borrow_mut().forget_fit();
+                self.math.family = if self.m.math == MathOp::Off { MathFamily::Arith } else { self.m.math.family() };
                 self.sync_full();
-                if self.mask.is_none() {
+                if self.mask_sw.mask.is_none() {
                     self.m.mask_on = false;
                 }
                 self.build_mask();

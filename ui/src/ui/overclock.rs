@@ -94,11 +94,13 @@ impl Ui {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::super::Item;
     use super::*;
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn writes_the_step_and_keeps_other_lines() {
         let dir = crate::ui::testkit::Scratch::new("overclock");
         fs::create_dir_all(&dir).unwrap();
@@ -116,6 +118,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn back_at_the_standard_clock_no_file_is_left() {
         let dir = crate::ui::testkit::Scratch::new("overclock-empty");
         fs::create_dir_all(&dir).unwrap();
@@ -130,6 +133,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn steps_stop_at_both_ends() {
         let dir = crate::ui::testkit::Scratch::new("overclock-ends");
         fs::create_dir_all(&dir).unwrap();
@@ -145,6 +149,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn a_step_the_file_cannot_take_stays_as_it_was() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.overclock.path = "/nonexistent-dir/limits.conf".into();
@@ -153,6 +158,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn the_menu_shows_overclock_only_with_the_switch_or_another_clock() {
         SWITCH.check_both_files();
         let std = board().clock_steps()[0];

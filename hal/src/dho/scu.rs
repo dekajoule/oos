@@ -334,6 +334,7 @@ pub fn auto_trigger(sh: &mut Shadows, auto: bool, tdiv_fs: i128, holdoff_fs: i12
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 
@@ -455,6 +456,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod la_window_tests {
     use super::*;
 

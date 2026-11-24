@@ -141,8 +141,23 @@ impl Ui {
         self.dirty_map = true;
     }
 
-    /// Switches the trigger type and sets starting values that trigger on the demo signals.
+    /// Switches the trigger type. The type left keeps its values, a type chosen again gets them back (#49,
+    /// `Model::keep_trig_type`); on a scope and a record the source stays. The demo is the exception: there a type
+    /// starts on the channel that shows its signal, with values that trigger on it (`switch_trig_type`), and its own
+    /// kept values go over them.
     pub(super) fn set_trig_type(&mut self, t: TrigType) {
+        self.m.keep_trig_type();
+        self.switch_trig_type(t);
+        if self.m.take_kept_trig_type() {
+            // a reference kept as the second source that is no longer loaded: the channel instead
+            if self.m.trig_ref2.is_some_and(|i| i >= NREF || self.refs[i].is_none()) {
+                self.m.trig_ref2 = None;
+            }
+            self.dirty_map = true;
+        }
+    }
+
+    fn switch_trig_type(&mut self, t: TrigType) {
         let was_bus = self.m.trig_type == TrigType::Bus;
         // leaving Bus: off again what entering it switched on (the decoder kept the live picture raw, its demo sources
         // stayed on); a type set elsewhere since leaves nothing to undo
@@ -308,12 +323,10 @@ impl Ui {
 
     pub(super) fn adjust(&mut self, it: Item, d: i32) {
         if matches!(it, Item::CatSourceC | Item::CatSourceD) {
-            let current = if it == Item::CatSourceC { self.cat.c } else { self.cat.d };
-            let next = self.step_wave(current, d);
             if it == Item::CatSourceC {
-                self.cat.c = next;
+                self.cat.c = self.step_wave(self.cat.c, d);
             } else {
-                self.cat.d = next;
+                self.cat.d = self.step_wave(self.cat.d, d);
             }
             return;
         }
@@ -366,15 +379,7 @@ impl Ui {
             return;
         }
         let _ = self.adjust_scope(it, d) || self.adjust_tools(it, d) || self.adjust_more(it, d);
-        // moving the strip does not change what was measured
-        if it == Item::StripDock {
-            self.relayout();
-            return;
-        }
         self.settings_changed();
-        if it == Item::Hdmi {
-            self.sync_full();
-        }
     }
 
     /// `adjust` of the channels, the time base, the logger and the trigger. True when `it` is one of them.
@@ -414,11 +419,6 @@ impl Ui {
             Item::ChBias(c) => m.ch[c].bias += 0.01 * m.ch[c].volts_per_div() * d as f32,
             Item::ChSkew(c) => m.ch[c].skew = (m.ch[c].skew + 600e-12 * d as f32).clamp(-SKEW_MAX, SKEW_MAX),
             Item::HFine => m.fine_t = !m.fine_t,
-            Item::HExpandI => {
-                let all = [HExpand::Center, HExpand::Left, HExpand::Right, HExpand::Trigger];
-                let i = all.iter().position(|&x| x == m.h_expand).unwrap_or(0);
-                m.h_expand = all[cycle(i, all.len(), d)];
-            }
             Item::LogOn => {
                 if self.log.file.is_some() {
                     self.log_stop("Log ended");
@@ -436,7 +436,7 @@ impl Ui {
                     m.tscale = step_index(m.tscale, tscales().len(), d);
                     m.tfine = 1.0;
                 }
-                keep_expand_point(m, old);
+                m.keep_expand_point(old);
             }
             Item::HDelay => m.delay += d as f32 * m.time_per_div() / 25.0,
             Item::TrigSrc => {
@@ -472,9 +472,6 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.trig_when).unwrap_or(0);
                 m.trig_when = all[cycle(i, all.len(), d)];
             }
-            Item::VidLine => {
-                m.video_line = (m.video_line as i32 + d).clamp(1, m.video_std.lines() as i32 / 2 - 10) as u32
-            }
             Item::Pat(c) => {
                 let all = if m.trig_type == TrigType::Duration {
                     &[Bit::H, Bit::L, Bit::X][..]
@@ -488,7 +485,6 @@ impl Ui {
                 let c = m.trig_src;
                 m.pat_levels[c] += d as f32 * m.ch[c].volts_per_div() / 25.0;
             }
-            Item::NthN => m.nth_n = (m.nth_n as i32 + d).clamp(1, 65535) as u32,
             _ => return false,
         }
         true
@@ -500,14 +496,8 @@ impl Ui {
         let m = &mut self.m;
         match it {
             Item::AcqDepth => m.mdepth = cycle(m.mdepth, mdepths().len(), d),
-            Item::MeasSrc => {
-                let cur = self.meas_src;
-                self.meas_src = self.step_wave(cur, d);
-            }
-            Item::MeasSrcB => {
-                let cur = self.meas_src_b;
-                self.meas_src_b = self.step_wave(cur, d);
-            }
+            Item::MeasSrc => self.sources.a = self.step_wave(self.sources.a, d),
+            Item::MeasSrcB => self.sources.b = self.step_wave(self.sources.b, d),
             // Track cursor B on its own source (follows cursor A's until set)
             Item::CurSrcB => {
                 let cur = self.cursor_b_source();
@@ -528,23 +518,23 @@ impl Ui {
             Item::CurC => m.cur_c = (m.cur_c + d as f32 * 0.005).clamp(0.0, 1.0),
             Item::CurD => m.cur_d = (m.cur_d + d as f32 * 0.005).clamp(0.0, 1.0),
             Item::RefSel => {
-                let slot = (self.ref_sel as i32 + d).rem_euclid(NREF as i32) as usize;
+                let slot = (self.ref_page.sel as i32 + d).rem_euclid(NREF as i32) as usize;
                 self.select_workspace_source(WaveId::Ref(slot));
             }
             Item::RefColor => {
-                if let Some(r) = &mut self.refs[self.ref_sel] {
+                if let Some(r) = &mut self.refs[self.ref_page.sel] {
                     r.color = cycle(r.color.min(REF_COLORS.len() - 1), REF_COLORS.len(), d);
                 }
             }
             Item::RefVpd => {
-                if let Some(r) = &mut self.refs[self.ref_sel] {
+                if let Some(r) = &mut self.refs[self.ref_page.sel] {
                     let i = VSCALES.iter().position(|&s| s >= r.vpd * 0.999).unwrap_or(VSCALES.len() - 1);
                     r.vpd = VSCALES[step_index(i, VSCALES.len(), d)];
                 }
                 self.measure_refs();
             }
             Item::RefOffset => {
-                if let Some(r) = &mut self.refs[self.ref_sel] {
+                if let Some(r) = &mut self.refs[self.ref_page.sel] {
                     r.offset += 0.1 * r.vpd * d as f32;
                 }
             }
@@ -560,17 +550,6 @@ impl Ui {
             Item::ZoneMode => {
                 let z = &mut m.zones[self.zone_trig.sel];
                 z.inside = !z.inside;
-            }
-            Item::Hdmi => {
-                let i = HDMI_MODES.iter().position(|&x| x == m.hdmi).unwrap_or(0);
-                m.hdmi = HDMI_MODES[step_index(i, HDMI_MODES.len(), d)];
-                if self.m.hdmi == HdmiMode::Layout {
-                    self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
-                }
-            }
-            Item::TextSize => {
-                let i = m.text_size.index();
-                m.text_size = TEXT_SIZES[step_index(i, TEXT_SIZES.len(), d)];
             }
             Item::ZInput => {
                 let i = m.z_src.map_or(0, |c| c + 1);
@@ -588,7 +567,7 @@ impl Ui {
                 m.quick = QUICKS[cycle(i, QUICKS.len(), d)];
             }
             Item::MathOpI => {
-                let fam = self.math_fam;
+                let fam = self.math.family;
                 let mut ops = vec![MathOp::Off];
                 ops.extend_from_slice(fam.ops());
                 let i = ops.iter().position(|&x| x == m.math).unwrap_or(0);
@@ -597,10 +576,10 @@ impl Ui {
                 self.math_autoscale();
             }
             Item::MathFam => {
-                let i = MathFamily::ALL.iter().position(|&f| f == self.math_fam).unwrap_or(0);
-                self.math_fam = MathFamily::ALL[cycle(i, MathFamily::ALL.len(), d)];
-                if m.math != MathOp::Off && m.math.family() != self.math_fam {
-                    m.math = self.math_fam.ops()[0];
+                let i = MathFamily::ALL.iter().position(|&f| f == self.math.family).unwrap_or(0);
+                self.math.family = MathFamily::ALL[cycle(i, MathFamily::ALL.len(), d)];
+                if m.math != MathOp::Off && m.math.family() != self.math.family {
+                    m.math = self.math.family.ops()[0];
                     m.math_offset = 0.0;
                     self.math_autoscale();
                 }
@@ -612,7 +591,7 @@ impl Ui {
                 let k = cycle(m.math_sel, NMATH, d);
                 m.math_select(k);
                 if m.math != MathOp::Off {
-                    self.math_fam = m.math.family();
+                    self.math.family = m.math.family();
                 }
             }
             Item::MathScale => {
@@ -620,16 +599,7 @@ impl Ui {
                 m.math_scale = step_index(m.math_scale, n, d);
             }
             Item::MathOffset => m.math_offset += d as f32 * 0.1,
-            Item::MeasStats => self.stats_on = !self.stats_on,
-            Item::MeasLabels => self.m.meas_labels = !self.m.meas_labels,
-            Item::StripDock => {
-                let all = StripDock::ALL;
-                let i = all.iter().position(|&s| s == m.strip_dock).unwrap_or(0);
-                m.strip_dock = all[step_index(i, all.len(), d)];
-                // the statistics card follows the dock the strip uses
-                self.workspace.measure_docked = true;
-                self.workspace.measure_float = None;
-            }
+            Item::MeasStats => self.results.on = !self.results.on,
             _ => return false,
         }
         true
@@ -643,22 +613,6 @@ impl Ui {
             Item::DecSel => {
                 let k = (self.m.dec_sel as i32 + d).rem_euclid(DECODERS as i32) as usize;
                 self.m.dec_select(k);
-            }
-            Item::PaneSel => {
-                self.m.pane = (self.m.pane as i32 + d).rem_euclid(tables::PANES.len() as i32) as usize;
-                if self.m.density == Density::Split {
-                    self.m.split_pane = self.m.pane;
-                    let prev = self.m.win_layout;
-                    self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
-                    if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
-                        self.spread_wins();
-                        if self.m.zoom {
-                            self.toast("Windows show while zoom is off");
-                        }
-                    }
-                } else if self.m.pane != 0 && self.pane_h() == 0 {
-                    self.toast("No room for a second pane here: fewer LA lanes or the scope view");
-                }
             }
             Item::TrendSel(k) => {
                 let n = self.trend_options().len() as i32;
@@ -741,7 +695,6 @@ impl Ui {
                 let on = !self.m.zoom;
                 self.set_zoom(on);
             }
-            Item::AutoRoll => self.m.auto_roll = !self.m.auto_roll,
             Item::ZScale => {
                 self.m.zscale = step_index(self.m.zscale, tscales().len(), d);
                 self.clamp_zoom();
@@ -753,16 +706,15 @@ impl Ui {
             Item::XyMode => self.xy = !self.xy,
             Item::BootMode => self.boot_mode_toggle(),
             Item::Overclock => self.overclock_step(d),
-            Item::StoreSlot => self.store_slot = (self.store_slot as i32 + d).clamp(1, 9) as u32,
+            Item::StoreSlot => self.files.slot = (self.files.slot as i32 + d).clamp(1, 9) as u32,
             Item::StoreDest => {
-                let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.store_dest).unwrap_or(0);
-                self.store_dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
+                let i = crate::store::StoreDest::ALL.iter().position(|&x| x == self.files.dest).unwrap_or(0);
+                self.files.dest = crate::store::StoreDest::ALL[cycle(i, crate::store::StoreDest::ALL.len(), d)];
             }
             Item::MaskSrc => {
                 // a mask belongs to its channel: the new source needs a new one
                 self.m.mask_src = src_step(self.m.mask_src, NCH, d);
-                self.mask = None;
-                self.mask_ref = None;
+                self.mask_sw.forget();
                 self.m.mask_on = false;
             }
             Item::MaskX => {
@@ -773,7 +725,7 @@ impl Ui {
                 self.m.mask_y = ((self.m.mask_y + d as f32 * 0.04) * 100.0).round().clamp(4.0, 400.0) / 100.0;
                 self.build_mask();
             }
-            Item::RefSrc => self.ref_src = src_step(self.ref_src, NCH, d),
+            Item::RefSrc => self.ref_page.src = src_step(self.ref_page.src, NCH, d),
             Item::RefShow(i) => {
                 if let Some(r) = &mut self.refs[i] {
                     r.on = !r.on;
@@ -785,7 +737,7 @@ impl Ui {
     }
 
     pub(super) fn clear_measurement_statistics(&mut self) {
-        self.mstat.clear();
+        self.results.rows.clear();
         self.replay.clear_deferred_statistics();
         self.reset_catalog_statistics();
     }
@@ -847,8 +799,8 @@ impl Ui {
             }
             Item::SlopeAct => self.key(key::SLOPE),
             Item::NavHist => self.key(key::NAVIGATE),
-            Item::NavBack => self.key(0x08),
-            Item::NavFwd => self.key(0x06),
+            Item::NavBack => self.key(key::NAV_BACK),
+            Item::NavFwd => self.key(key::NAV_FWD),
             Item::QuickRun => {
                 self.close_menu();
                 self.quick();
@@ -857,7 +809,7 @@ impl Ui {
                 // the dialog of the POWER key, without the MCU answer that belongs to a key press
                 self.close_menu();
                 self.dialog = None;
-                self.power_dlg = true;
+                self.power.open = true;
             }
             Item::HZero => {
                 self.m.delay = 0.0;
@@ -901,7 +853,7 @@ impl Ui {
                 }
             }
             Item::PickOpt(k) if self.pick.is_some_and(|p| p.it == Item::RefImport) => {
-                let p = self.ref_files.get(k).cloned();
+                let p = self.ref_page.files.get(k).cloned();
                 self.close_picker();
                 if let Some(p) = p {
                     self.ref_load_path(&p);
@@ -924,27 +876,22 @@ impl Ui {
     /// `activate` of an action: the measurements, math, references. True when `it` is one of them.
     fn activate_measure(&mut self, it: Item) -> bool {
         match it {
-            Item::AddMeas => {
-                if let Some(k) = self.next_usual_meas() {
-                    self.activate(Item::MeasAdd(k));
-                }
-            }
             Item::MeasCfg(i) => self.open_meas_cfg(i as usize),
             Item::MeasAdd(k) => {
-                let e = (k, self.meas_src);
+                let e = (k, self.sources.a);
                 if let Some(index) = self.m.meas.iter().position(|item| *item == e) {
                     self.m.meas.remove(index);
-                    self.meas_own.remove(&e);
-                    if self.meas_cfg == Some(index as u16) {
-                        self.meas_cfg = None;
-                    } else if self.meas_cfg.is_some_and(|n| n as usize > index) {
-                        self.meas_cfg = self.meas_cfg.map(|n| n - 1);
+                    self.meas_own.rows.remove(&e);
+                    if self.meas_own.dialog == Some(index as u16) {
+                        self.meas_own.dialog = None;
+                    } else if self.meas_own.dialog.is_some_and(|n| n as usize > index) {
+                        self.meas_own.dialog = self.meas_own.dialog.map(|n| n - 1);
                     }
                     self.clear_measurement_statistics();
                     self.toast(&format!(
                         "{} {} removed",
                         meascatalog::meas_long_name(k),
-                        self.wave_name(self.meas_src)
+                        self.wave_name(self.sources.a)
                     ));
                     return true;
                 } else {
@@ -955,7 +902,7 @@ impl Ui {
                     self.clear_measurement_statistics();
                 }
                 if k == Meas::Burst && !(self.m.meas_idle > 0.0) {
-                    if let Some((a, _)) = self.meas_analysis(self.meas_src) {
+                    if let Some((a, _)) = self.meas_analysis(self.sources.a) {
                         let p = a.period();
                         if p.is_finite() && p > 0.0 {
                             self.m.meas_idle = p;
@@ -963,7 +910,7 @@ impl Ui {
                     }
                 }
                 self.ensure_meas_own();
-                self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.meas_src)));
+                self.toast(&format!("{} {} added", meascatalog::meas_long_name(k), self.wave_name(self.sources.a)));
             }
             Item::MeasPair(k) => self.meas_pair_toggle(k),
             Item::CntClear => self.counter_clear(),
@@ -986,8 +933,8 @@ impl Ui {
             Item::MaskLoad => self.mask_load(),
             Item::ChLabel(c) => self.wlan.osk = Some(wlan::Osk::for_label(c, &self.m.ch_label[c])),
             Item::BusLabel => self.wlan.osk = Some(wlan::Osk::for_bus(&self.m.bus.label)),
-            Item::RefLabel => match &self.refs[self.ref_sel] {
-                Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_sel, &r.label)),
+            Item::RefLabel => match &self.refs[self.ref_page.sel] {
+                Some(r) => self.wlan.osk = Some(wlan::Osk::for_ref(self.ref_page.sel, &r.label)),
                 None => self.toast("That slot is empty"),
             },
             Item::ChBiasZero(c) => self.zero_input(c),
@@ -999,12 +946,12 @@ impl Ui {
                 self.m.meas.clear();
                 self.m.meas2.clear();
                 self.m.cat.clear();
-                self.meas_own.clear();
-                self.meas_cfg = None;
+                self.meas_own.rows.clear();
+                self.meas_own.dialog = None;
                 self.clear_measurement_statistics();
             }
             Item::RefSave => {
-                let c = self.ref_src;
+                let c = self.ref_page.src;
                 let rec = self.last[0].clone();
                 let saved = rec.as_ref().filter(|r| !r.ch[c].is_empty()).map(|r| {
                     let (v, dt) = self.meas_wave(r, c);
@@ -1064,7 +1011,7 @@ impl Ui {
                     d.push(format!("{} warning(s), see System info", p.warnings.len()));
                 }
                 d.extend([
-                    format!("Source: {}   {:.0} fps", self.src.name(), self.fps),
+                    format!("Source: {}   {:.0} fps", self.src.name(), self.counts.fps),
                     self.start_up_summary().unwrap_or_default(),
                     "Tap to close".into(),
                 ]);
@@ -1074,7 +1021,7 @@ impl Ui {
             Item::Shot => {
                 // without the dialog on it
                 self.close_menu();
-                self.shot_request = Some(String::new());
+                self.asks.shot = Some(String::new());
             }
             Item::MathAuto => self.math_autoscale(),
             Item::ZoneBox | Item::ZoneShape => {
@@ -1116,13 +1063,12 @@ impl Ui {
                 // without the dialog: the screen is saved after the next frame (main loop / script runner)
                 let p = self.new_file(&self.save_dir(), "shot", "png");
                 self.close_menu();
-                self.shot_request = Some(p.to_string_lossy().into_owned());
+                self.asks.shot = Some(p.to_string_lossy().into_owned());
             }
             Item::MaskCreate => self.create_mask(),
             Item::MaskFromRef => self.create_mask_from_ref(),
             Item::MaskClear => {
-                self.mask = None;
-                self.mask_ref = None;
+                self.mask_sw.forget();
                 self.m.mask_on = false;
                 self.mask_counts_reset();
                 self.toast("Mask cleared");
@@ -1169,20 +1115,4 @@ fn fine_time(now: f32, d: i32) -> (usize, f32) {
     }
     let f = want / ts[i];
     (i, if (f - 1.0).abs() < 1e-5 { 1.0 } else { f })
-}
-
-/// After the time base changed from `old` s/div: the zoom stays inside it, and the delay, the time in the middle of
-/// the screen, moves so the expand point keeps its place (the knob and the number pad).
-pub(super) fn keep_expand_point(m: &mut Model, old: f32) {
-    if m.zscale > m.tscale {
-        m.zscale = m.tscale;
-    }
-    let new = m.time_per_div();
-    let half = HDIV / 2.0;
-    match m.h_expand {
-        HExpand::Center => {}
-        HExpand::Left => m.delay -= half * (old - new),
-        HExpand::Right => m.delay += half * (old - new),
-        HExpand::Trigger => m.delay *= new / old,
-    }
 }

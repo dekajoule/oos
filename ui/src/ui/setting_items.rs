@@ -8,7 +8,7 @@ use super::*;
 use crate::settings::Setting;
 
 /// The items the table answers for, by setup key.
-const ITEMS: [(Item, &str); 74] = [
+const ITEMS: [(Item, &str); 89] = [
     (Item::Persist, "persist"),
     (Item::Intensity, "intensity"),
     (Item::GridStyle, "grid"),
@@ -17,6 +17,10 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::ColorGrade, "color_grade"),
     (Item::Dots, "dots"),
     (Item::BottomBar, "bar"),
+    (Item::TextSize, "text_size"),
+    (Item::Hdmi, "hdmi"),
+    (Item::WinLayout, "density"),
+    (Item::PaneSel, "pane"),
     (Item::TrigSlope, "slope"),
     (Item::TrigMode, "trig_mode"),
     (Item::TrigHoldoff, "holdoff"),
@@ -29,8 +33,10 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::TrigT2, "trig_t2"),
     (Item::VidStd, "video_std"),
     (Item::VidSync, "video_sync"),
+    (Item::VidLine, "video_line"),
     (Item::WinModeI, "win_mode"),
     (Item::NthIdle, "nth_idle"),
+    (Item::NthN, "nth_n"),
     (Item::Setup, "setup"),
     (Item::Hold, "hold"),
     (Item::AcqMode, "acq"),
@@ -60,6 +66,8 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::BodeLink, "bode_link"),
     (Item::BodeSwTime, "bode_sweep time"),
     (Item::BodeSwLog, "bode_sweep log"),
+    (Item::BodeUnit, "bode_unit"),
+    (Item::BodeAmpUnit, "bode_amp_unit"),
     (Item::BodeSyncEdge, "bode_sweep edge"),
     (Item::BodeSyncLvl, "bode_sweep level"),
     (Item::BodeRef, "bode_sweep ref"),
@@ -83,6 +91,13 @@ const ITEMS: [(Item, &str); 74] = [
     (Item::PowMode, "power mode"),
     (Item::PowFline, "power_more fline"),
     (Item::PowFsw, "power_more fsw"),
+    (Item::HExpandI, "h_expand"),
+    (Item::AutoRoll, "auto_roll"),
+    (Item::MeasLabels, "meas_labels"),
+    (Item::StripDock, "strip_dock"),
+    (Item::BusOn, "bus_on"),
+    (Item::BusPos, "bus_pos"),
+    (Item::BusRw, "bus_rw"),
 ];
 
 /// The item of instance n of a numbered family.
@@ -113,6 +128,10 @@ impl Ui {
     }
 
     pub(super) fn setting_value(&self, it: Item) -> Option<String> {
+        // the Bode amplitude is kept in Vpp and shown in the unit its menu has (#52)
+        if it == Item::BodeAmp && self.m.bode_rms {
+            return Some(si_short(self.m.bode_amp / crate::settings::bode::VPP_PER_VRMS, "Vrms"));
+        }
         row(it).map(|(s, n)| s.shown(&self.m, n))
     }
 
@@ -125,12 +144,53 @@ impl Ui {
         let before = (s.get)(&self.m, n);
         s.step(&mut self.m, n, d);
         match it {
+            // the statistics card follows the dock the strip uses; moving the strip does not change what was measured
+            // (no `settings_changed`)
+            Item::StripDock => {
+                self.workspace.measure_docked = true;
+                self.workspace.measure_float = None;
+                self.relayout();
+                return true;
+            }
+            // a new density sets the windows, the lower pane and the panel bars up; the rest stays as it is (no
+            // `settings_changed`), as before the table
+            Item::WinLayout => {
+                self.full.asked = false;
+                self.apply_density();
+                return true;
+            }
+            // Split takes the new pane as the one it keeps, with two stacked traces for none
+            Item::PaneSel => {
+                if self.m.density == Density::Split {
+                    self.m.split_pane = self.m.pane;
+                    let prev = self.m.win_layout;
+                    self.m.win_layout = if self.m.pane == 0 { WinLayout::Rows } else { WinLayout::One };
+                    if self.m.win_layout != prev && self.m.win_layout != WinLayout::One {
+                        self.spread_wins();
+                        if self.m.zoom {
+                            self.toast("Windows show while zoom is off");
+                        }
+                    }
+                } else if self.m.pane != 0 && self.pane_h() == 0 {
+                    self.toast("No room for a second pane here: fewer LA lanes or the scope view");
+                }
+            }
+            // the Layout costs the panel frames; a new mode sets the other picture up after the settings changed
+            Item::Hdmi => {
+                if self.m.hdmi == HdmiMode::Layout {
+                    self.toast("HDMI Layout: a second picture each monitor frame, the panel may get fewer frames");
+                }
+                self.settings_changed();
+                self.sync_full();
+                return true;
+            }
             // only the inputs the model has switch on
             Item::ChOn(c) => {
                 self.m.ch[c].on &= c < n_ch();
                 if self.m.ch[c].on && self.m.run == RunState::Run {
                     self.m.floor_live_tdiv();
                 }
+                self.select_a_channel_that_is_on(c);
             }
             // only a model with the LA port switches it on
             Item::LaOn => self.m.la.on &= crate::ui::la::available(),
@@ -138,7 +198,7 @@ impl Ui {
             Item::Persist => self.ph.clear(),
             Item::Dots | Item::BottomBar => self.dirty_map = true,
             // a switched-on test without a mask builds one from the source
-            Item::MaskOn if self.m.mask_on && self.mask.is_none() => self.create_mask(),
+            Item::MaskOn if self.m.mask_on && self.mask_sw.mask.is_none() => self.create_mask(),
             Item::MaskInvert => self.build_mask(),
             // the menu's Single also starts the acquisition
             Item::TrigMode if self.m.trig_mode == TrigMode::Single => self.m.run = RunState::Run,
@@ -199,9 +259,13 @@ impl Ui {
             | Item::BodeLink
             | Item::BodeSwTime
             | Item::BodeSwLog
+            | Item::BodeUnit
+            | Item::BodeAmpUnit
             | Item::BodeSyncEdge
             | Item::BodeSyncLvl
             | Item::BodeRef => return true,
+            // the bus on the plot is drawn from the record as it is (no `settings_changed`), as before the table
+            Item::BusOn | Item::BusPos | Item::BusRw => return true,
             Item::AcqSegHw => {
                 // the other limit applies from now on
                 self.m.segments = self.seg_count();
@@ -218,20 +282,33 @@ impl Ui {
 mod tests {
     use super::*;
 
-    /// The item is in the Display menu, in the DVM menu, in the Mask menu, in the LA menu, in a menu of an analyser
-    /// page, in the Acquire menu (in Average mode with segments, so their rows show; HW average shows only with a
-    /// hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu of a generator,
-    /// in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so both limits
-    /// show).
+    /// The item is in the Display menu, in its Windows page (with the Split density, so the lower pane shows), in the
+    /// Horizontal menu, in the Measure settings, in the DVM menu, in the Mask menu, in the LA menu, in the Bus menu, in
+    /// a menu of an analyser page, in the Acquire menu (in Average mode with segments, so their rows show; HW average
+    /// shows only with a hardware source, which the demo is not), in a Channel menu or its More page, in the Bode menu
+    /// of a generator, in the Math menu of an operator, or in the Trigger menu of a trigger type (with a time range, so
+    /// both limits show, and the video trigger on line n, so its line shows).
     fn in_a_menu(it: Item) -> bool {
         let mut u = crate::ui::testkit::demo_ui();
-        (u.m.acq, u.m.segments) = (AcqMode::Average, 10);
+        (u.m.acq, u.m.segments, u.m.density) = (AcqMode::Average, 10, Density::Split);
         let channels = (0..NCH).flat_map(|c| [MenuId::Channel(c), MenuId::ChMore(c)]);
         if it == Item::AcqAvgHw
-            || [MenuId::Display, MenuId::Dvm, MenuId::Acquire, MenuId::Mask, MenuId::La, MenuId::Spectrum, MenuId::Eye]
-                .into_iter()
-                .chain(channels)
-                .any(|m| u.items(m).contains(&it))
+            || [
+                MenuId::Display,
+                MenuId::Windows,
+                MenuId::Horizontal,
+                MenuId::Measure,
+                MenuId::Dvm,
+                MenuId::Acquire,
+                MenuId::Mask,
+                MenuId::La,
+                MenuId::Bus,
+                MenuId::Spectrum,
+                MenuId::Eye,
+            ]
+            .into_iter()
+            .chain(channels)
+            .any(|m| u.items(m).contains(&it))
         {
             return true;
         }
@@ -257,7 +334,7 @@ mod tests {
         }) {
             return true;
         }
-        u.m.trig_when = WhenKind::In;
+        (u.m.trig_when, u.m.video_sync) = (WhenKind::In, crate::model::VSync::Line);
         TRIG_TYPES.iter().any(|&t| {
             u.m.trig_type = t;
             u.items(MenuId::Trigger).contains(&it)

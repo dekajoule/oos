@@ -307,6 +307,7 @@ pub fn points_per_chunk(mask: u32) -> usize {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 
@@ -434,6 +435,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod la_tests {
     use super::*;
     use crate::dho::la::Timing;

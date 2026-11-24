@@ -171,6 +171,7 @@ pub fn sw_offset_s(u: &Uart) -> f64 {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

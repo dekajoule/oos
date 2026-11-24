@@ -30,6 +30,7 @@ pub fn slow_path(rate: u64) -> bool {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

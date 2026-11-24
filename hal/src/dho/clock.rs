@@ -77,6 +77,7 @@ fn scale_by(x: i128, num: i128, den: i128) -> i128 {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

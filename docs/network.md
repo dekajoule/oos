@@ -12,6 +12,7 @@ change them.
 |---|---|
 | MAC | GMAC of the RK3399 (`fe300000`), RMII, 50 MHz reference clock into the MAC (`clock_in_out = "input"`) |
 | PHY | Motorcomm YT8512 at MDIO address 0, 10/100 Mbit/s, reset line GPIO3_B7 (`snps,reset-gpio`, 10 ms low, then 50 ms) |
+| PHY ID | 0x0128, the YT8512B. Verified on the unit (DHO924S, OOS 0.1.12, 2026-11-15): read from the PHY's `phy_id` in sysfs, and the kernel binds its `YT8512B Ethernet` driver, which matches that ID only |
 | Kernel | `dwmac-rk` + `stmmac`, PHY driver `motorcomm` (both built in), no PHY interrupt: phylib reads the PHY once a second |
 | MAC address | fixed per SD card: `02:` and 5 bytes of the MD5 of the card's CID (rcS, step 2, `oos-mac`); `eth.mac` (section 6) names another |
 | Address | none without a cable; with one DHCP (`udhcpc`, 5 tries), else a link-local address 169.254.x.y/16 (RFC 3927: from the MAC, checked with `arping -D`, another one if it is taken; the top bar says `LAN · local`). A computer on the same cable without DHCP takes such an address itself, so it reaches the scope without any set-up (with `net.allow` only if 169.254.0.0/16 is listed, section 6). A server that comes later still gives DHCP |
@@ -155,16 +156,19 @@ System > Network > Remote services has a switch for each service, next to where 
 | SCPI | 5555 (TCP) | the SCPI commands |
 | VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
+| USB network | the rear USB port | a network link to the computer on the cable: the services above at the scope's address on it ([usb-device.md](usb-device.md)); **USB address** next to it |
+| USB instrument | the rear USB port | SCPI as a USBTMC instrument for VISA ([usb-device.md](usb-device.md)); its state next to it |
 
 Every route of the web remote, with what it answers and its mark, is in [http.md](http.md).
 
-Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on. A service
+Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on, and the two
+USB rows are off until they have run on more units (ADR 0010). A service
 switched off closes its port at once, with the connections on it. Switching off the web remote also takes away the
 update page: an update then comes from a USB stick. SSH is the only shell on the network: `rcS` starts it at power-on
 (`/bin/oos-ssh`, which reads `remote.ssh` from `/oos/system.conf`), and oos-ui starts or stops it when its switch
-changes. There is no telnet (ADR 0054): an image of this version starts no `telnetd` and nothing listens on port 23;
-a `remote.telnet` line that an earlier version wrote is read without a complaint and left out when the file is written
-again. The serial console (UART2) keeps its shell without a login.
+changes. There is no telnet (ADR 0054): an image of this version starts no `telnetd`, nothing listens on port 23,
+and the image's busybox has no `telnetd` (ADR 0078); a `remote.telnet` line that an earlier version wrote is read
+without a complaint and left out when the file is written again. The serial console (UART2) keeps its shell without a login.
 
 The last row: **Allowed**, the addresses that may reach the scope (`net.allow`, section 6), and **Firewall** beside it,
 which shows the state in force: `on`, `off: everyone`, `applying` while a change is being put in force, `failed: see
@@ -257,6 +261,9 @@ ntp.server = dhcp             # or a server name or address
 tz = UTC0                     # or dhcp (section 3)
 tz.fallback = UTC0            # with tz = dhcp, while no lease names a valid zone; written when not UTC0
 eth.retry_10m = on
+net.show_addr = off           # System > Network > Show address: the LAN and WLAN boxes show the address
+                              # (off by default: their name beside a green dot, or "-" without a link, only as
+                              # wide as that; pictures of the screen are passed on)
 remote.web = on
 remote.scpi = on
 remote.vxi11 = on
@@ -265,6 +272,8 @@ ssh.password = on
 remote.mdns = on              # mDNS and DNS-SD (4.1)
 net.name = dho924s-123456     # the name on the network, written at the first start
 graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
+usb.net = off                 # the rear USB port as a network link (usb-device.md); off by default
+usb.tmc = off                 # the rear USB port as a USBTMC instrument (usb-device.md); off by default
 ```
 
 ## 6. Firewall, remote access and the MAC address

@@ -131,6 +131,7 @@ pub fn lane_string(err: &[u32; 32], lane: u32) -> String {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::super::sim;
     use super::*;

@@ -8,6 +8,7 @@
 //! `/oos/system.conf` (sysconf.rs). A worker thread asks the server (sntp.rs), so the frame loop never waits on the
 //! network. Once the clock is set, file names carry the local date and time (`Ui::new_file`).
 
+use super::menu_text::on_off;
 use super::service::Service;
 use super::*;
 use crate::clock::{self, Local, Tz, ZONES};
@@ -389,9 +390,13 @@ impl Ui {
     pub(super) fn time_kind(it: Item) -> Option<Kind> {
         match it {
             Item::NtpSync | Item::TimeSet => Some(Kind::Action),
-            Item::TimeNow | Item::NtpStatus | Item::NtpOn | Item::NtpServer | Item::TimeZone | Item::NetRetry10 => {
-                Some(Kind::Choice)
-            }
+            Item::TimeNow
+            | Item::NtpStatus
+            | Item::NtpOn
+            | Item::NtpServer
+            | Item::TimeZone
+            | Item::NetRetry10
+            | Item::NetShowAddr => Some(Kind::Choice),
             _ => None,
         }
     }
@@ -412,12 +417,12 @@ impl Ui {
             Item::TimeZone => "Time zone",
             Item::TimeSet => "Set the clock",
             Item::NetRetry10 => "10 Mbit retry",
+            Item::NetShowAddr => "Show address",
             _ => return None,
         })
     }
 
     pub(super) fn time_value(&self, it: Item) -> Option<String> {
-        let onoff = |b: bool| if b { "On".to_string() } else { "Off".to_string() };
         Some(match it {
             Item::TimeNow => {
                 let t = clock::unix_now() as i64;
@@ -429,11 +434,12 @@ impl Ui {
                     format!("{} (not set)", s)
                 }
             }
-            Item::NtpOn => onoff(self.sys.ntp),
+            Item::NtpOn => on_off(self.sys.ntp),
             Item::NtpServer => server_label(&self.sys.ntp_server),
             Item::NtpStatus => self.ntp_status(),
             Item::TimeZone => self.zone_label(),
-            Item::NetRetry10 => onoff(self.sys.eth_retry_10m),
+            Item::NetRetry10 => on_off(self.sys.eth_retry_10m),
+            Item::NetShowAddr => on_off(self.sys.show_addr),
             _ => return None,
         })
     }
@@ -477,7 +483,7 @@ impl Ui {
 
     pub(super) fn time_options(&self, it: Item) -> Option<Vec<String>> {
         Some(match it {
-            Item::NtpOn | Item::NetRetry10 => vec!["Off".into(), "On".into()],
+            Item::NtpOn | Item::NetRetry10 | Item::NetShowAddr => vec!["Off".into(), "On".into()],
             Item::NtpServer => self.server_options(),
             Item::TimeZone => self.zone_options(),
             Item::TimeNow | Item::NtpStatus => Vec::new(),
@@ -516,6 +522,10 @@ impl Ui {
             }
             Item::NetRetry10 => {
                 self.sys.eth_retry_10m = !self.sys.eth_retry_10m;
+                self.sys_save();
+            }
+            Item::NetShowAddr => {
+                self.sys.show_addr = !self.sys.show_addr;
                 self.sys_save();
             }
             Item::NtpServer => {

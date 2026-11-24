@@ -96,7 +96,13 @@ A decision that touches two categories goes where its consequences are largest a
 | [0072](process/0072-the-tests-inside-the-hardware-paths-need-no-run-on-a-unit.md) | process | The tests inside the hardware paths need no run on a unit | accepted |
 | [0073](process/0073-a-refactoring-the-live-run-found-equal-needs-no-run-on-a-unit.md) | process | A refactoring the live run found equal needs no run on a unit for the board code it reaches | accepted |
 | [0074](code/0074-the-board-names-no-signal-code-its-policy-is-its-own-and-the-draw-pipeline-is-handed-to-it.md) | code | The board names no signal code: what its thread decides by is its own, and the draw pipeline is handed to it | proposed |
-| [0077](hardware/0077-mho900-first-acquisition-from-the-units-own-snapshot.md) | hardware | the MHO900's first acquisition starts its board from the unit's own snapshot of the stock system | proposed |
+| [0075](ui-ux/0075-an-on-off-setting-is-one-switch.md) | ui-ux | A setting that is only off or on is one switch in the menus | proposed |
+| [0076](ui-ux/0076-the-top-bar-holds-display-and-storage.md) | ui-ux | The top bar holds Display and Storage; Measure and Cursor are keys and start-menu entries | proposed |
+| [0077](ui-ux/0077-a-menu-opens-at-what-opened-it-an-entry-pad-in-the-centre.md) | ui-ux | a menu opens at what opened it; an entry pad opens in the centre, large | proposed |
+| [0078](system/0078-the-image-builds-its-own-busybox-without-network-servers.md) | system | The image builds its own busybox, without telnet and the network servers it does not run | proposed |
+| [0079](system/0079-the-rear-usb-port-is-a-network-link-to-one-computer.md) | system | The rear USB port is a network link to one computer, off by default | proposed |
+| [0080](system/0080-the-rear-usb-port-is-a-usbtmc-instrument-for-visa.md) | system | The rear USB port is a USBTMC instrument for VISA, a FunctionFS function served by oos-ui, off by default | proposed |
+| [0081](hardware/0081-mho900-first-acquisition-from-the-units-own-snapshot.md) | hardware | the MHO900's first acquisition starts its board from the unit's own snapshot of the stock system | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents
