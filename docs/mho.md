@@ -208,6 +208,30 @@ Still to be measured on a unit at the bench: the clock and ADC settings, the JES
 select lines, the calibration files, the generator board and the front panel. Nothing of it is turned on before it
 has run on a unit (ADR 0010); `Target::acquisition` stays false until then.
 
+## Setting a unit up (towards a preview)
+
+The goal of the next weeks is an **MHO900 preview**: a build that an owner sets up in three steps and that measures
+with the functions below verified on units. Until then every build is a test build. From the computer, with the
+release's `mho-check.py`, `mho-settings.py`, `mho-setup.py` and `mho-poll` in one folder:
+
+1. Under the stock system: `python3 mho-setup.py <scope-ip> record`. It records the board's cold start and one
+   setting whole (the probe compensation signal on the channel it names, about 5 minutes), then every setting OOS
+   needs (nothing connected, about 40 minutes), into a folder `mho-setup-<date>`. It sets every setting back.
+2. Install OOS and start it ("Trying it on a unit" above), then `python3 mho-setup.py <scope-ip> install`: the
+   recordings go to `/oos`, and the acquisition starts, from then on at every boot.
+3. After testing: `python3 mho-setup.py <scope-ip> report` fetches `oos-mho-report`'s file ("Reporting back").
+
+The preview is reached when:
+
+- the functions of mho-dev-36 (fan, peak detect, depth, 50 ohm, counter, generator, roll, logic analyser) and the ones
+  verified before are verified on at least two units, and what fails is fixed or left out;
+- the three steps above worked for an owner who had not tested before;
+- a decision record describes the acquisition on the MHO900 as a preview (it supersedes the platform-only port of
+  ADR 0028 for this board) and the work comes to main by pull requests.
+
+Not in the preview: a generator with sine and arbitrary waves, 50 ohm at every scale, a start of the board without
+the unit's own recordings of the stock system.
+
 ## First acquisition (by hand, for owners who test it)
 
 From mho-dev-14 on, two steps cover what the earlier builds asked for one at a time:
