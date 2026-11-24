@@ -75,7 +75,7 @@ pub(crate) static ARB: Mutex<Vec<f32>> = Mutex::new(Vec::new());
 
 impl Board for Mho {
     const MAX_CHANNELS: usize = 4;
-    const MAX_GENERATORS: usize = 1;
+    const MAX_GENERATORS: usize = 2;
     const LIVE_BY_HAND: bool = true;
 
     /// the channel the board measures and its setting (`hw::Want`): applied by hand only (`oos-mho-live`)

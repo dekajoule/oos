@@ -43,8 +43,9 @@ fn caps(name: &str) -> Option<Caps> {
         // no stock bandwidth code is known for the MHO900
         bw_code: 0,
         la: true,
-        // generator 1 (afg.rs)
-        generators: 1,
+        // generators 1 and 2 (afg.rs): the two outputs G1 and G2 of every MHO900 (data sheet, **assumed**; G2 verified
+        // on an MHO98)
+        generators: 2,
         ext_trig: false,
         edu: false,
     })
