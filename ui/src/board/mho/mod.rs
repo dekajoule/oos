@@ -60,14 +60,15 @@ pub struct Trig {
     pub slope: oos_hal::mho::tpu::Slope,
 }
 
-/// Generator 1 as the acquisition thread sets it (`units`): on, Hz, Vpp, offset in V, wave shape (`AFG_WAVES`).
-pub type Gen = (bool, f64, f64, f64, usize);
+/// Generator 1 as the acquisition thread sets it (`units`): on, Hz, Vpp, offset in V, wave shape (`AFG_WAVES`), duty
+/// and symmetry in %, the stored arbitrary wave's id.
+pub type Gen = (bool, f64, f64, f64, usize, f64, f64, u32);
 
 /// Time base from which the screen rolls (as on the DHO800/DHO900 and stock: 200 ms/div).
 const ROLL_TDIV: f64 = 0.2;
 
 /// The arbitrary wave of the demo generator: one period of samples.
-static ARB: Mutex<Vec<f32>> = Mutex::new(Vec::new());
+pub(crate) static ARB: Mutex<Vec<f32>> = Mutex::new(Vec::new());
 
 impl Board for Mho {
     const MAX_CHANNELS: usize = 4;
@@ -214,7 +215,7 @@ impl Board for Mho {
     }
 
     fn gen(&self, g: &GenCh) -> Self::Gen {
-        (g.on, g.freq, g.ampl, g.offset, g.wave)
+        (g.on, g.freq, g.ampl, g.offset, g.wave, g.duty, g.symmetry, g.arb)
     }
 
     fn gen_max_hz(&self, g: &GenCh) -> f64 {

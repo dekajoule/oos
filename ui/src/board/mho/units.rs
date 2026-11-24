@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The MHO900's units beside the record, once per pass of the acquisition loop: the frequency counter
-//! (`oos_hal::mho::counter`) and generator 1 (`oos_hal::mho::afg`: the FPGA's words and the relays of the generator
-//! board's microcontroller on `/dev/ttyS4`). **Not yet verified on hardware** under OOS; the words are the ones an
+//! (`oos_hal::mho::counter`) and generator 1 (`oos_hal::mho::afg`: the FPGA's words, its waveform memory and the relays
+//! of the generator board's microcontroller on `/dev/ttyS4`). **Not yet verified on hardware** under OOS; the words are the ones an
 //! MHO98 showed under the stock system (protocols/mho-acquisition.md section 12).
 
 use crate::board::{lock, CounterRead, CounterWant, HwShared};
@@ -29,6 +29,8 @@ pub(super) struct Units {
     big: Option<Bar1>,
     mcu: Option<std::fs::File>,
     mcu_tried: bool,
+    /// the wave in generator 1's memory: shape, duty, symmetry, arbitrary wave's id
+    table: Option<(usize, f64, f64, u32)>,
 }
 
 impl Units {
@@ -88,22 +90,20 @@ impl Units {
         }
     }
 
-    /// Sets generator 1: the FPGA's words with the output off, then the relays, then the output bit.
+    /// Sets generator 1: the FPGA's words with the output off, its waveform memory when the wave changed, then the
+    /// relays, then the output bit.
     fn generator(&mut self, g: &super::Gen) {
-        let &(on, hz, vpp, offset, wave) = g;
+        let &(on, hz, vpp, offset, wave, duty, symmetry, arb) = g;
         let shape = match wave {
+            0 => Shape::Sine,
+            1 => Shape::Square,
+            2 => Shape::Ramp(symmetry / 100.0),
+            3 => Shape::Pulse(duty / 100.0),
             4 => Shape::Noise,
             5 => Shape::Dc,
-            1 => Shape::Square,
-            _ => {
-                if on {
-                    eprintln!(
-                        "oos-ui mho: generator: only square, noise and DC are driven; this shape goes out square"
-                    );
-                }
-                Shape::Square
-            }
+            _ => Shape::Arb,
         };
+        let wave_key = (wave, duty, symmetry, arb);
         let o = Out { on, hz, vpp, offset, shape };
         if self.big.is_none() {
             match Bar1::open_len(AFG_WINDOW) {
@@ -119,6 +119,11 @@ impl Units {
         let r = afg::regs(1);
         let (out_old, offset_old) = (big.rd(r.out), big.rd(r.offset));
         big.apply(&afg::words(1, &o, out_old, offset_old));
+        if self.table != Some(wave_key) {
+            let samples = afg::table(shape, &crate::board::lock(&super::ARB));
+            big.apply(&afg::table_words(&samples));
+            self.table = Some(wave_key);
+        }
         let lines = afg::relays(1, on);
         match self.mcu.as_mut() {
             Some(m) => {

@@ -1,12 +1,13 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The MHO900's two generators (protocols/mho-acquisition.md section 12.5): the FPGA words of each and the lines for
-//! the generator board's microcontroller (its relays). **Seen on an MHO98 under the stock system** (issue #4): the
-//! output bit, the frequency word, square and noise, the amplitude and offset words, the relay lines. OOS drives the
-//! shapes the FPGA makes from these words alone, square and noise; the other shapes need the waveform memory, which is
-//! not known yet. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about 0.8 to 2 Vpp in the stock
-//! system; OOS uses that gear for every amplitude. **Not yet verified on hardware** under OOS.
+//! The MHO900's two generators (protocols/mho-acquisition.md section 12.5): the FPGA words of each, its waveform
+//! memory, and the lines for the generator board's microcontroller (its relays). **Seen on an MHO98 under the stock
+//! system** (issue #4): the output bit, the frequency word, square and noise, the amplitude and offset words, the relay
+//! lines. **Verified on the unit** under OOS (the same MHO98, mho-dev-35 and -37): the offset, and that the output
+//! needs the waveform memory filled, the square too: a square written there gave 1.08 Vpp at 1 kHz with the amplitude
+//! word of 1 Vpp. The memory reads back 0. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about
+//! 0.8 to 2 Vpp in the stock system; OOS uses that gear for every amplitude.
 
 /// The frequency word's clock: f / 250 MHz x (2^51 - 1) (1 kHz: 0x2_18def416, read under the stock system).
 pub const CLOCK_HZ: f64 = 250e6;
@@ -41,13 +42,75 @@ pub fn regs(n: usize) -> Regs {
     Regs { out, freq_lo: base + 0x28, freq_hi: base + 0x2c, noise: base + 0x6c, square: base + 0x7c, ampl, offset }
 }
 
-/// What a generator puts out.
+/// What a generator puts out: a wave from the memory (`table`), noise, or the offset alone.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
+    Sine,
     Square,
+    /// the rising part's share of the period, 0 to 1
+    Ramp(f64),
+    /// the high part's share of the period, 0 to 1
+    Pulse(f64),
+    /// the stored arbitrary wave (`table` takes its samples)
+    Arb,
     Noise,
     /// the offset alone (amplitude 0)
     Dc,
+}
+
+/// The waveform memory of generator 1: 16384 signed 16-bit samples, two per word from 0x100000 (8192 words), loaded
+/// with the output off. **Verified on the unit** with a square (the first half of the words 0x7fff7fff, the second
+/// 0x80018001). Which half of a word holds the earlier sample is **assumed** (bits 15:0); a square cannot tell.
+pub const TABLE: u32 = 0x10_0000;
+pub const TABLE_SAMPLES: usize = 16384;
+
+/// One period of `shape` as the memory's samples (full scale +-32767); `arb` the stored wave's samples (-1 to 1) for
+/// `Shape::Arb`. Noise and DC take the square's (their output does not come from the memory's shape).
+pub fn table(shape: Shape, arb: &[f32]) -> Vec<i16> {
+    let n = TABLE_SAMPLES;
+    let full = 32767.0;
+    (0..n)
+        .map(|i| {
+            let x = i as f64 / n as f64;
+            let v = match shape {
+                Shape::Sine => (2.0 * std::f64::consts::PI * x).sin(),
+                Shape::Ramp(sym) => {
+                    let s = sym.clamp(0.0, 1.0);
+                    if x < s {
+                        -1.0 + 2.0 * x / s
+                    } else {
+                        1.0 - 2.0 * (x - s) / (1.0 - s).max(1e-9)
+                    }
+                }
+                Shape::Pulse(duty) => {
+                    if x < duty.clamp(0.0, 1.0) {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                }
+                Shape::Arb if !arb.is_empty() => arb[(x * arb.len() as f64) as usize % arb.len()] as f64,
+                _ => {
+                    if x < 0.5 {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                }
+            };
+            (v.clamp(-1.0, 1.0) * full).round() as i16
+        })
+        .collect()
+}
+
+/// The writes that load `samples` (`TABLE_SAMPLES` of them) into generator 1's memory: two per word, the earlier in
+/// bits 15:0.
+pub fn table_words(samples: &[i16]) -> Vec<(u32, u32)> {
+    samples
+        .chunks(2)
+        .enumerate()
+        .map(|(k, p)| (TABLE + 4 * k as u32, (p.get(1).copied().unwrap_or(0) as u16 as u32) << 16 | p[0] as u16 as u32))
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,5 +193,23 @@ mod tests {
         let r = relays(1, true);
         assert_eq!((r[0].as_str(), r[4].as_str()), (":AFG:RELAY:CH1:STATE 4,0\n", ":AFG:RELAY:CH1:STATE 0,1\n"));
         assert!(is_generator_board("RIGOL,AFG(01),x,00.01.06"));
+    }
+
+    // Break it catches: the square of the test on the unit not reproduced, a table of the wrong length, a sine that
+    // does not start at 0 or misses its peak, a ramp's symmetry ignored.
+    #[test]
+    fn the_memory_holds_one_period() {
+        let sq = table_words(&table(Shape::Square, &[]));
+        assert_eq!(sq.len(), 8192);
+        assert_eq!(
+            (sq[0], sq[4095].1, sq[4096].1, sq[8191]),
+            ((TABLE, 0x7fff_7fff), 0x7fff_7fff, 0x8001_8001, (TABLE + 4 * 8191, 0x8001_8001))
+        );
+        let sine = table(Shape::Sine, &[]);
+        assert_eq!((sine[0], sine[4096], sine[12288]), (0, 32767, -32767));
+        let ramp = table(Shape::Ramp(1.0), &[]);
+        assert!(ramp[0] == -32767 && ramp[8192] == 0 && ramp[16383] > 32700);
+        let arb = table(Shape::Arb, &[0.0, 1.0]);
+        assert_eq!((arb[0], arb[8192]), (0, 32767));
     }
 }

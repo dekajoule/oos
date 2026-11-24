@@ -735,6 +735,17 @@ From mho-dev-37 on: DC has the other shapes' frequency range; peak detect's fram
 pairs (`Frame::envelope`); a fixed depth takes the recorded rate nearest to the screen's with the depth scaled to
 the same span (`Settings::plan_deep`); the log reads every word of generator 1 back after setting it.
 
+**Verified on the unit** (hp197's MHO98, mho-dev-37, issue #4): with mho-dev-37's words read back as written, the
+output stayed flat; under the stock system switching generator 1's square on and off changes only 0x40004 (and the
+status words 0x1300a8..0x1300b0), nothing in the 0x20000 block, also not between square and sine. With the output
+off, 8192 words written from 0x100000, the first half 0x7fff7fff and the second 0x80018001 (two signed 16-bit samples
+per word), then the output on: a clean 1 kHz square of 1.08 Vpp (-0.54 to +0.54 V) with the amplitude word of 1 Vpp
+(0x7b08). 0x40000 and 0x130048, which the stock system holds at 4 and 0x7fff, made no difference without
+modulation. The memory reads back 0. So generator 1 needs its waveform memory filled for every shape. From
+mho-dev-38 on OOS loads one period of the shape there (16384 samples: sine, square, ramp with its symmetry, pulse
+with its duty, the stored arbitrary wave) when the wave changes, with the output off (`afg::table`); which half of a
+word holds the earlier sample is **assumed** (bits 15:0).
+
 ## 12. Further blocks, seen under the stock system
 
 Read on one MHO98 (issue #4) while the setting was changed over the stock system's remote commands, every word set
