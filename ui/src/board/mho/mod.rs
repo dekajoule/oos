@@ -1,11 +1,12 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The MHO900 behind `Board`, a port of the platform alone (docs/mho.md): OOS has no code for its acquisition board,
-//! so this board never starts an acquisition thread and drives no generator; of the front panel it reads the keys and
-//! sets the LEDs. The screen shows the demo signal (the image starts oos-ui without `--hw`, and
-//! `Platform::drives_hardware` is false for this build).
-//! What remains are the UI's terms of the board: channels, scales, couplings, depths, and the SoC's temperatures.
+//! The MHO900 behind `Board` (docs/mho.md, a preview, ADR 0082). Its acquisition thread (`hw`) runs only when
+//! `oos-mho-live` started the board from the unit's own recordings of the stock system and oos-ui with `--hw`; it sets
+//! the board from the screen's keys and drives the counter and both generators (`units`). Without the recordings the
+//! screen shows the demo signal (`Platform::drives_hardware` is false for this build). Of the front panel it reads the
+//! keys and sets the LEDs. Here are the UI's terms of the board: channels, scales, couplings, depths, generators, and
+//! the SoC's temperatures.
 
 #[cfg(target_os = "linux")]
 mod hw;
