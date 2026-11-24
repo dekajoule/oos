@@ -382,7 +382,9 @@ fn run(out: &HwShared) {
             r.push(&f);
             f = r.frame();
         } else if let Some((t, c)) = trig_set {
-            edges.align(&mut f, c.ch - 1, t, c.scale * c.probe, seq);
+            if !edges.align(&mut f, c.ch - 1, t, c.scale * c.probe, seq) {
+                continue;
+            }
         }
         publish(out, f, seq);
         std::thread::sleep(Duration::from_millis(PERIOD_MS));
@@ -543,6 +545,27 @@ fn split(bytes: &[u8], mask: u32, scale: f64, show: bool) -> [Vec<u16>; 4] {
             .collect();
         eprintln!("oos-ui mho: record of the channels {:#x} at {} V/div: {}", mask, scale, text.join("; "));
     }
+    if show {
+        // the longest run of one word in each channel's record: a part of the record the board did not write shows as
+        // one (at 50 ms/div an MHO98 showed 0 V for 23.4 ms after the trigger point, mho-dev-40, issue #4)
+        for (c, w) in all.iter().enumerate().filter(|(_, w)| w.len() > 1000) {
+            let (mut best, mut at, mut run) = ((0, 0), 0, 1);
+            for i in 1..w.len() {
+                run = if w[i] == w[i - 1] { run + 1 } else { 1 };
+                if run > best.0 {
+                    (best, at) = ((run, w[i]), i + 1 - run);
+                }
+            }
+            eprintln!(
+                "oos-ui mho: CH{} record of {} words: the longest run of one word {} x {:#06x} from word {}",
+                c + 1,
+                w.len(),
+                best.0,
+                best.1,
+                at
+            );
+        }
+    }
     all
 }
 
@@ -573,30 +596,48 @@ fn publish(out: &HwShared, mut f: Frame, seq: u64) {
 /// Where the trigger's edge lies in the frames against the record's trigger point, in the screen's log every 50
 /// frames. From 500 MSa/s on the edge was not at the trigger point although the board's trigger fired (an MHO98,
 /// mho-dev-23, issue #491): until that offset is known, the screen's trigger point is put on the edge nearest to it
-/// (a software trigger on the board's frames; a frame without such an edge keeps the record's trigger point).
+/// (a software trigger on the board's frames; a frame without such an edge keeps the record's trigger point). A frame
+/// whose nearest edge lies farther than `FAR` from the trigger point is dropped: on an MHO98 (mho-dev-40, issue #4)
+/// such frames came at 50 to 200 us/div with the edge half a period of the 1 kHz signal away, so moved onto it the
+/// screen showed their first 0.5 ms empty. Returns whether to show the frame.
 #[derive(Default)]
 struct EdgeLog {
     offsets: Vec<i64>,
     missing: u32,
     /// frames without the set slope's edge but with the other one within 4 points of the trigger point
     other: u32,
+    /// frames dropped with the edge far from the trigger point, and of them those with the other slope's edge at it
+    far: u32,
+    far_other: u32,
+}
+
+/// How far the edge may lie from the trigger point: 1 % of the frame, at least 16 points.
+fn far(len: usize) -> usize {
+    (len / 100).max(16)
 }
 
 impl EdgeLog {
-    fn align(&mut self, f: &mut Frame, ch: usize, t: super::Trig, scale_tip: f64, seq: u64) {
+    fn align(&mut self, f: &mut Frame, ch: usize, t: super::Trig, scale_tip: f64, seq: u64) -> bool {
         let h = (0.3 * scale_tip) as f32;
         let e = edge_near(&f.ch[ch], f.pre, t.level as f32, h, t.slope);
+        let flip = match t.slope {
+            tpu::Slope::Rising => tpu::Slope::Falling,
+            _ => tpu::Slope::Rising,
+        };
+        let mut show = true;
         match e {
+            Some(i) if i.abs_diff(f.pre) > far(f.ch[ch].len()) => {
+                self.far += 1;
+                let o = edge_near(&f.ch[ch], f.pre, t.level as f32, h, flip);
+                self.far_other += o.is_some_and(|j| j.abs_diff(f.pre) <= 4) as u32;
+                show = false;
+            }
             Some(i) => {
                 self.offsets.push(i as i64 - f.pre as i64);
                 f.pre = i;
             }
             None => {
                 self.missing += 1;
-                let flip = match t.slope {
-                    tpu::Slope::Rising => tpu::Slope::Falling,
-                    _ => tpu::Slope::Rising,
-                };
                 let o = edge_near(&f.ch[ch], f.pre, t.level as f32, h, flip);
                 self.other += o.is_some_and(|i| i.abs_diff(f.pre) <= 4) as u32;
             }
@@ -607,17 +648,21 @@ impl EdgeLog {
             let n = self.offsets.len();
             eprintln!(
                 "oos-ui mho: edge against the trigger point, last 50 frames: {} found (min {}, median {}, max {} \
-                 samples of {:.3e} s), {} without ({} of them with the other slope's edge at the trigger point)",
+                 samples of {:.3e} s), {} without ({} of them with the other slope's edge at the trigger point), {} \
+                 dropped with the edge far from it ({} with the other slope's edge at it)",
                 n,
                 at(0),
                 at(n / 2),
                 at(n.saturating_sub(1)),
                 f.dt,
                 self.missing,
-                self.other
+                self.other,
+                self.far,
+                self.far_other
             );
             *self = EdgeLog::default();
         }
+        show
     }
 }
 
@@ -707,7 +752,15 @@ mod tests {
             vec![32768; 10_000],
         ];
         let shown = |ch, gnd| Shown { ch, scale: 0.1, probe: 10.0, offset: -0.2, gnd, gain: 1.1 };
-        let now = Now { shown: vec![shown(2, false), shown(4, true)], dt: 2e-7, n: 10_000, pre: 5000, mask: 0xb, k: 1 };
+        let now = Now {
+            shown: vec![shown(2, false), shown(4, true)],
+            dt: 2e-7,
+            n: 10_000,
+            pre: 5000,
+            mask: 0xb,
+            k: 1,
+            peak: false,
+        };
         let f = frame(&words, &now);
         assert!(f.ch[0].is_empty() && f.ch[2].is_empty());
         assert_eq!((f.ch[1].len(), f.ch[3].len()), (10_000, 10_000));

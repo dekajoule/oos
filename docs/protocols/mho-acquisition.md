@@ -753,6 +753,17 @@ threshold would give. The counter's 0x2200/0x2204 are written 0x8080 as on the D
 known (counter.md); on hp197's MHO98 the same counted exactly 1000. Not yet understood. In peak detect the first part
 of the frame flickered on the same unit (a video, time base not known yet).
 
+**Seen on the unit** (hp197's MHO98, mho-dev-40, issue #4; generator 1's 1 kHz square on CH1, 200 mV/div, rising
+edge at 0 V, sweep Auto): in some frames at 50, 100 and 200 us/div, in Normal and in peak detect, the first 0.5 ms of
+the screen stayed empty (of 12 pictures 3 at 50 us/div, 4 at 100, 5 at 200; none at 20 us/div and from 500 us/div
+on). 0.5 ms is half the signal's period: the software trigger had moved the frame onto a rising edge half a period
+before the record's trigger point, so the board had triggered elsewhere in those records (**assumed**: on the falling
+edge, or before the points before the trigger were recorded). At 50 ms/div (Auto Roll off) the 23.4 ms after the
+trigger point read 0 V in every frame (about 47 000 points at 2 MSa/s), the rest of the record normal. From
+mho-dev-41 on a frame whose edge lies farther than 1 % of the frame from the trigger point is dropped, and the log
+counts them with whether the other slope's edge is at the trigger point; after each setting the log names the longest
+run of one word in each channel's record.
+
 **Verified on the unit** (hp197's MHO98, mho-dev-37, issue #4): with mho-dev-37's words read back as written, the
 output stayed flat; under the stock system switching generator 1's square on and off changes only 0x40004 (and the
 status words 0x1300a8..0x1300b0), nothing in the 0x20000 block, also not between square and sine. With the output
