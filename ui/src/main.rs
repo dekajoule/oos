@@ -58,7 +58,8 @@ use oos_remote::{announce, hislip, http, vxi11};
 // the model and the settings table (ADR 0064): their paths in this crate stay `crate::model` and the like
 use oos_model::{decode, logic, math, model, settings, words, zone};
 use oos_system::{
-    base64, clock, ethlink, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system, usbtmc,
+    base64, clock, ethlink, gadget, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system,
+    usbtmc,
 };
 
 use gfx::Canvas;
@@ -708,7 +709,7 @@ struct Device {
     listen_t: Option<std::time::Instant>,
     mdns_now: Option<mdns::Config>,
     mdns: mdns::Mdns,
-    remote_now: Option<[bool; 5]>,
+    remote_now: Option<[bool; 6]>,
     hislip: hislip::Server<scpi::Program>,
     vxi: vxi11::Server<scpi::Program>,
     scpi: scpi::Scpi,
@@ -772,7 +773,7 @@ impl Device {
         let (web, scpi, vxi, hislip) = lan_servers(scope, args, &acl);
         // System > Network > Remote services, as applied: web, SCPI, VXI-11, SSH and its password login (None: not yet,
         // at the start)
-        let remote_now: Option<[bool; 5]> = None;
+        let remote_now: Option<[bool; 6]> = None;
         // the name on the network and the mDNS responder (mdns.rs), as applied; looked at once a second
         let mdns = mdns::Mdns::new(None);
         let mdns_now: Option<mdns::Config> = None;
@@ -914,12 +915,13 @@ impl Device {
         });
     }
 
-    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) is started by rcS.
+    /// The services follow their switches: the ports were opened at the start, SSH (oos-ssh) and the USB network
+    /// (oos-gadget) are started by rcS.
     fn remote_services(&mut self) {
-        let ui = &self.ui;
-        let want = [ui.sys.remote_web, ui.sys.remote_scpi, ui.sys.remote_vxi11, ui.sys.remote_ssh, ui.sys.ssh_password];
+        let s = &self.ui.sys;
+        let want = [s.remote_web, s.remote_scpi, s.remote_vxi11, s.remote_ssh, s.ssh_password, s.usb_net];
         if self.remote_now != Some(want) {
-            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4]]);
+            let was = self.remote_now.unwrap_or([true, true, true, want[3], want[4], want[5]]);
             if want[0] != was[0] {
                 self.web.set_open(want[0].then_some(self.web_port));
             }
@@ -932,6 +934,9 @@ impl Device {
             }
             if want[3] != was[3] || want[4] != was[4] {
                 ssh::apply(want[3]);
+            }
+            if want[5] != was[5] {
+                gadget::apply();
             }
             self.offer_ports();
             self.remote_now = Some(want);
