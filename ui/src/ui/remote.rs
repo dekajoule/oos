@@ -12,7 +12,9 @@
 //! the DHCP client sends (rcS, oos-wlan).
 //!
 //! Below it: USB network, the rear USB port as a network link to one computer (`usb.net`, off by default: not yet
-//! verified on hardware; `crate::gadget`), next to the scope's address on the cable.
+//! verified on hardware; `crate::gadget`), next to the scope's address on the cable; then USB instrument, the same
+//! port as a USBTMC instrument for VISA (`usb.tmc`, off by default: not yet verified on hardware; ADR 0080), next to
+//! the state of its function (main.rs sets it from `oos_remote::usbtmc_device`).
 //!
 //! Last: Allowed, the address prefixes that may reach the scope (`net.allow`, docs/network.md 6), and Firewall,
 //! the state in force. rcS builds the firewall from the key at power-on and main.rs oos-ui's address list
@@ -48,6 +50,8 @@ pub(super) struct RemoteUi {
     waiting: Option<(Runner, Vec<Step>)>,
     /// the last run failed: the Firewall row says so
     pub failed: bool,
+    /// the state of the USBTMC function (`usbtmc_device::State`), as main.rs last set it
+    pub usbtmc: &'static str,
     /// the networks the scope is on, `192.168.1.0/24` (every IPv4 address with its netmask, `netacl::lans`), read
     /// while the page is open
     pub lans: Vec<String>,
@@ -74,6 +78,7 @@ impl Ui {
             Item::RemSsh,
             Item::RemMdns,
             Item::RemUsb,
+            Item::RemTmc,
             Item::RemAllow,
             Item::NetWeb,
             Item::RemScpiInfo,
@@ -81,6 +86,7 @@ impl Ui {
             Item::Open(MenuId::Ssh),
             Item::RemName,
             Item::RemUsbAddr,
+            Item::RemTmcState,
             Item::RemFirewall,
         ]
     }
@@ -93,6 +99,7 @@ impl Ui {
             | Item::RemSsh
             | Item::RemMdns
             | Item::RemUsb
+            | Item::RemTmc
             | Item::RemName
             | Item::RemAllow => Some(Kind::Choice),
             _ => Self::ssh_kind(it),
@@ -427,8 +434,15 @@ impl Ui {
 
     /// Rows that are only text.
     pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemUsbAddr | Item::RemFirewall)
-            || Self::ssh_text(it)
+        matches!(
+            it,
+            Item::NetWeb
+                | Item::RemScpiInfo
+                | Item::RemVxiInfo
+                | Item::RemUsbAddr
+                | Item::RemTmcState
+                | Item::RemFirewall
+        ) || Self::ssh_text(it)
     }
 
     pub(super) fn remote_label(it: Item) -> Option<&'static str> {
@@ -444,6 +458,8 @@ impl Ui {
             Item::RemFirewall => "Firewall",
             Item::RemUsb => "USB network",
             Item::RemUsbAddr => "USB address",
+            Item::RemTmc => "USB instrument",
+            Item::RemTmcState => "USBTMC",
             Item::NetWeb => "Address",
             Item::RemScpiInfo | Item::RemVxiInfo => "Port",
             _ => return Self::ssh_label(it),
@@ -468,6 +484,10 @@ impl Ui {
                 let st = gadget::state();
                 gadget::address(&st).map_or_else(|| st.clone(), str::to_string)
             }
+            Item::RemTmc => on_off(s.usb_tmc),
+            Item::RemTmcState if !s.usb_tmc => "off".into(),
+            Item::RemTmcState if self.remote.usbtmc.is_empty() || self.remote.usbtmc == "off" => "starting".into(),
+            Item::RemTmcState => self.remote.usbtmc.into(),
             Item::NetWeb if !s.remote_web => "off".into(),
             Item::NetWeb if self.net.addr.is_empty() => "not connected".into(),
             Item::NetWeb => format!("http://{}:8080", self.net.addr),
@@ -475,6 +495,11 @@ impl Ui {
             Item::RemVxiInfo => port(s.remote_vxi11, format!("111 and {} (LXI)", crate::net::VXI11_CORE_PORT)),
             _ => return self.ssh_value(it),
         })
+    }
+
+    /// main.rs: the state of the USBTMC function, for its row.
+    pub fn set_usbtmc_state(&mut self, s: &'static str) {
+        self.remote.usbtmc = s;
     }
 
     pub(super) fn remote_options(&self, it: Item) -> Option<Vec<String>> {
@@ -497,6 +522,7 @@ impl Ui {
             Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
             Item::RemUsb => (&mut s.usb_net, "USB network"),
+            Item::RemTmc => (&mut s.usb_tmc, "USB instrument"),
             // the name and the address list change in their pickers only
             Item::RemName | Item::RemAllow => return true,
             _ => return self.ssh_adjust(it, d),
@@ -509,6 +535,7 @@ impl Ui {
             (Item::RemWeb, false) => self.toast("Web remote off: updates then come from a USB stick"),
             (Item::RemSsh, false) => self.toast("SSH off: its sessions end"),
             (Item::RemUsb, true) => self.toast("USB network on: the computer on the rear port gets an address"),
+            (Item::RemTmc, true) => self.toast("USB instrument on: VISA finds the scope on the rear USB port"),
             _ => self.toast(&format!("{} {}", what, if now_on { "on" } else { "off" })),
         }
         true
@@ -525,7 +552,7 @@ mod tests {
         let mut u = crate::ui::testkit::demo_ui();
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
+        // two columns of eight: each switch has its address, port, settings or name on the same row, the address list
         // its firewall
         for (sw, info) in [
             (Item::RemWeb, Item::NetWeb),
@@ -534,6 +561,7 @@ mod tests {
             (Item::RemSsh, Item::Open(MenuId::Ssh)),
             (Item::RemMdns, Item::RemName),
             (Item::RemUsb, Item::RemUsbAddr),
+            (Item::RemTmc, Item::RemTmcState),
             (Item::RemAllow, Item::RemFirewall),
         ] {
             let a = d.rows.iter().find(|r| r.it == sw).unwrap().ctrl;
@@ -564,6 +592,14 @@ mod tests {
         u.select_option(Item::RemUsb, "On");
         assert!(u.sys.usb_net);
         assert_ne!(u.value(Item::RemUsbAddr), "off");
+        // the USB instrument the same, its row the state of the function
+        assert!(!u.sys.usb_tmc, "USB instrument off by default");
+        assert_eq!(u.value(Item::RemTmcState), "off");
+        u.select_option(Item::RemTmc, "On");
+        assert!(u.sys.usb_tmc);
+        assert_eq!(u.value(Item::RemTmcState), "starting");
+        u.set_usbtmc_state("connected");
+        assert_eq!(u.value(Item::RemTmcState), "connected");
     }
 
     #[test]
