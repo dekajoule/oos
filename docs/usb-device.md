@@ -122,11 +122,12 @@ REG_MULTI_SZ form). Windows takes configuration 1, the one the OS descriptors ar
 interface without an install: pyvisa-py over libusb and the desktop client (nusb) reach it. NI-VISA and Keysight VISA
 have their own USBTMC driver, which Windows then does not pick by itself; the Device Manager can assign it by hand.
 
-**Windows with both switches on (verified on the unit, #570):** Windows loads its driver for composite devices only for
-a device with a single configuration. With the network on the gadget has two (RNDIS for Windows, ECM for macOS and
-Linux), so Windows takes the device as one function, the first interface of configuration 1: the RNDIS network. The
-instrument does not appear. On Windows, switch USB network off to use the instrument; macOS and Linux take
-configuration 2 and get both. A single configuration with CDC NCM in place of RNDIS and ECM would give Windows 10 and
+**Windows with both switches on (#570):** Windows takes the device as one function, the RNDIS network of
+configuration 1, and the instrument does not appear (verified on the unit). The reason is **assumed** from Microsoft's
+documentation of its composite driver, which it loads only for a device with a single configuration; with the network
+on the gadget has two (RNDIS for Windows, ECM for macOS and Linux). On Windows, switch USB network off to use the
+instrument. macOS takes configuration 2 and gets both (verified on the unit); Linux is expected to do the same, **not
+yet verified on hardware**. A single configuration with CDC NCM in place of RNDIS and ECM would give Windows 10 and
 11 both; that is open in #570.
 **Linux** binds its `usbtmc` driver (`/dev/usbtmcN`, `CONFIG_USB_TMC` on the computer) or libusb takes the interface;
 **macOS** has no USBTMC driver, libusb and nusb take it.

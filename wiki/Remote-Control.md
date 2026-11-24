@@ -85,8 +85,8 @@ settings file ([docs/usb-device.md](https://github.com/dekajoule/oos/blob/main/d
 The same USB-B port on the back can also make the scope a USB instrument, as bench instruments with a USB port are:
 VISA finds it as `USB::0x1209::0x0001::<serial>::INSTR` with no network at all, and it speaks the same SCPI as port
 5555 ([[SCPI and VXI-11]]). Switch on **System > Network > Remote services > USB instrument** (off by default: **tried on one
-scope with a Mac, Linux and Windows 11**; tell us in an issue how it went for you). It works on its own or, on macOS
-and Linux, together with USB network; the
+scope with a Mac, Linux and Windows 11**; tell us in an issue how it went for you). It works on its own or, on macOS (and
+probably Linux, not yet tried), together with USB network; the
 row **USBTMC** next to it says `no computer` until a computer has taken the device, then `connected`.
 
 ```python
