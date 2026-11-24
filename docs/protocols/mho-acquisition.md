@@ -764,6 +764,18 @@ mho-dev-41 on a frame whose edge lies farther than 1 % of the frame from the tri
 counts them with whether the other slope's edge is at the trigger point; after each setting the log names the longest
 run of one word in each channel's record.
 
+**Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
+the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
+0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div
+(1 GSa/s): below the fast range 0x12ac = 250 MHz / LA rate, in it 0x12a4 = 0x8000 | 1 GHz / LA rate and 0x12ac = 1
+(where the fast range begins, above 125 MSa/s of LA rate, is **assumed** from the DHO800/DHO900's form). The three
+words are written only while the LA is on and keep their values when it goes off. 0x10e0, 0x10e4, 0x4050 and 0x4054
+do not change with the LA on (no doubling as on the DHO800/DHO900); with it on 0x1100 goes to 0x3465c and 0x1104 to
+0x2e40 (the display window, 20 times), 0x4008 bit 26 and bit 24 set and bit 23 cleared, 0x1280 bit 3, 0x12c0 from
+0x3e8 to 0x2710, 0x12c4 from 0x3e8 to 0; `:ACQuire:LASA:SRATe?` answers 1.25 GSa/s at every time base. From
+mho-dev-43 on OOS writes the rate block with the LA on and at every time base (`oos_hal::mho::la::rate_block`) and
+takes the LA's words at four times the analog spacing.
+
 **Verified on the unit** (skluehspies' MHO98, mho-dev-41 and -42, issue #491): generator 1's 1 kHz, 1 Vpp sine on
 CH2 at 200 mV/div, about -0.5 to +0.5 V, and the counter on CH2 at 1.0000 kHz: the generator and the counter on a
 second unit.

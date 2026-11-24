@@ -338,7 +338,7 @@ fn run(out: &HwShared) {
             }
         }
         roll_sweep(&mut bar, ring.is_some(), &mut tpu_before);
-        let la = la_enable(&mut bar, &mut sh, want_la(out), &mut la_was) && ring.is_none();
+        let la = la_enable(&mut bar, &mut sh, want_la(out), now.k as f64 / now.dt, &mut la_was) && ring.is_none();
         sh.s4008 = (sh.s4008 & !0xf) | now.mask;
         let win = now.window(&s);
         let pass = snapshot::passthrough_keeping(keep_1154);
@@ -394,21 +394,31 @@ fn run(out: &HwShared) {
 /// The logic analyser's enable (0x4008 bit 26), deskew (0x128c = 283 with one channel) and thresholds (0x12d4,
 /// `la::threshold_word`), as an MHO98 under the stock system set them (protocols/mho-acquisition.md section 12.4).
 /// Returns whether the LA is on.
-fn la_enable(bar: &mut Bar1, sh: &mut la::Shadows, want: Option<[f64; 2]>, was: &mut Option<[f64; 2]>) -> bool {
-    if want != *was {
-        if let Some(v) = want {
+fn la_enable(
+    bar: &mut Bar1,
+    sh: &mut la::Shadows,
+    want: Option<[f64; 2]>,
+    rate: f64,
+    was: &mut Option<([f64; 2], f64)>,
+) -> bool {
+    let now = want.map(|v| (v, rate));
+    if now != *was {
+        if let Some((v, rate)) = now {
             if was.is_none() {
                 bar.wr(LA_DESKEW, 283);
             }
             bar.wr(la::THRESHOLD, la::threshold_word(v));
+            bar.apply(&la::rate_block(rate));
             eprintln!(
-                "oos-ui mho: logic analyser on, thresholds {} V / {} V ({:#010x})",
+                "oos-ui mho: logic analyser on, thresholds {} V / {} V ({:#010x}), {:.4e} Sa/s ({:?})",
                 v[0],
                 v[1],
-                la::threshold_word(v)
+                la::threshold_word(v),
+                rate / la::LA_PER_ANALOG as f64,
+                la::rate_block(rate)
             );
         }
-        *was = want;
+        *was = now;
     }
     sh.s4008 = (sh.s4008 & !LA_ON) | if want.is_some() { LA_ON } else { 0 };
     want.is_some()
@@ -419,9 +429,9 @@ fn want_la(out: &HwShared) -> Option<[f64; 2]> {
 }
 
 /// The LA's words of the record just read: the DHO800/DHO900's raw LA window (protocols/la.md 4.2: pass-through, the LA
-/// stream, one read), **assumed** the same on the MHO900; the analog stream again after it. The words are taken at
-/// the analog points' spacing from the record's first point read (**assumed**; the stock system reports 1.25 GSa/s for
-/// the digital channels at 1 GSa/s analog). None when the read fails (logged).
+/// stream, one read), **assumed** the same on the MHO900; the analog stream again after it. The LA samples at a quarter
+/// of the analog rate (`la::rate_block`, verified under the stock system), so the first quarter of the words spans the
+/// record from its first point read (**assumed**). None when the read fails (logged).
 fn read_la(
     bar: &mut Bar1,
     sh: &mut la::Shadows,
@@ -447,11 +457,17 @@ fn read_la(
         la_log(bar, w);
     }
     match r {
-        Ok(words) => Some(crate::logic::LaRec {
-            words: std::sync::Arc::new(words),
-            t0: -((now.pre - now.start()) as f64) * now.dt,
-            dt: now.dt,
-        }),
+        Ok(mut words) => {
+            // a quarter of the analog rate (la::LA_PER_ANALOG): the record's span in a quarter of the words
+            let per = la::LA_PER_ANALOG;
+            words.truncate((now.n / per) as usize);
+            let board_dt = now.dt / now.k.max(1) as f64;
+            Some(crate::logic::LaRec {
+                words: std::sync::Arc::new(words),
+                t0: -((now.pre - now.start()) as f64) * board_dt,
+                dt: board_dt * per as f64,
+            })
+        }
         Err(e) => {
             eprintln!("oos-ui mho: logic analyser read-out: {}", e);
             None
