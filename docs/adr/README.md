@@ -98,6 +98,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0075](ui-ux/0075-an-on-off-setting-is-one-switch.md) | ui-ux | A setting that is only off or on is one switch in the menus | proposed |
 | [0076](ui-ux/0076-the-top-bar-holds-display-and-storage.md) | ui-ux | The top bar holds Display and Storage; Measure and Cursor are keys and start-menu entries | proposed |
 | [0077](ui-ux/0077-a-menu-opens-at-what-opened-it-an-entry-pad-in-the-centre.md) | ui-ux | a menu opens at what opened it; an entry pad opens in the centre, large | proposed |
+| [0079](system/0079-the-rear-usb-port-is-a-network-link-to-one-computer.md) | system | The rear USB port is a network link to one computer, off by default | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents
