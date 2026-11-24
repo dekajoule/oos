@@ -38,7 +38,7 @@ known first: docs/ssh.md; OOS_SSH_IDENTITY, OOS_SSH_PORT). shell() refuses every
 the calibration or the boot partitions, so a typo here cannot.
 """
 
-import argparse, base64, json, math, os, random, re, signal, socket, statistics, struct, subprocess, sys, time, traceback, urllib.error, urllib.request
+import argparse, base64, collections, json, math, os, random, re, signal, socket, statistics, struct, subprocess, sys, time, traceback, urllib.error, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from oosclient import Link, LinkError, NoBlock  # noqa: E402
@@ -181,10 +181,11 @@ class Scope:
             time.sleep(0.06)
         return statistics.median(v) if v else math.nan
 
-    def wave(self, c=1):
-        """(t0, dt, volts) of the record on the screen: NORMal and the whole page, whatever a test before left set."""
+    def wave(self, c=1, mode="NORM"):
+        """(t0, dt, volts) of the record on the screen, or with `mode` RAW of every sample: the whole page, whatever a
+        test before left set."""
         self.w(f":WAV:SOUR CHAN{c}")
-        self.w(":WAV:MODE NORM")
+        self.w(f":WAV:MODE {mode}")
         self.w(":WAV:STAR 1")
         self.w(":WAV:STOP 1000000000")
         self.w(":WAV:FORM WORD")
@@ -1268,13 +1269,15 @@ def generator_modulation(s, o):
     s.w(f":TRIG:EDGE:SOUR CHAN{c}")
     s.w(":TIM:SCAL 0.001")
     s.w(":ACQ:MDEP 100000")
-    s.w(":WAV:MODE RAW")
     s.gen("SIN", fc, 2.0)
     res = {}
 
     def record():
         s.settle(n=2, extra=1.5)
-        t0, dt, v = s.wave(c)
+        t0, dt, v = s.wave(c, "RAW")
+        # every sample of the depth: the screen's record has too few per period for the zero crossings, and FM and PM
+        # read wrong from it while AM still reads right
+        assert len(v) >= 100000 * 0.98, f"RAW read {len(v)} points of 100000"
         return [t0 + k * dt for k in range(len(v))], v
 
     def zeros(t, v, h=0.2):
@@ -1407,6 +1410,16 @@ def raw_window(s, c, wait=60):
         time.sleep(2)
 
 
+def quantile(b, q):
+    """The byte value below which the fraction `q` of the samples `b` lies."""
+    counts, k = collections.Counter(b), 0
+    for v in range(256):
+        k += counts[v]
+        if k > q * len(b):
+            return v
+    return 255
+
+
 def rising_edges(b, lo, hi):
     """Sample indices where the bytes `b` rise through `hi` after having been below `lo` (hysteresis)."""
     out, armed = [], False
@@ -1513,7 +1526,9 @@ def raw_window_is_one_unbroken_signal(s, o):
             b += s.block(":WAV:DATA?", timeout=120)
             k += 1000000
         assert len(b) == pts, f"{rows[-1]}: read {len(b)} bytes"
-        lo, hi = min(b), max(b)
+        # the levels the sine spends its time at, not the extremes: over millions of samples min and max catch noise
+        # peaks (2.24 Vpp of a 2 Vpp sine); a sine is within 0.001 % of its peak at its 0.1 % and 99.9 % points
+        lo, hi = quantile(b, 0.001), quantile(b, 0.999)
         vpp = (hi - lo) * yinc
         mid, q = (hi + lo) / 2, (hi - lo) / 4
         e = rising_edges(b, mid - q, mid + q)
