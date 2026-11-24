@@ -1411,13 +1411,13 @@ def raw_window(s, c, wait=60):
 
 
 def quantile(b, q):
-    """The byte value below which the fraction `q` of the samples `b` lies."""
+    """The byte value below which the fraction `q` of the samples `b` lies; the largest one for `q` 1."""
     counts, k = collections.Counter(b), 0
-    for v in range(256):
+    for v in sorted(counts):
         k += counts[v]
         if k > q * len(b):
             return v
-    return 255
+    return max(counts)
 
 
 def rising_edges(b, lo, hi):
