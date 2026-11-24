@@ -745,6 +745,14 @@ From mho-dev-37 on: DC has the other shapes' frequency range; peak detect's fram
 pairs (`Frame::envelope`); a fixed depth takes the recorded rate nearest to the screen's with the depth scaled to
 the same span (`Settings::plan_deep`); the log reads every word of generator 1 back after setting it.
 
+**Seen on the unit** (JimmyPedersen's MHO934, mho-dev-39, issue #248): the fan follows the temperature there too
+(`step_wise`, level 3 of 7, pwm 153 at 44 deg C), and the generator board answers at 115200 Bd. CH1 measures the probe
+compensation signal. The counter on CH1 (the same 1 kHz signal) counted 1.2 to 2.1 kHz in most gates, 1000 edges in
+a few, while its single period read 4000002 ticks (1 ms) in most readings: extra edges, as noise at the comparator's
+threshold would give. The counter's 0x2200/0x2204 are written 0x8080 as on the DHO800/DHO900, whose meaning is not
+known (counter.md); on hp197's MHO98 the same counted exactly 1000. Not yet understood. In peak detect the first part
+of the frame flickered on the same unit (a video, time base not known yet).
+
 **Verified on the unit** (hp197's MHO98, mho-dev-37, issue #4): with mho-dev-37's words read back as written, the
 output stayed flat; under the stock system switching generator 1's square on and off changes only 0x40004 (and the
 status words 0x1300a8..0x1300b0), nothing in the 0x20000 block, also not between square and sine. With the output
