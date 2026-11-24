@@ -6,7 +6,9 @@
 //! system** (issue #4): the output bit, the frequency word, square and noise, the amplitude and offset words, the relay
 //! lines. **Verified on the unit** under OOS (the same MHO98, mho-dev-35 and -37): the offset, and that the output
 //! needs the waveform memory filled, the square too: a square written there gave 1.08 Vpp at 1 kHz with the amplitude
-//! word of 1 Vpp. The memory reads back 0. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about
+//! word of 1 Vpp. The memory reads back 0. From mho-dev-38 on (a start of the FPGA by OOS, not the stock system's
+//! state): the output's scale words (`Regs::scale`) start at 0 and must be set, and noise plays the memory in random
+//! order. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about
 //! 0.8 to 2 Vpp in the stock system; OOS uses that gear for every amplitude.
 
 /// The frequency word's clock: f / 250 MHz x (2^51 - 1) (1 kHz: 0x2_18def416, read under the stock system).
@@ -19,6 +21,8 @@ pub const MAX_VPP: f64 = 2.0;
 pub const OFFSET_ZERO: f64 = 0x0481 as f64;
 pub const OFFSET_PER_V: f64 = (0x0550 - 0x03b3) as f64;
 pub const MAX_OFFSET: f64 = 1.0;
+/// The output's full scale in the first scale word (`Regs::scale`), without modulation.
+pub const SCALE_FULL: u32 = 0x7fff;
 /// The frequency word with noise on.
 pub const NOISE_WORD: u64 = 0x20_0000_0000;
 
@@ -34,12 +38,24 @@ pub struct Regs {
     pub ampl: u32,
     /// bits 31:16: the offset's PWM code (bits 15:0 kept)
     pub offset: u32,
+    /// the output's scale is the signed 16-bit sum of these two words (AM splits it between them): 0x7fff and 0 without
+    /// modulation, as the stock system leaves them; both 0 after a start of the FPGA, and the output stays flat
+    pub scale: [u32; 2],
 }
 
 pub fn regs(n: usize) -> Regs {
     let (base, ampl, offset, out) =
         if n == 2 { (0x23_0000, 0x2_0020, 0x1_0108, 0x5_0004) } else { (0x13_0000, 0x2_001c, 0x1_0100, 0x4_0004) };
-    Regs { out, freq_lo: base + 0x28, freq_hi: base + 0x2c, noise: base + 0x6c, square: base + 0x7c, ampl, offset }
+    Regs {
+        out,
+        freq_lo: base + 0x28,
+        freq_hi: base + 0x2c,
+        noise: base + 0x6c,
+        square: base + 0x7c,
+        ampl,
+        offset,
+        scale: [base + 0x48, base + 0x4c],
+    }
 }
 
 /// What a generator puts out: a wave from the memory (`table`), noise, or the offset alone.
@@ -60,14 +76,28 @@ pub enum Shape {
 
 /// The waveform memory of generator 1: 16384 signed 16-bit samples, two per word from 0x100000 (8192 words), loaded
 /// with the output off. **Verified on the unit** with a square (the first half of the words 0x7fff7fff, the second
-/// 0x80018001). Which half of a word holds the earlier sample is **assumed** (bits 15:0); a square cannot tell.
+/// 0x80018001), and that bits 15:0 hold the earlier sample (a step from high to low after an odd sample, mho-dev-38).
 pub const TABLE: u32 = 0x10_0000;
 pub const TABLE_SAMPLES: usize = 16384;
 
 /// One period of `shape` as the memory's samples (full scale +-32767); `arb` the stored wave's samples (-1 to 1) for
-/// `Shape::Arb`. Noise and DC take the square's (their output does not come from the memory's shape).
+/// `Shape::Arb`. DC takes the square's (its amplitude is 0). Noise plays the memory in random order, so its table holds
+/// the values noise takes: each the sum of four pseudo-random draws (near a normal distribution), a fixed seed so every
+/// start loads the same, scaled to full scale.
 pub fn table(shape: Shape, arb: &[f32]) -> Vec<i16> {
     let n = TABLE_SAMPLES;
+    if shape == Shape::Noise {
+        let mut x = 0x2545_f491u32;
+        let mut draw = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as i32 as f64
+        };
+        let v: Vec<f64> = (0..n).map(|_| (0..4).map(|_| draw()).sum()).collect();
+        let peak = v.iter().fold(0.0f64, |m, a| m.max(a.abs()));
+        return v.iter().map(|a| (a / peak * 32767.0).round() as i16).collect();
+    }
     let full = 32767.0;
     (0..n)
         .map(|i| {
@@ -149,6 +179,8 @@ pub fn words(n: usize, o: &Out, out_old: u32, offset_old: u32) -> Vec<(u32, u32)
         (r.freq_hi, (f >> 32) as u32),
         (r.ampl, if o.shape == Shape::Dc { 0 } else { ampl_word(o.vpp) }),
         (r.offset, offset_word(o.offset, offset_old)),
+        (r.scale[0], SCALE_FULL),
+        (r.scale[1], 0),
     ]
 }
 
@@ -176,7 +208,8 @@ mod tests {
     use super::*;
 
     // Break it catches: the frequency word's clock or width, the amplitude's full scale, the offset's zero or slope,
-    // the offset word losing its low half, the output switched on before the relays, generator 2's block.
+    // the offset word losing its low half, the output switched on before the relays, generator 2's block, the output's
+    // scale left at 0 (a flat output after a start of the FPGA).
     #[test]
     fn the_words_are_the_stock_systems() {
         assert_eq!(freq_word(1e3), 0x2_18de_f416);
@@ -188,6 +221,7 @@ mod tests {
         let w = words(1, &o, 0x81, 0);
         assert_eq!(w[0], (0x4_0004, 0x80), "output off first");
         assert!(w.contains(&(0x13_007c, 1)) && w.contains(&(0x13_006c, 0)) && w.contains(&(0x1_0100, 0x0481_0000)));
+        assert!(w.contains(&(0x13_0048, 0x7fff)) && w.contains(&(0x13_004c, 0)), "the output's scale");
         let n = words(2, &Out { shape: Shape::Noise, ..o }, 0, 0);
         assert!(n.contains(&(0x23_0028, 0)) && n.contains(&(0x23_002c, 0x20)) && n.contains(&(0x23_006c, 1)));
         let r = relays(1, true);
@@ -196,7 +230,8 @@ mod tests {
     }
 
     // Break it catches: the square of the test on the unit not reproduced, a table of the wrong length, a sine that
-    // does not start at 0 or misses its peak, a ramp's symmetry ignored.
+    // does not start at 0 or misses its peak, a ramp's symmetry ignored, noise as two levels (the square's table gave
+    // a random square on the unit) or with an offset, a noise table that changes between starts.
     #[test]
     fn the_memory_holds_one_period() {
         let sq = table_words(&table(Shape::Square, &[]));
@@ -211,5 +246,11 @@ mod tests {
         assert!(ramp[0] == -32767 && ramp[8192] == 0 && ramp[16383] > 32700);
         let arb = table(Shape::Arb, &[0.0, 1.0]);
         assert_eq!((arb[0], arb[8192]), (0, 32767));
+        let noise = table(Shape::Noise, &[]);
+        let mean = noise.iter().map(|&v| v as f64).sum::<f64>() / noise.len() as f64;
+        let rms = (noise.iter().map(|&v| (v as f64).powi(2)).sum::<f64>() / noise.len() as f64).sqrt();
+        assert_eq!((noise.len(), noise.iter().map(|v| v.unsigned_abs()).max()), (TABLE_SAMPLES, Some(32767)));
+        assert!(mean.abs() < 1000.0 && rms > 6000.0 && rms < 16000.0, "noise mean {} rms {}", mean, rms);
+        assert_eq!(noise, table(Shape::Noise, &[]), "the same table on every start");
     }
 }
