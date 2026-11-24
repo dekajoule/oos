@@ -841,7 +841,22 @@ samples. At 1 us/div the phases lie within a few samples. Around a step faster t
 alternates high and low for a dozen ns, so the trigger's comparator sees a crossing in both directions at every edge:
 that is the frames on the other slope, and OOS's 4 GSa/s pictures of fast edges are wrong while it lasts. 0x1080's low
 half at 0 (as the stock system's with one channel) did not change it. **Assumed:** the stock start aligns the two
-ADCs at run time, a step OOS's start does not reproduce; not yet found. The zoom slots
+ADCs at run time, a step OOS's start does not reproduce; not yet found.
+
+**Verified on the unit** (hp197's MHO98, mho-dev-49, issue #4): 0x1020 is written per ADC, to the one that 0x1014
+bits 19:12 select (1: ADC 0, 2: ADC 1), and reads back the last value written. A plan replays 0x1020 (0x1111 in the
+recording) once, with the recording's 0x1014 (0x14002301), so only ADC 1 got it. The same value written to both ADCs
+ended the frames on the other slope (generator 1's square at 100 Hz and 1 kHz: 50 of 50 with the edge at the trigger
+point); two different values brought them back. The value sets the ADCs' alignment at 4 GSa/s: the first crossing of
+a step's middle level by the four phases of the sample index spread 15 samples with 0x1010, 29 with 0x1111 and 10 with
+0x1313 in both, so the best value differs from start to start (fields in bits 3:0 and 11:8, with bits 4 and 12 set;
+one step moves a group of samples by about 4 samples). Traced with `mho-poll` over two restarts of the stock program:
+for each ADC (0x1014 = 0x14001... then 0x14002...) it writes 0x1020 = 0, steps 0x1014 bits 9:8 through 0 to 3 reading
+0x1030 after each (0x00650065, 0x00670067, ...), then writes 0x1020; before that 0x1018 walks the data lines' delays
+(0xc0000e04 to 0xc0000e1f per ADC, then 2 to 0xb, settling at 2), with pulses of 0x1000 (0x3e80, 0x00103e80,
+0x00801e80). Both restarts ended at 0x1020 0x1111 and 0x1030 0x00680068. From mho-dev-51 on OOS writes the
+recording's 0x1020 to both ADCs after every plan (`settings::align_both`); a file `/oos/mho-adc-align` (hex) takes
+another value. **Not yet done:** measuring the value at every start, as the stock system does. The zoom slots
 0x14f8-0x1514 read back in pairs under OOS (0x476 0x476 0xfffff124 0xfffff124 ...) whatever is written.
 
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of

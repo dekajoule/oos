@@ -22,7 +22,7 @@ use super::{roll, units};
 use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
 use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
 use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
-use oos_hal::mho::settings::{Plan, Settings};
+use oos_hal::mho::settings::{self, Plan, Settings};
 use oos_hal::mho::{acq, la, record, snapshot, sweep, tpu, vertical};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -42,6 +42,8 @@ const NO_ADC_SYNC: &str = "/oos/mho-no-adc-sync";
 /// sequence (the file holds the number), and the stop sequence without the SPU and TX reset pulses.
 const ARM_PAUSE: &str = "/oos/mho-arm-pause-ms";
 const ARM_NO_RESET: &str = "/oos/mho-arm-no-reset";
+/// The ADCs' alignment word 0x1020 to write to both ADCs instead of the recording's (`align_override`).
+const ALIGN_FILE: &str = "/oos/mho-adc-align";
 /// How long one acquisition may take to complete at least (`Now::done_ms` adds twice the record's span: a 1 s limit
 /// left 50 and 100 ms/div broken on an MHO98, issue #4), the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
@@ -460,6 +462,14 @@ fn set_sweep(
     }
 }
 
+/// A value for the ADCs' alignment word 0x1020 from `ALIGN_FILE` (hex), in place of the recording's: the best one
+/// differs from start to start (an MHO98, issue #4: 0x1313 put the four sample phases within 10 samples at 4 GSa/s
+/// where the recording's 0x1111 left 29), to try on a unit.
+fn align_override() -> Option<u32> {
+    let t = std::fs::read_to_string(ALIGN_FILE).ok()?;
+    u32::from_str_radix(t.trim().trim_start_matches("0x"), 16).ok()
+}
+
 /// The arm's variant from `ARM_PAUSE` and `ARM_NO_RESET`, logged when it is not the plain one.
 fn arm_variant() -> snapshot::ArmVariant {
     let pause_ms = std::fs::read_to_string(ARM_PAUSE).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
@@ -609,6 +619,11 @@ fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32, adc_sy
     reset(bar);
     for &(a, v) in &p.fpga {
         bar.wr(a, v);
+    }
+    // the alignment word into both ADCs, not only into the one the recording's 0x1014 selects (settings::align_both)
+    let word = |a: u32| p.fpga.iter().find(|w| w.0 == a).map(|w| w.1);
+    if let (Some(w1014), Some(v)) = (word(0x1014), align_override().or(word(settings::ALIGN))) {
+        bar.apply(&settings::align_both(w1014, v));
     }
     reset(bar);
     // the ADC sync of the DHO800/DHO900's cold boot (0x1000 bit 1: clear, set, clear; cold-boot.md, `spu_adc_sync`),
