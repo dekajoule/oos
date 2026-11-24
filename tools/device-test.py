@@ -1559,8 +1559,9 @@ def hardware_segments_hold_their_own_samples(s, o):
     if other is None:
         raise Skip("every channel carries the generator: no channel without a signal to force the triggers on")
     # as many as the scope records: it takes any count and stops at the limit of its memory for the segment size
-    # the whole segment: 1 M points at 50 MSa/s are three quarters of a period, so the spread of each is at least
-    # 1.7 times the amplitude (a window of a tenth of a period near a peak spread less than the noise check allows)
+    # the whole segment: assumed 1 M points over the 20 ms of the screen (50 MSa/s), three quarters of a period, so the
+    # spread of each is at least 1.7 times the amplitude; verified on the unit only in that whole segments of 60 passed
+    # the check twice, while windows of 200 000 points near a peak spread less than it (18 and 19 codes)
     ask, win = 100000, 1_000_000
     s.w(":STOP")
     s.w(":ACQ:SEGM OFF")
