@@ -9,6 +9,7 @@
 | SCPI over TCP | 5555 | [[SCPI and VXI-11]]: the DHO800/DHO900 subset and OOS extensions; RAW reads retained native CH memory, and references retain their own native timing |
 | VXI-11 | 111, 9009 | on the scope, where port 111 is free: VISA `TCPIP::<ip>::INSTR` |
 | HiSLIP | 4880 | on a computer only: the same SCPI interpreter, `TCPIP::<ip>::hislip0::INSTR` |
+| USBTMC | rear USB-B port | the same SCPI interpreter without any network: VISA `USB::0x1209::0x0001::<serial>::INSTR`, off by default ([below](#usb-instrument-usbtmc)) |
 | LXI identification | 8080 | `/lxi/identification` |
 | MCP | 8080 | `POST /mcp`: tools `scpi` and `screenshot` for AI assistants |
 | SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([below](#ssh)) |
@@ -63,7 +64,7 @@ joined a home network with a password and worked over it for days.
 ## USB cable
 
 No Ethernet at the bench? A USB cable from your computer to the USB-B port on the back of the scope does the same job.
-Switch on **System > Network > Remote services > USB network** (off by default: **not yet verified on hardware**,
+Switch on **System > Network > Remote services > USB network** (off by default: **tried on one scope with a Mac so far**,
 please tell us in [#235](https://github.com/dekajoule/oos/issues/235) how it went). The computer then sees a new
 network adapter and gets an address by itself:
 
@@ -78,6 +79,40 @@ and no DNS server, so your computer's internet connection stays as it is, and th
 The computer on the cable is always let in, whatever Allowed says. For a shell, use [SSH](#ssh) over the cable:
 `ssh root@192.168.235.1`. If 192.168.235.x is already used on your network, another range can be set in the system
 settings file ([docs/usb-device.md](https://github.com/dekajoule/oos/blob/main/docs/usb-device.md)).
+
+## USB instrument (USBTMC)
+
+The same USB-B port on the back can also make the scope a USB instrument, as bench instruments with a USB port are:
+VISA finds it as `USB::0x1209::0x0001::<serial>::INSTR` with no network at all, and it speaks the same SCPI as port
+5555 ([[SCPI and VXI-11]]). Switch on **System > Network > Remote services > USB instrument** (off by default: **tried on one
+scope with pyvisa on a Mac so far**; tell us in an issue how it went on Linux and Windows). It works on its own or together with USB network; the
+row **USBTMC** next to it says `no computer` until a computer has taken the device, then `connected`.
+
+```python
+import pyvisa
+rm = pyvisa.ResourceManager("@py")       # pyvisa-py; NI-VISA or Keysight VISA: ResourceManager()
+print(rm.list_resources())               # the scope is one of them: USB0::...::INSTR
+scope = rm.open_resource("USB::0x1209::0x0001::0a1b2c3d4e5f::INSTR")   # your scope's serial number
+print(scope.query("*IDN?"))
+png = scope.query_binary_values(":DISP:DATA? PNG", datatype="B", container=bytes)
+```
+
+(`0a1b2c3d4e5f` stands for the serial number your scope has in the list; some VISA write the IDs in decimal there,
+4617 for 0x1209 and 1 for 0x0001.)
+
+- **Linux**: the kernel's `usbtmc` driver takes the scope at once: `/dev/usbtmc0` (`echo "*IDN?" > /dev/usbtmc0;
+  head -n 1 /dev/usbtmc0`). pyvisa-py goes through libusb; for that as a normal user, add a udev rule
+  `/etc/udev/rules.d/70-oos-usbtmc.rules` with
+  `SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0001", MODE="0660", TAG+="uaccess"`, then
+  `sudo udevadm control --reload` and plug the cable in again.
+- **macOS**: pyvisa-py with libusb (`brew install libusb`, `pip install pyvisa-py pyusb`), nothing else.
+- **Windows** 10 and 11: the scope asks Windows for its WinUSB driver itself, so nothing needs installing for
+  pyvisa-py (with `pip install pyusb libusb-package`) or the OOS desktop client. NI-VISA and Keysight VISA bring their
+  own USBTMC driver, which Windows does not pick for the scope by itself: to use them, choose their driver for the
+  scope's "OOS USBTMC" device once in the Device Manager (Update driver > Browse > Let me pick).
+
+The product ID 0x0001 is the test ID of [pid.codes](https://pid.codes) and will change to one of OOS's own before a
+release; the details are in [docs/usb-device.md](https://github.com/dekajoule/oos/blob/main/docs/usb-device.md).
 
 ## SSH
 
