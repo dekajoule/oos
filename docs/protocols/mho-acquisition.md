@@ -764,6 +764,12 @@ mho-dev-41 on a frame whose edge lies farther than 1 % of the frame from the tri
 counts them with whether the other slope's edge is at the trigger point; after each setting the log names the longest
 run of one word in each channel's record.
 
+**Seen on the unit** (skluehspies' MHO98, mho-dev-41, issue #491, the LA probe on the probe compensation signal):
+with the LA on (thresholds 1.4 V written, 0x13151326) D0 first showed a trace at another time base than the analog
+channels, then, after the time base changed, a flat line; the read-out gave no error. OOS sets no LA sample rate:
+on the DHO800/DHO900 the block 0x12a4..0x12ac holds it (la.md 3.2), on the MHO900 its values are not known yet. From
+mho-dev-42 on the log shows, every 50 frames with the LA on, what its words hold and the board's LA words.
+
 **Verified on the unit** (hp197's MHO98, mho-dev-37, issue #4): with mho-dev-37's words read back as written, the
 output stayed flat; under the stock system switching generator 1's square on and off changes only 0x40004 (and the
 status words 0x1300a8..0x1300b0), nothing in the 0x20000 block, also not between square and sine. With the output

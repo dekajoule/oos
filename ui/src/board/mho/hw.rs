@@ -376,7 +376,7 @@ fn run(out: &HwShared) {
         let words = split(bytes, now.mask, now.shown[0].scale, std::mem::take(&mut show));
         let mut f = frame(&words, &now);
         if la {
-            f.la = read_la(&mut bar, &mut sh, &mut c2h, &mut buf, &now);
+            f.la = read_la(&mut bar, &mut sh, &mut c2h, &mut buf, &now, seq % 50 == 1);
         }
         if let Some(r) = ring.as_mut() {
             r.push(&f);
@@ -428,6 +428,7 @@ fn read_la(
     c2h: &mut std::fs::File,
     buf: &mut oos_hal::mho::bus::DmaBuf,
     now: &Now,
+    log: bool,
 ) -> Option<crate::logic::LaRec> {
     // the play engine idle first (la.md 4.2 step 5: 0x4034 bit 13)
     for _ in 0..20 {
@@ -442,6 +443,9 @@ fn read_la(
         b.as_chunks::<2>().0.iter().take(now.n as usize).map(|x| u16::from_le_bytes(*x)).collect::<Vec<u16>>()
     });
     bar.apply(&la::restore(sh));
+    if let (true, Ok(w)) = (log, &r) {
+        la_log(bar, w);
+    }
     match r {
         Ok(words) => Some(crate::logic::LaRec {
             words: std::sync::Arc::new(words),
@@ -453,6 +457,36 @@ fn read_la(
             None
         }
     }
+}
+
+/// Once every 50 frames with the LA on: what its words hold (how many differ, how often each line changes, the first
+/// ones) and the board's LA words (enable, rate block 0x12a4..0x12ac, deskew, thresholds): on an MHO98 the LA showed a
+/// trace at another time base, then a flat line after the time base changed (mho-dev-41, issue #491).
+fn la_log(bar: &mut Bar1, w: &[u16]) {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut flips = [0u32; 16];
+    for (i, &x) in w.iter().enumerate() {
+        seen.insert(x);
+        if i > 0 {
+            let d = x ^ w[i - 1];
+            for (b, f) in flips.iter_mut().enumerate() {
+                *f += (d >> b) as u32 & 1;
+            }
+        }
+    }
+    let first: Vec<String> = w.iter().take(8).map(|x| format!("{:04x}", x)).collect();
+    let regs: Vec<String> = [0x4008, 0x12a4, 0x12a8, 0x12ac, 0x128c, 0x12d4]
+        .iter()
+        .map(|&a| format!("{:#x}={:#x}", a, bar.rd(a)))
+        .collect();
+    eprintln!(
+        "oos-ui mho: logic analyser: {} words, {} different, changes per line D0..D15 {:?}, first {}; {}",
+        w.len(),
+        seen.len(),
+        flips,
+        first.join(" "),
+        regs.join(" ")
+    );
 }
 
 /// Roll's sweep: the TPU's auto trigger with a 1 ms timeout while `roll`, so each record ends without an edge; the
