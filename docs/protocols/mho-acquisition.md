@@ -824,6 +824,17 @@ before it arms, and 0x4010 to 0x4018 stay 0. From mho-dev-49 on two switches var
 file `/oos/mho-arm-pause-ms` (a pause after the stop sequence) and `/oos/mho-arm-no-reset` (the stop sequence without
 the reset pulses), `snapshot::ArmVariant`.
 
+**Seen on the unit** (hp197's MHO98, mho-dev-49, issue #4), the frames on the other slope narrowed down: neither a
+20 ms pause after the stop sequence nor a stop sequence without the reset pulses changed them. They come only with
+generator 1's **square** looped back to a channel: with its sine or ramp (1 kHz, 1 Vpp) 50 of 50 frames had the edge
+at the trigger point, and with the probe compensation square on CH3 as the source as well (1 ms and 100 us/div); with
+the square at 100 Hz nearly every frame was on the other edge. The square's falling step under OOS is about 15 ns
+with about +-0.1 V of ringing and no spike back across the level; the stock system's square rings about +-0.2 V on
+both sides of its step (band-limited, **assumed**), and its single shots took the set slope every time (40 of 40 at
+1 us/div, either slope). Every set-up word of the TPU, SCU and SPU that differs was tried at the stock value without
+effect. **Not understood; left open:** OOS drops such frames, so the picture stays right. The zoom slots
+0x14f8-0x1514 read back in pairs under OOS (0x476 0x476 0xfffff124 0xfffff124 ...) whatever is written.
+
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
 the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
 0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div
