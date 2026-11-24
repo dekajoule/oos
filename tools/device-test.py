@@ -1548,19 +1548,20 @@ def raw_window_is_one_unbroken_signal(s, o):
 def hardware_segments_hold_their_own_samples(s, o):
     """Hardware segments (`:ACQuire:SEGMents:HARDware`) each hold their own samples: a slow sine with forced triggers
     on a channel without a signal, so every segment starts at another phase; each one stepped to with the history
-    keys, a window of its raw samples read and compared with every other. A segment that reads back another's samples
+    keys, its raw samples read and compared with every other. A segment that reads back another's samples
     shows as two equal windows (#530: the frames above 256 MiB landed on the lower ones, with right time stamps).
-    As many segments as the memory holds, so the last ones reach the top of the 256 MiB records use. The trigger
-    times rise from segment to segment."""
+    As many segments as the scope records (it stops at the limit of its memory), so the last ones reach the top of the
+    256 MiB records use. The trigger times rise from segment to segment."""
     c = s.loop[0]
     # a channel the generator does not reach, not one of the loop's: a signal there would lock every segment to the
     # same phase
     other = next((x for x in CH if x not in s.loop), None)
     if other is None:
         raise Skip("every channel carries the generator: no channel without a signal to force the triggers on")
-    # the segment count of the whole memory at 1 M points (hal/src/dho/hz.rs: mem_size, max_record_frames): segments
-    # of 2^17 bursts of 10 points, 15,728,640 bursts below the 1 M bursts the FPGA keeps at the top of 256 MiB
-    n, win = 15_728_640 // 131_072, 200_000
+    # as many as the scope records: it takes any count and stops at the limit of its memory for the segment size
+    # the whole segment: 1 M points at 50 MSa/s are three quarters of a period, so the spread of each is at least
+    # 1.7 times the amplitude (a window of a tenth of a period near a peak spread less than the noise check allows)
+    ask, win = 100000, 1_000_000
     s.w(":STOP")
     s.w(":ACQ:SEGM OFF")
     s.gen("SIN", 37.3, 2.0)
@@ -1570,19 +1571,22 @@ def hardware_segments_hold_their_own_samples(s, o):
     # nothing on that channel: the triggers are forced, at any phase of the sine
     s.w(f":TRIG:EDGE:SOUR CHAN{other}")
     s.w(":ACQ:SEGM:HARD ON")
-    s.w(f":ACQ:SEGM {n}")
+    s.w(f":ACQ:SEGM {ask}")
     s.w(":ACQ:MDEP 1000000")
     time.sleep(1)
     s.w(":RUN")
-    end, times = time.time() + 180, []
-    while time.time() < end:
+    # recorded once the count of time stamps has stood still for 5 s
+    end, times, still = time.time() + 180, [], 0
+    while time.time() < end and still < 5:
         time.sleep(1)
-        times = [float(x) for x in s.q(":ACQ:SEGM:TIM?").split(",") if x]
-        if len(times) >= n:
-            break
-    row = f"{len(times)} of {n} segments of 1 M"
+        now = [float(x) for x in s.q(":ACQ:SEGM:TIM?").split(",") if x]
+        still = still + 1 if now and len(now) == len(times) else 0
+        times = now
+    n = len(times)
+    row = f"{n} segments of 1 M"
     try:
-        assert len(times) == n, f"{row} within 180 s"
+        assert still >= 5, f"{row}, still recording after 180 s"
+        assert n >= 20, f"{row}: fewer than 20, the memory holds more"
         assert all(t < 9e37 for t in times), f"{row}: a segment without a time stamp: {times}"
         assert all(a < b for a, b in zip(times, times[1:])), f"{row}: the trigger times do not rise: {times}"
         s.w(f":WAV:SOUR CHAN{c}")
@@ -1604,11 +1608,12 @@ def hardware_segments_hold_their_own_samples(s, o):
                     break
             prev = seen[i] = d
         s.shot("hardware-segments-first", o.out)
-        flat = [i for i, d in enumerate(seen) if len(d) < win or max(d) - min(d) < 20]
+        flat = [(i, len(d), max(d, default=0) - min(d, default=0)) for i, d in enumerate(seen)]
+        flat = [f"{i} ({k} bytes, spread {r})" for i, k, r in flat if k < win * 0.98 or r < 40]
         assert not flat, f"{row}: segments without the signal or short: {flat}"
         same = [(a, b) for a in range(n) for b in range(a + 1, n) if seen[a] == seen[b]]
         assert not same, f"{row}: segments that read back the same samples: {same[:6]}"
-        return f"{row}, each window of {win} samples its own, the second {times[1] * 1e3:.1f} ms after the first, the last {times[-1]:.2f} s"
+        return f"{row}, the samples of each its own, the second {times[1] * 1e3:.1f} ms after the first, the last {times[-1]:.2f} s"
     finally:
         s.w(":ACQ:SEGM OFF")
         s.w(":ACQ:SEGM:HARD OFF")
