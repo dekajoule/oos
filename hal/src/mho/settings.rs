@@ -198,9 +198,18 @@ fn unroll(mut p: Plan, normal: Option<Setting>) -> Result<Plan, String> {
     Ok(p)
 }
 
-/// Words a plan never writes: not settings, live values, the sync, the SCU's mode word (the arm's).
+/// Generator 1's and 2's offset and amplitude (`afg::regs`): the generator's, set by its own thread. A plan replaying
+/// the recording's (taken with the generators off) put generator 1's offset back to 0 V whenever a channel changed
+/// (an MHO98, mho-dev-45, issue #4).
+const GENERATOR: [u32; 4] = [0x1_0100, 0x1_0108, 0x2_001c, 0x2_0020];
+
+/// Words a plan never writes: not settings, live values, the sync, the SCU's mode word (the arm's), the generators'.
 fn skipped(a: u32) -> bool {
-    NOT_REPLAYED.iter().any(|(n, _)| *n == a) || LIVE.contains(&a) || a == SYNC || a == super::snapshot::MODE
+    NOT_REPLAYED.iter().any(|(n, _)| *n == a)
+        || LIVE.contains(&a)
+        || a == SYNC
+        || a == super::snapshot::MODE
+        || GENERATOR.contains(&a)
 }
 
 /// All settings of a unit's file.
@@ -665,6 +674,17 @@ mod tests {
         );
         let q = s.plan(2, 2e-4, 0.1).unwrap();
         assert_eq!(q.pre, 5000, "an ordinary setting stays as recorded");
+    }
+
+    // Break it catches: a channel's setting putting the generator's offset or amplitude back to the recording's.
+    #[test]
+    fn a_plan_leaves_the_generators_alone() {
+        let t = file().replace(
+            "fpga 0x4008 0x188832a3\n",
+            "fpga 0x4008 0x188832a3\nfpga 0x10100 0x4811000\nfpga 0x2001c 0x7b08\n",
+        );
+        let p = Settings::parse(&t).unwrap().plan(2, 2e-4, 0.1).unwrap();
+        assert!(!p.fpga.iter().any(|w| super::GENERATOR.contains(&w.0)));
     }
 
     // Break it catches: a fixed depth taken at the screen's time base's own rate, the depth words of the shallow record

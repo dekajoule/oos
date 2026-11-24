@@ -785,6 +785,16 @@ dropped), at 50 ms/div 23 of 50. Under the stock system 0x4080 reads 0x1c00a101 
 clear. OOS's copy of 0x4080, which the arm writes back, started from the DHO800/DHO900's value. From mho-dev-45 on it
 takes bits 28:26 from the snapshot (`snapshot::S4080_STOCK`, **assumed** to be what triggers on the other slope).
 
+**Seen on the unit** (hp197's MHO98, mho-dev-45, issue #4): of the set-up words in 0x1000-0x15fc, 0x2000-0x227c and
+0x4000-0x410c that the stock system uses, 23 read steadily otherwise under OOS than under the stock system at the same
+setting (1 ms/div, CH1 200 mV/div, edge rising at 0 V). Set by hand to the stock values one by one, none of 0x2210 (the
+counter), 0x21b8/0x21bc/0x21cc, 0x2244 (the DVM), 0x200c/0x2010, 0x1004, 0x155c/0x1574, 0x1014 and 0x1080 changed the
+frames with the falling edge at the trigger point (13 to 28 of 50). With generator 1's square at 0 to +1 V and the
+level at +0.5 V every such frame still held the falling edge at the trigger point, none a frame below 0 V: the board
+fires on the falling edge, the data are not inverted. Not yet understood. The same test showed a channel's setting
+putting generator 1's offset back to 0 V: the plans replayed the recording's 0x10100. From mho-dev-46 on a plan writes
+none of the generators' offset and amplitude words (0x10100, 0x10108, 0x2001c, 0x20020).
+
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
 the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
 0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div
