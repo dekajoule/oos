@@ -7,10 +7,12 @@
 //! the link reset 0x2003c and the sync enable 0x10120, each with its time. Read only: the device is opened read-only
 //! and the window mapped without write permission. Static for aarch64: it runs under the stock system too.
 //!
-//!   mho-poll [--seconds N] [--wait S] OUT
+//!   mho-poll [--seconds N] [--wait S] [--words A,B,...] OUT
 //!       waits up to S s (default 30) for /dev/xdma0_bypass, then watches for N s (default 40) and writes OUT: one
 //!       line `MICROSECONDS OFFSET VALUE` per change (hex), then `polls`, `loop_us`, `marker` and `end`. At its time
-//!       zero it writes `mho-poll t0` into the kernel's trace buffer (trace_marker), when tracing is on.
+//!       zero it writes `mho-poll t0` into the kernel's trace buffer (trace_marker), when tracing is on. `--words`
+//!       watches those offsets (hex, below 0x40000) on every pass instead of the link reset and the sync enable: to
+//!       follow how the stock system arms a single (protocols/mho-acquisition.md section 12).
 
 #[cfg(target_os = "linux")]
 fn main() {
@@ -23,7 +25,7 @@ fn main() {
     };
     let (seconds, wait) = (opt("--seconds", 40), opt("--wait", 30));
     let Some(out) = args.last().filter(|a| !a.starts_with("--") && args.len() % 2 == 1) else {
-        eprintln!("usage: mho-poll [--seconds N] [--wait S] OUT");
+        eprintln!("usage: mho-poll [--seconds N] [--wait S] [--words A,B,...] OUT");
         std::process::exit(2);
     };
     // the device comes back after the PCIe host and xdma were loaded again: open it only then, so that this watcher
@@ -40,15 +42,22 @@ fn main() {
         }
     };
     const BRIDGE: u32 = 0x3000;
-    const OTHERS: [u32; 2] = [0x2003c, 0x10120];
+    let words: Option<Vec<u32>> = args.iter().position(|a| a == "--words").and_then(|i| args.get(i + 1)).map(|v| {
+        v.split(',')
+            .filter_map(|w| u32::from_str_radix(w.trim().trim_start_matches("0x"), 16).ok())
+            .filter(|&w| (w as usize) < WINDOW_USED && w % 4 == 0)
+            .collect()
+    });
+    let every = if words.is_some() { 1 } else { 32 };
+    let others = words.unwrap_or_else(|| vec![0x2003c, 0x10120]);
     let start = Instant::now();
     // time zero in the kernel's trace buffer, where mho-check.py records the GPIO lines: the two logs are merged on it
     let marker = std::fs::write("/sys/kernel/debug/tracing/trace_marker", "mho-poll t0\n").is_ok();
     let mut log: Vec<(u64, u32, u32)> = Vec::with_capacity(1 << 20);
     let mut last_bridge = bar.rd(BRIDGE);
-    let mut last: Vec<u32> = OTHERS.iter().map(|&o| bar.rd(o)).collect();
+    let mut last: Vec<u32> = others.iter().map(|&o| bar.rd(o)).collect();
     log.push((0, BRIDGE, last_bridge));
-    log.extend(OTHERS.iter().zip(&last).map(|(&o, &v)| (0, o, v)));
+    log.extend(others.iter().zip(&last).map(|(&o, &v)| (0, o, v)));
     let mut polls = 0u64;
     let end = Duration::from_secs(seconds);
     while start.elapsed() < end {
@@ -58,8 +67,8 @@ fn main() {
             log.push((start.elapsed().as_micros() as u64, BRIDGE, v));
             last_bridge = v;
         }
-        if polls.is_multiple_of(32) {
-            for (i, &o) in OTHERS.iter().enumerate() {
+        if polls.is_multiple_of(every) {
+            for (i, &o) in others.iter().enumerate() {
                 let v = bar.rd(o);
                 if v != last[i] {
                     log.push((start.elapsed().as_micros() as u64, o, v));
