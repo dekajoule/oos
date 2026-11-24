@@ -222,12 +222,12 @@ fn a_message_larger_than_a_packet_is_one_message_at_its_eom() {
     // transfers without EOM are no message yet
     feed(&mut d, &out_transfer(4, b":CHAN1:SCAL", false)).unwrap();
     assert_eq!(d.take_message(), None);
-    assert_eq!(d.out_want(), HEADER, "the next transfer starts with its header");
+    assert_eq!(d.out_want(), MAX_READ, "reads are whole: header and message come in one short packet");
     feed(&mut d, &out_transfer(5, b" 1\n", true)).unwrap();
     assert_eq!(d.take_message().map(|m| m.1), Some(b":CHAN1:SCAL 1\n".to_vec()));
-    // the reads ask for the rest of a transfer, not more
+    // a read in the middle of a transfer asks for whole packets as well
     feed(&mut d, &out_transfer(6, &text, true)[..HEADER]).unwrap();
-    assert_eq!(d.out_want(), 2004, "2001 data bytes and 3 of padding");
+    assert_eq!(d.out_want(), MAX_READ);
 }
 
 // Break it catches: a message past MAX_MESSAGE kept in memory (a host could fill the scope's memory)
@@ -261,7 +261,7 @@ fn abort_bulk_out_in_the_middle_of_a_transfer() {
     assert_eq!(answer(d.control(&setup(0xa2, 2, 0, EP_OUT, 8))), [0x01, 0, 0, 0, 40, 0, 0, 0], "40 bytes received");
     // the rest the reader had already read before the abort is dropped, the next transfer starts with its header
     d.bulk_out(epoch, &t[HEADER + 40..]).unwrap();
-    assert_eq!(d.out_want(), HEADER);
+    assert_eq!(d.out_want(), MAX_READ);
     feed(&mut d, &out_transfer(6, b"*IDN?\n", true)).unwrap();
     assert_eq!(d.take_message().map(|m| m.1), Some(b"*IDN?\n".to_vec()));
 }
@@ -356,7 +356,7 @@ fn bulk_out_waits_while_the_interpreter_has_enough() {
     }
     assert_eq!(d.out_want(), 0, "the endpoint is not read: the host's transfers wait");
     d.take_message();
-    assert_eq!(d.out_want(), HEADER);
+    assert_eq!(d.out_want(), MAX_READ);
 }
 
 // Break it catches: the frame loop's side running a message before the answer of the one before is out (ADR 0066),

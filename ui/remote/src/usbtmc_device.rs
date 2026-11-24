@@ -455,16 +455,15 @@ impl Device {
         self.out_epoch
     }
 
-    /// How many bytes the next read of Bulk-OUT asks for: the rest of the header, or of the transfer (at most
-    /// `MAX_READ`); 0 while the interpreter has enough messages waiting. FunctionFS rounds a read up to whole packets
-    /// and keeps what is over for the next one, so a read never takes bytes of two transfers.
+    /// How many bytes the next read of Bulk-OUT asks for: `MAX_READ`, whole packets; 0 while the interpreter has
+    /// enough messages waiting. A read ends with the host's transfer (its short packet), and `bulk_out` splits what it
+    /// got by the headers. A read of only what is left of a header or a transfer is not enough: a host sends header
+    /// and message in one short packet, and what did not fit the smaller read was lost on the unit (dwc3, 6.12).
     pub fn out_want(&self) -> usize {
         if self.inbox.len() >= MAX_INBOX {
-            return 0;
-        }
-        match self.incoming.header {
-            None => HEADER - self.incoming.head.len(),
-            Some(_) => self.incoming.left.min(MAX_READ),
+            0
+        } else {
+            MAX_READ
         }
     }
 
