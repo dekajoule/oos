@@ -7,6 +7,7 @@
 //! like loopback (`on_usb_link`, used by `netacl`).
 
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
 /// The script that owns the gadget.
 pub const SCRIPT: &str = "/bin/oos-gadget";
@@ -51,16 +52,50 @@ pub fn on_usb_link(ip: IpAddr) -> bool {
 
 /// Builds the gadget again with the current settings or takes it down (`oos-gadget apply`), in a thread of its own:
 /// the script waits for the device controller, the frame loop does not. Only on the scope, where the script is.
+/// Applies run one after the other, and those asked for while one runs become one more run: the script reads
+/// `usb.net` when it starts, so the last run follows the last change (an `on` still waiting for the controller can
+/// not bind the gadget again after a later `off`).
 pub fn apply() {
     if !std::path::Path::new(SCRIPT).exists() {
         return;
     }
-    let step = crate::remote::Step { prog: SCRIPT, arg: "apply", log: LOG };
-    std::thread::spawn(move || {
+    APPLY.request(|| {
+        let step = crate::remote::Step { prog: SCRIPT, arg: "apply", log: LOG };
         if let Err(e) = crate::remote::script_runner()(&step) {
             eprintln!("oos-ui: {}", e);
         }
     });
+}
+
+static APPLY: Serial = Serial::new();
+
+/// Runs a job in a thread of its own, never two at once; requests while it runs are merged into one more run.
+struct Serial {
+    pending: AtomicBool,
+    running: AtomicBool,
+}
+
+impl Serial {
+    const fn new() -> Serial {
+        Serial { pending: AtomicBool::new(false), running: AtomicBool::new(false) }
+    }
+
+    fn request(&'static self, job: fn()) {
+        self.pending.store(true, SeqCst);
+        if self.running.swap(true, SeqCst) {
+            return;
+        }
+        std::thread::spawn(move || loop {
+            while self.pending.swap(false, SeqCst) {
+                job();
+            }
+            self.running.store(false, SeqCst);
+            // a request between the last look and the store above: run it here, unless a new thread took it
+            if !self.pending.load(SeqCst) || self.running.swap(true, SeqCst) {
+                break;
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -86,6 +121,52 @@ mod tests {
         for t in [None, Some(""), Some("garbage"), Some("0.0.0.0/0"), Some("10.9.9.8/x"), Some("fd00::/8")] {
             assert!(!in_usb_prefix(t, ip("10.9.9.9")), "{:?}", t);
         }
+    }
+
+    // Break it catches: two applies at once (an `on` waiting for the controller binding the gadget again after a
+    // later `off`), or a change asked for while one runs left without a run after it
+    #[test]
+    fn applies_run_one_at_a_time_and_the_last_request_gets_a_run() {
+        use std::sync::atomic::AtomicUsize;
+        use std::time::{Duration, Instant};
+        static S: Serial = Serial::new();
+        static GO: AtomicBool = AtomicBool::new(false);
+        static NOW: AtomicUsize = AtomicUsize::new(0);
+        static MOST: AtomicUsize = AtomicUsize::new(0);
+        static RUNS: AtomicUsize = AtomicUsize::new(0);
+        static ASKED: AtomicUsize = AtomicUsize::new(0);
+        static SEEN: AtomicUsize = AtomicUsize::new(0);
+        fn job() {
+            let n = NOW.fetch_add(1, SeqCst) + 1;
+            MOST.fetch_max(n, SeqCst);
+            SEEN.store(ASKED.load(SeqCst), SeqCst);
+            // the first run holds until every other request is made, whatever the speed of the computer
+            let end = Instant::now() + Duration::from_secs(10);
+            while !GO.load(SeqCst) && Instant::now() < end {
+                std::thread::yield_now();
+            }
+            RUNS.fetch_add(1, SeqCst);
+            NOW.fetch_sub(1, SeqCst);
+        }
+        for i in 1..=10 {
+            ASKED.store(i, SeqCst);
+            S.request(job);
+            if i == 1 {
+                // the first run has started before the others are asked for
+                let end = Instant::now() + Duration::from_secs(10);
+                while SEEN.load(SeqCst) != 1 && Instant::now() < end {
+                    std::thread::yield_now();
+                }
+            }
+        }
+        GO.store(true, SeqCst);
+        let end = Instant::now() + Duration::from_secs(10);
+        while (S.running.load(SeqCst) || RUNS.load(SeqCst) < 2) && Instant::now() < end {
+            std::thread::yield_now();
+        }
+        assert_eq!(MOST.load(SeqCst), 1, "two runs at once");
+        assert_eq!(SEEN.load(SeqCst), 10, "the last request had no run after it");
+        assert_eq!(RUNS.load(SeqCst), 2, "the nine requests during the first run are one more run");
     }
 
     #[test]
