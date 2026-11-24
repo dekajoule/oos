@@ -62,6 +62,8 @@ pub const S1000: u32 = 0x80;
 pub const DEPTH: u32 = 0x10e4;
 /// The SCU's mode word: bits 3:0 the FSM's channel mask.
 pub const MODE: u32 = 0x4008;
+/// The bits of 0x4080 the stock system holds set in every recorded setting (bits 28:26).
+pub const S4080_STOCK: u32 = 0x1c00_0000;
 
 /// One setting of the stock system, as `mho-check.py --snapshot` took it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -247,7 +249,10 @@ impl Snapshot {
             s400c: h.s400c,
             s1000: h.s1000,
             s1010: g(0x1010, h.s1010),
-            s4080: h.s4080 & !(1 << 31),
+            // bits 28:26 as the stock system holds them (0x1c00xxxx in every recorded setting of an MHO98; OOS left
+            // bit 28 clear with the DHO800/DHO900's value, and a third of the frames at 100 us/div triggered on the
+            // other slope, mho-dev-44, issue #4). **Assumed** to be what makes the difference.
+            s4080: (h.s4080 & !(1 << 31)) | (g(0x4080, 0) & S4080_STOCK),
             s1004: g(0x1004, h.s1004),
             s4020: g(0x4020, h.s4020),
             s1080: g(0x1080, h.s1080),
@@ -521,7 +526,8 @@ mod tests {
         let mut busy = s.clone();
         busy.fpga.extend([(0x4004, 0x0f00_a829), (0x400c, 0xa280_8dc2), (0x1000, 0x0585_0a80), (0x4080, 0x5c00_0023)]);
         let (h, b) = (Shadows::HANDOVER, busy.shadows());
-        assert_eq!((b.s4004, b.s400c, b.s1000, b.s4080), (0, h.s400c, h.s1000, h.s4080));
+        // only bits 28:26 of 0x4080 come from the read-back (the stock system holds them set), not its done bit 30
+        assert_eq!((b.s4004, b.s400c, b.s1000, b.s4080), (0, h.s400c, h.s1000, h.s4080 | S4080_STOCK));
         assert!(!busy.plan(&[]).unwrap()[2]
             .1
             .iter()

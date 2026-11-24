@@ -777,6 +777,14 @@ on OOS writes 0x2034 = 0 with the edge trigger, and makes such a setting an ordi
 and 0x11fc, 0x1154 and 0x1170 from the slowest ordinary setting of the same channels (`settings::unroll`, **assumed**
 to hold there).
 
+**Verified on the unit** (hp197's MHO98, mho-dev-44, issue #4): 50 ms/div records whole (0x4050 = 0x4054 = 0x7a120,
+0x1108 0, 0x11fc 0x3e8 read back), so the gap came from the rolled setting. 0x2034 = 0 did not end the frames
+triggered on the other slope: at 100 us/div 15 to 24 of every 50 frames had the falling edge at the trigger point (all
+dropped), at 50 ms/div 23 of 50. Under the stock system 0x4080 reads 0x1c00a101 / 0x5c004134 at 100 us/div (and
+0x1c00... at 1 ms and 20 us/div; every recorded setting of that unit has bits 28:26 set), under OOS 0x0c003101: bit 28
+clear. OOS's copy of 0x4080, which the arm writes back, started from the DHO800/DHO900's value. From mho-dev-45 on it
+takes bits 28:26 from the snapshot (`snapshot::S4080_STOCK`, **assumed** to be what triggers on the other slope).
+
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
 the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
 0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div
