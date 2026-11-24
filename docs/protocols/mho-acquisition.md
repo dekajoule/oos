@@ -714,9 +714,8 @@ From mho-dev-35 on, also **not yet verified on hardware**:
   ends without an edge; the records are joined into ten divisions, newest at the right. Between two records the board
   is armed and read, a few milliseconds without points. The TPU's sweep words are put back after roll.
 - **Logic analyser:** 0x4008 bit 26 and the deskew 0x128c = 283 (12.4); after each analog read the DHO800/DHO900's
-  raw LA window ([la.md](la.md) 4.2) is read as the LA's words, at the analog points' spacing (**assumed**). The
-  thresholds (0x12d4) stay as the board has them: their zero codes on the MHO900 are not known (the log shows the
-  word).
+  raw LA window ([la.md](la.md) 4.2) is read as the LA's words, at the analog points' spacing (**assumed**). From
+  mho-dev-36 on the screen's thresholds go to 0x12d4 with the zero codes of 12.4 (`oos_hal::mho::la`).
 - `oos-mho-report` collects the build, the start's report, the screen's log, the fan and temperatures and the lines
   of these units into `/oos/mho-report-<date>.txt` ([mho.md](../mho.md#reporting-back)).
 
@@ -766,7 +765,9 @@ that way; the live path still writes the recorded 0x200xx words with each settin
   0x38, as on the DHO800/DHO900.
 - Logic analyser: on with 0x4008 bit 26. Thresholds in 0x12d4, low half pod 1, high half pod 2: zero + V x 166 (pod 1)
   or 168 (pod 2) codes per volt (1.4 V: +232 / +235, 5 V: +830 / +840; the DHO800/DHO900: 310). Deskew 0x128c = 283
-  with one channel; the read-out window 20 times as long (0x1100 0x29e1 to 0x3465c). 0x1280 gets bit 3. The stock
+  with one channel; the read-out window 20 times as long (0x1100 0x29e1 to 0x3465c). 0x1280 gets bit 3. At 0 V on
+  both pods 0x12d4 reads 0x122a123e (pod 1 0x123e, pod 2 0x122a; 1.4 V 0x13151326, 5 V 0x1572157c): one unit's
+  calibration, another's may differ by a few codes. The stock
   system reports 1.25 GSa/s for the digital channels with the analog ones at 1 GSa/s.
 - Mask test: 0x6110 = 0x00100000 for CH1, rule words in 0x6114 with bits 31:28 = 0xf; the frames tested and failed in
   0x6120 and 0x6128 (they follow the stock system's totals and clear on its reset). 0x610c, 0x4020 bit 15 and 0x4068

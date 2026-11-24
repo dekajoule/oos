@@ -23,7 +23,7 @@ use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
 use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
 use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
 use oos_hal::mho::settings::{Plan, Settings};
-use oos_hal::mho::{acq, record, snapshot, tpu, vertical};
+use oos_hal::mho::{acq, la, record, snapshot, tpu, vertical};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -44,10 +44,9 @@ const NO_ADC_SYNC: &str = "/oos/mho-no-adc-sync";
 const DONE_MS: u64 = 1000;
 const SETTLE: u32 = 2;
 const PERIOD_MS: u64 = 20;
-/// The logic analyser's enable bit in 0x4008, its deskew and its thresholds.
+/// The logic analyser's enable bit in 0x4008 and its deskew.
 const LA_ON: u32 = 1 << 26;
 const LA_DESKEW: u32 = 0x128c;
-const LA_THRESHOLDS: u32 = 0x12d4;
 /// The SPU's slope bit in 0x1004.
 const SLOPE_1004: u32 = 1 << 14;
 /// Frames the queue holds at most: the screen takes the newest.
@@ -285,7 +284,7 @@ fn run(out: &HwShared) {
     let mut units = units::Units::default();
     // roll (`roll`): the ring, and the TPU's sweep words before roll set its own
     let (mut ring, mut tpu_before): (Option<roll::Ring>, Option<[u32; 3]>) = (None, None);
-    let mut la_was = false;
+    let mut la_was = None;
     loop {
         let (hold, want, roll) = {
             let g = lock(out);
@@ -377,23 +376,31 @@ fn run(out: &HwShared) {
     }
 }
 
-/// The logic analyser's enable (0x4008 bit 26) and deskew (0x128c = 283 with one channel), as an MHO98 under the stock
-/// system set them (protocols/mho-acquisition.md section 12.4). The thresholds (0x12d4) stay as the board has them: their
-/// zero codes on the MHO900 are not known yet; the log shows the word. Returns whether the LA is on.
-fn la_enable(bar: &mut Bar1, sh: &mut oos_hal::mho::la::Shadows, on: bool, was: &mut bool) -> bool {
-    if on != *was {
-        if on {
-            bar.wr(LA_DESKEW, 283);
-            eprintln!("oos-ui mho: logic analyser on (thresholds {:#010x} left as they are)", bar.rd(LA_THRESHOLDS));
+/// The logic analyser's enable (0x4008 bit 26), deskew (0x128c = 283 with one channel) and thresholds (0x12d4,
+/// `la::threshold_word`), as an MHO98 under the stock system set them (protocols/mho-acquisition.md section 12.4).
+/// Returns whether the LA is on.
+fn la_enable(bar: &mut Bar1, sh: &mut la::Shadows, want: Option<[f64; 2]>, was: &mut Option<[f64; 2]>) -> bool {
+    if want != *was {
+        if let Some(v) = want {
+            if was.is_none() {
+                bar.wr(LA_DESKEW, 283);
+            }
+            bar.wr(la::THRESHOLD, la::threshold_word(v));
+            eprintln!(
+                "oos-ui mho: logic analyser on, thresholds {} V / {} V ({:#010x})",
+                v[0],
+                v[1],
+                la::threshold_word(v)
+            );
         }
-        *was = on;
+        *was = want;
     }
-    sh.s4008 = (sh.s4008 & !LA_ON) | if on { LA_ON } else { 0 };
-    on
+    sh.s4008 = (sh.s4008 & !LA_ON) | if want.is_some() { LA_ON } else { 0 };
+    want.is_some()
 }
 
-fn want_la(out: &HwShared) -> bool {
-    lock(out).want.as_ref().is_some_and(|w| w.la)
+fn want_la(out: &HwShared) -> Option<[f64; 2]> {
+    lock(out).want.as_ref().and_then(|w| w.la)
 }
 
 /// The LA's words of the record just read: the DHO800/DHO900's raw LA window (protocols/la.md 4.2: pass-through, the LA
@@ -402,12 +409,11 @@ fn want_la(out: &HwShared) -> bool {
 /// the digital channels at 1 GSa/s analog). None when the read fails (logged).
 fn read_la(
     bar: &mut Bar1,
-    sh: &mut oos_hal::mho::la::Shadows,
+    sh: &mut la::Shadows,
     c2h: &mut std::fs::File,
     buf: &mut oos_hal::mho::bus::DmaBuf,
     now: &Now,
 ) -> Option<crate::logic::LaRec> {
-    use oos_hal::mho::la;
     // the play engine idle first (la.md 4.2 step 5: 0x4034 bit 13)
     for _ in 0..20 {
         if bar.rd(0x4034) & (1 << 13) != 0 {

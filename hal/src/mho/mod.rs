@@ -38,15 +38,10 @@ pub mod record {
 pub mod tpu {
     pub use crate::dho::tpu::{edge, noise_hysteresis, Shadows, Slope};
 }
-/// The logic analyser's raw read-out of the DHO800/DHO900 (protocols/la.md 4.2), **assumed** the same on the MHO900,
-/// and the shadows of the SCU's words it changes.
-pub mod la {
-    pub use crate::dho::la::{passthrough, read_bytes, readout, restore};
-    pub use crate::dho::scu::Shadows;
-}
 pub mod board;
 pub mod bringup;
 pub mod counter;
+pub mod la;
 pub mod recipe;
 pub mod settings;
 pub mod snapshot;
