@@ -781,7 +781,12 @@ set by hand on mho-dev-38, generator 1 into CH1 at 1 MOhm, 1 kHz 1 Vpp:
 - Before the scale words were found the DAC's alarm registers were read through the board's microcontroller (0x64
   0x70f, 0x6c 0xc00f, 0x6d 0x9f), cleared, and the DAC's JESD204 receiver set back by its register 0x4a (the reset
   bit low and the initial-state bits set, then back to 0x0f21; the DAC's data sheet's sequence); after that the three
-  read 0, 0xc007 and 0x90. Whether a start without that gives the output too is **not yet verified on hardware**.
+  read 0, 0xc007 and 0x90. A start without that gives the output too: **verified on the unit** (the same MHO98,
+  mho-dev-40, a fresh start by OOS, the DAC not touched; read only before: the microcontroller's identity, the DAC's
+  0x64 0x70b, 0x6c 0xc00f, 0x6d 0x9f, 0x4a 0x0f21, 0x02 0x2082, the scale words already 0x7fff and 0 from oos-ui's
+  first write). Generator 1 into CH1, 1 kHz, 1 Vpp: sine 1.017 Vpp, 1.0006 kHz, rms 0.355 V; square 1.034 Vpp,
+  999.9995 Hz; ramp 1.014 Vpp, rms 0.290 V; noise 0.94 Vpp, rms 0.131 V; DC 0.3 V 0.299 V. So the DAC's alarm bits
+  are left over from the start and do not stop the output.
 
 ## 12. Further blocks, seen under the stock system
 
