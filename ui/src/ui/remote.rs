@@ -11,7 +11,10 @@
 //! scope's name on the network, `dho924s-123456.local` (`net.name`). The name is also the kernel's host name, which
 //! the DHCP client sends (rcS, oos-wlan).
 //!
-//! Below it: Allowed, the address prefixes that may reach the scope (`net.allow`, docs/network.md 6), and Firewall,
+//! Below it: USB network, the rear USB port as a network link to one computer (`usb.net`, off by default: not yet
+//! verified on hardware; `crate::gadget`), next to the scope's address on the cable.
+//!
+//! Last: Allowed, the address prefixes that may reach the scope (`net.allow`, docs/network.md 6), and Firewall,
 //! the state in force. rcS builds the firewall from the key at power-on and main.rs oos-ui's address list
 //! (`crate::netacl`). A change takes effect at once: once it is saved, the list the servers share
 //! (`netacl::Shared`) is set, which closes the connections it leaves out, and on the scope a thread runs the
@@ -23,7 +26,7 @@ use super::menu_text::on_off;
 use super::worker::Worker;
 use super::*;
 use crate::remote::{Runner, Step};
-use crate::{mdns, netacl};
+use crate::{gadget, mdns, netacl};
 use std::sync::mpsc::{TryRecvError, TrySendError};
 
 /// A run of the firewall and SSH after a change, and what it answered (Err: what failed).
@@ -70,12 +73,14 @@ impl Ui {
             Item::RemVxi,
             Item::RemSsh,
             Item::RemMdns,
+            Item::RemUsb,
             Item::RemAllow,
             Item::NetWeb,
             Item::RemScpiInfo,
             Item::RemVxiInfo,
             Item::Open(MenuId::Ssh),
             Item::RemName,
+            Item::RemUsbAddr,
             Item::RemFirewall,
         ]
     }
@@ -87,6 +92,7 @@ impl Ui {
             | Item::RemVxi
             | Item::RemSsh
             | Item::RemMdns
+            | Item::RemUsb
             | Item::RemName
             | Item::RemAllow => Some(Kind::Choice),
             _ => Self::ssh_kind(it),
@@ -421,7 +427,8 @@ impl Ui {
 
     /// Rows that are only text.
     pub(super) fn remote_text(it: Item) -> bool {
-        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemFirewall) || Self::ssh_text(it)
+        matches!(it, Item::NetWeb | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemUsbAddr | Item::RemFirewall)
+            || Self::ssh_text(it)
     }
 
     pub(super) fn remote_label(it: Item) -> Option<&'static str> {
@@ -435,6 +442,8 @@ impl Ui {
             Item::RemName => "Name",
             Item::RemAllow => "Allowed",
             Item::RemFirewall => "Firewall",
+            Item::RemUsb => "USB network",
+            Item::RemUsbAddr => "USB address",
             Item::NetWeb => "Address",
             Item::RemScpiInfo | Item::RemVxiInfo => "Port",
             _ => return Self::ssh_label(it),
@@ -453,6 +462,12 @@ impl Ui {
             Item::RemName => self.name_value(),
             Item::RemAllow => self.allow_value(),
             Item::RemFirewall => self.firewall_value(),
+            Item::RemUsb => on_off(s.usb_net),
+            Item::RemUsbAddr if !s.usb_net => "off".into(),
+            Item::RemUsbAddr => {
+                let st = gadget::state();
+                gadget::address(&st).map_or_else(|| st.clone(), str::to_string)
+            }
             Item::NetWeb if !s.remote_web => "off".into(),
             Item::NetWeb if self.net.addr.is_empty() => "not connected".into(),
             Item::NetWeb => format!("http://{}:8080", self.net.addr),
@@ -481,6 +496,7 @@ impl Ui {
             Item::RemVxi => (&mut s.remote_vxi11, "VXI-11"),
             Item::RemSsh => (&mut s.remote_ssh, "SSH"),
             Item::RemMdns => (&mut s.remote_mdns, "mDNS"),
+            Item::RemUsb => (&mut s.usb_net, "USB network"),
             // the name and the address list change in their pickers only
             Item::RemName | Item::RemAllow => return true,
             _ => return self.ssh_adjust(it, d),
@@ -492,6 +508,7 @@ impl Ui {
         match (it, now_on) {
             (Item::RemWeb, false) => self.toast("Web remote off: updates then come from a USB stick"),
             (Item::RemSsh, false) => self.toast("SSH off: its sessions end"),
+            (Item::RemUsb, true) => self.toast("USB network on: the computer on the rear port gets an address"),
             _ => self.toast(&format!("{} {}", what, if now_on { "on" } else { "off" })),
         }
         true
@@ -508,7 +525,7 @@ mod tests {
         let mut u = crate::ui::testkit::demo_ui();
         u.open_menu(MenuId::Remote);
         let d = u.dlg_layout().unwrap();
-        // two columns of six: each switch has its address, port, settings or name on the same row, the address list
+        // two columns of seven: each switch has its address, port, settings or name on the same row, the address list
         // its firewall
         for (sw, info) in [
             (Item::RemWeb, Item::NetWeb),
@@ -516,6 +533,7 @@ mod tests {
             (Item::RemVxi, Item::RemVxiInfo),
             (Item::RemSsh, Item::Open(MenuId::Ssh)),
             (Item::RemMdns, Item::RemName),
+            (Item::RemUsb, Item::RemUsbAddr),
             (Item::RemAllow, Item::RemFirewall),
         ] {
             let a = d.rows.iter().find(|r| r.it == sw).unwrap().ctrl;
@@ -539,6 +557,13 @@ mod tests {
         assert_eq!(u.value(Item::RemScpiInfo), "off");
         u.select_option(Item::RemScpi, "On");
         assert_eq!(u.value(Item::RemScpiInfo), "5555 (TCP)");
+        // the USB network: off by default (not yet verified on hardware), its address row says so; switched on, the
+        // row has the script's state (on the scope its address)
+        assert!(!u.sys.usb_net, "USB network off by default");
+        assert_eq!(u.value(Item::RemUsbAddr), "off");
+        u.select_option(Item::RemUsb, "On");
+        assert!(u.sys.usb_net);
+        assert_ne!(u.value(Item::RemUsbAddr), "off");
     }
 
     #[test]
