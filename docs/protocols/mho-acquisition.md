@@ -659,6 +659,12 @@ at the trigger point; with the probe on CH1 the other way round. So the DHO800/D
   move by a few codes, which OOS leaves out.
 - 50 ohm rewrites most of the front end's words; not done yet.
 
+**Seen in a recording** (JimmyPedersen's MHO934, `mho-settings.py --extended`, issue #248): the same settings as the
+MHO98's (504), from which OOS makes every plan the MHO98's gives: each channel alone at every time base and scale,
+the eleven sets of channels, offset, AC, the 20 MHz limit, 50 ohm at 100 mV/div and a fixed depth. The offset's
+slope per input path is the MHO98's within 1 % (IG 0 +50.9 uV per code, IG 1 -635 to -639 uV, IG 2 -970 to -977 uV),
+the channels' digital gains differ by a few percent from unit to unit, as their calibration does.
+
 **Verified on the unit** (hp197's MHO98, mho-dev-31, issue #4): the start at boot, the offset (100 mV/div at -0.3 and
 +0.3 V, 1 V/div at -2 and +2 V, per channel with all four on), every set of channels tried (CH1+CH2, CH1+CH3, CH2+CH3,
 CH1+CH2+CH3, CH1+CH2+CH4, all four; at 200 us/div and 1 us/div), AC (the square centred on 0 V), GND and the
