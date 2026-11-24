@@ -45,3 +45,6 @@ mac 00:19:AF:00:00:01
 address 192.168.235.1
 address 192.168.235.2
 address 192.168.235.3
+# not an address: the pattern `0x1@name.bit` of the lines of the stock system's version.txt, which tools/mho-check.py
+# names in a docstring (hardware code @ FPGA image file)
+mail 0x1@name.bit

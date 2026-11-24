@@ -1,11 +1,10 @@
 # MHO900: the platform, and a first acquisition by hand
 
 An OOS build for the Rigol MHO900 (MHO934, MHO954, MHO984, MHO98): the screen, touch, network, the web remote, SCPI,
-storage and updates of OOS on the MHO900's main board, with the **demo signal** in place of an acquisition. Nothing in
-this build starts the MHO900's acquisition board by itself: no FPGA, no front end, no clock, no generator. An owner
-who tests it can bring the board up and take a first acquisition by hand ("Bring-up, step 1" and "First acquisition"
-below). Of the front panel it reads the keys and sets the LEDs. The decisions are
-[ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md) and
+storage and updates of OOS on the MHO900's main board, and, as a **preview** (ADR 0082), its acquisition: with the
+unit's own recordings of the stock system on the scope ("Setting a unit up" below) the build starts the acquisition
+board at every boot and measures; without them it shows the **demo signal**. Of the front panel it reads the keys and sets the LEDs. The decisions are
+[ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md) (superseded by [ADR 0082](adr/hardware/0082-the-mho900-measures-as-a-preview-from-its-own-recordings.md)) and
 [ADR 0081](adr/hardware/0081-mho900-first-acquisition-from-the-units-own-snapshot.md); how a port is built in general
 is in [porting.md](porting.md).
 

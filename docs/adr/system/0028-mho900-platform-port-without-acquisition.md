@@ -1,6 +1,6 @@
 # ADR 0028: The MHO900 gets OOS's platform first, with no acquisition, as a board chosen at build time
 
-- Status: proposed
+- Status: superseded by ADR 0082
 - Date: 2026-11-16
 - Category: system (touches ADR 0009, ADR 0010, ADR 0013, ADR 0015)
 

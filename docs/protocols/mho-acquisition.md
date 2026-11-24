@@ -1,9 +1,10 @@
 # MHO900 acquisition: start-up, registers, read-out, measurements
 
-Status: **not yet verified on hardware.** Nothing here has run on an MHO900. It describes how the stock MHO900 system
-(00.01.00.00.26) starts the acquisition board and uses its FPGA, compared with the DHO800/DHO900 pages in this folder.
-"Assumed" marks an interpretation. OOS does not drive this board yet (ADR 0028, [mho.md](../mho.md)); the facts below
-are kept in `hal/src/mho/acq.rs` as data, so the bring-up at the bench starts from them.
+Status: a **preview** (ADR 0082, [mho.md](../mho.md)). Sections 1 to 9 describe how the stock MHO900 system
+(00.01.00.00.26) starts the acquisition board and uses its FPGA, compared with the DHO800/DHO900 pages in this folder;
+sections 10 to 12 how OOS starts and drives it from the unit's own recordings, and what owners' units showed. Each
+fact says how it is known: verified on the unit, assumed, or not yet verified on hardware; "assumed" marks an
+interpretation.
 
 In one sentence: the main board, the register window, the read-out path and the sample format are the DHO's; the
 start-up of the board, the ADCs and their clock, the front ends and the mask block are new.
