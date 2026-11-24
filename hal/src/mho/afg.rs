@@ -1,12 +1,13 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! The MHO900's two generators (protocols/mho-acquisition.md section 12.5): the FPGA words of each and the lines for
-//! the generator board's microcontroller (its relays). **Seen on an MHO98 under the stock system** (issue #4): the
-//! output bit, the frequency word, square and noise, the amplitude and offset words, the relay lines. OOS drives the
-//! shapes the FPGA makes from these words alone, square and noise; the other shapes need the waveform memory, which is
-//! not known yet. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about 0.8 to 2 Vpp in the stock
-//! system; OOS uses that gear for every amplitude. **Not yet verified on hardware** under OOS.
+//! The MHO900's two generators (protocols/mho-acquisition.md section 12.5): the FPGA words of each, its waveform
+//! memory and the lines for the generator board's microcontroller (its relays). **Seen on an MHO98 under the stock
+//! system** (issue #4): the output bit, the frequency word, square and noise, the amplitude and offset words, the relay
+//! lines. **Verified on the unit** (MHO98, mho-dev-37): the output follows the waveform memory; with the memory empty
+//! the output stays at the offset whatever the words say. OOS fills it with one period of square, noise or DC; the
+//! other shapes go out square. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about 0.8 to 2 Vpp
+//! in the stock system; OOS uses that gear for every amplitude.
 
 /// The frequency word's clock: f / 250 MHz x (2^51 - 1) (1 kHz: 0x2_18def416, read under the stock system).
 pub const CLOCK_HZ: f64 = 250e6;
@@ -20,6 +21,53 @@ pub const OFFSET_PER_V: f64 = (0x0550 - 0x03b3) as f64;
 pub const MAX_OFFSET: f64 = 1.0;
 /// The frequency word with noise on.
 pub const NOISE_WORD: u64 = 0x20_0000_0000;
+
+/// Samples in a generator's waveform memory: one period, signed 16 bits, full scale +-32767 (the amplitude word scales
+/// it). Two samples per word, the earlier in bits 15:0; generator 1's memory at 0x100000, generator 2's at 0x200000.
+/// The memory reads back 0, so what was written cannot be checked by reading.
+pub const TABLE_LEN: usize = 16384;
+pub const TABLE_FULL: i16 = 32767;
+
+pub fn table_base(n: usize) -> u32 {
+    if n == 2 {
+        0x20_0000
+    } else {
+        0x10_0000
+    }
+}
+
+/// One period of `shape`: square high for the first half and low for the second; noise a band-limited pseudo-random
+/// sequence (a fixed seed, so every start loads the same); DC all zero (its level is the offset's).
+pub fn table(shape: Shape) -> Vec<i16> {
+    match shape {
+        Shape::Square => (0..TABLE_LEN).map(|i| if i < TABLE_LEN / 2 { TABLE_FULL } else { -TABLE_FULL }).collect(),
+        Shape::Dc => vec![0; TABLE_LEN],
+        Shape::Noise => {
+            // xorshift32, each value the mean of four draws (a softer spectrum than single draws), normalised to full
+            // scale and held for four samples: the memory is played at one sample per clock for noise (`NOISE_WORD`)
+            let mut x = 0x2545_f491u32;
+            let mut draw = || {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as i32 as f64
+            };
+            let v: Vec<f64> = (0..TABLE_LEN / 4).map(|_| (0..4).map(|_| draw()).sum::<f64>()).collect();
+            let peak = v.iter().fold(0.0f64, |m, a| m.max(a.abs()));
+            v.iter().flat_map(|a| [(a / peak * TABLE_FULL as f64).round() as i16; 4]).collect()
+        }
+    }
+}
+
+/// The writes that load `samples` into generator `n`'s waveform memory; sent with the output off (`words` first).
+pub fn table_words(n: usize, samples: &[i16]) -> Vec<(u32, u32)> {
+    let base = table_base(n);
+    samples
+        .chunks(2)
+        .enumerate()
+        .map(|(k, p)| (base + 4 * k as u32, p[0] as u16 as u32 | (*p.get(1).unwrap_or(&0) as u16 as u32) << 16))
+        .collect()
+}
 
 /// The words of generator `n` (1 or 2).
 pub struct Regs {
@@ -130,5 +178,29 @@ mod tests {
         let r = relays(1, true);
         assert_eq!((r[0].as_str(), r[4].as_str()), (":AFG:RELAY:CH1:STATE 4,0\n", ":AFG:RELAY:CH1:STATE 0,1\n"));
         assert!(is_generator_board("RIGOL,AFG(01),x,00.01.06"));
+    }
+
+    // Break it catches: a table that is not one full period of 16384 samples, a square without its two halves at
+    // full scale, the two samples of a word swapped, generator 2's memory, a noise table that is not full scale or
+    // has an offset, a DC table that is not zero.
+    #[test]
+    fn the_tables_fill_the_waveform_memory() {
+        let sq = table(Shape::Square);
+        assert_eq!(sq.len(), TABLE_LEN);
+        assert_eq!(
+            (sq[0], sq[TABLE_LEN / 2 - 1], sq[TABLE_LEN / 2], sq[TABLE_LEN - 1]),
+            (32767, 32767, -32767, -32767)
+        );
+        let w = table_words(1, &sq);
+        assert_eq!(w.len(), TABLE_LEN / 2);
+        assert_eq!((w[0], w[TABLE_LEN / 2 - 1]), ((0x10_0000, 0x7fff_7fff), (0x10_7ffc, 0x8001_8001)));
+        assert_eq!(table_words(2, &[1, -2])[0], (0x20_0000, 0xfffe_0001));
+        let n = table(Shape::Noise);
+        assert_eq!(n.len(), TABLE_LEN);
+        assert_eq!(n.iter().map(|v| v.unsigned_abs()).max(), Some(32767));
+        let mean = n.iter().map(|&v| v as f64).sum::<f64>() / TABLE_LEN as f64;
+        assert!(mean.abs() < 1000.0, "noise mean {}", mean);
+        assert_eq!(n, table(Shape::Noise), "the same table on every start");
+        assert!(table(Shape::Dc).iter().all(|&v| v == 0));
     }
 }

@@ -3,8 +3,8 @@
 
 //! The MHO900's units beside the record, once per pass of the acquisition loop: the frequency counter
 //! (`oos_hal::mho::counter`) and generator 1 (`oos_hal::mho::afg`: the FPGA's words and the relays of the generator
-//! board's microcontroller on `/dev/ttyS4`). **Not yet verified on hardware** under OOS; the words are the ones an
-//! MHO98 showed under the stock system (protocols/mho-acquisition.md section 12).
+//! board's microcontroller on `/dev/ttyS4`). The words are the ones an MHO98 showed under the stock system
+//! (protocols/mho-acquisition.md section 12); generator 1's square is **verified on the unit** under OOS (12.5).
 
 use crate::board::{lock, CounterRead, CounterWant, HwShared};
 use oos_hal::mho::afg::{self, Out, Shape};
@@ -29,6 +29,8 @@ pub(super) struct Units {
     big: Option<Bar1>,
     mcu: Option<std::fs::File>,
     mcu_tried: bool,
+    /// the shape in generator 1's waveform memory (none after a start: the memory is then empty)
+    table: Option<Shape>,
 }
 
 impl Units {
@@ -119,6 +121,11 @@ impl Units {
         let r = afg::regs(1);
         let (out_old, offset_old) = (big.rd(r.out), big.rd(r.offset));
         big.apply(&afg::words(1, &o, out_old, offset_old));
+        // the output is off now: load the memory when the shape changes (8192 words)
+        if self.table != Some(shape) {
+            big.apply(&afg::table_words(1, &afg::table(shape)));
+            self.table = Some(shape);
+        }
         let lines = afg::relays(1, on);
         match self.mcu.as_mut() {
             Some(m) => {
