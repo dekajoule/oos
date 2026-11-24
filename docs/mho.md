@@ -268,7 +268,8 @@ measures at that one setting: the probe compensation signal on the snapshot's ch
    of `mho-settings.py --extended` the screen's channels on (several at once), their offset, AC and GND coupling and
    bandwidth limit set the board too. From mho-dev-34 on also peak detect, a fixed memory depth and 50 ohm (at
    the recorded scale only), from mho-dev-35 on the counter, generator 1 (square, noise, DC), roll and the logic
-   analyser (protocols/mho-acquisition.md, section 11).
+   analyser (protocols/mho-acquisition.md, section 11), and generator 2 like generator 1 (Gen 2 on the generator
+   page, `:SOURce2:...`; section 12.5).
 
 What `mho-start` does, step by step, is in protocols/mho-acquisition.md section 10; `--dry` lists every step without
 touching the board. Only that setting is measured: the scale, time base and trigger keys still act on the demo's

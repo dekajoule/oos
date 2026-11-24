@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! The MHO900's units beside the record, once per pass of the acquisition loop: the frequency counter
-//! (`oos_hal::mho::counter`) and generator 1 (`oos_hal::mho::afg`: the FPGA's words, its waveform memory and the relays
+//! (`oos_hal::mho::counter`) and generators 1 and 2 (`oos_hal::mho::afg`: the FPGA's words, their waveform memory and the relays
 //! of the generator board's microcontroller on `/dev/ttyS4`). **Not yet verified on hardware** under OOS; the words are the ones an
 //! MHO98 showed under the stock system (protocols/mho-acquisition.md section 12).
 
@@ -25,23 +25,29 @@ const DAC_LINE: &str = ":AFG:DAC:VAL 0x02,0x2082\n";
 pub(super) struct Units {
     counting: Option<(CounterWant, Instant)>,
     counter_n: u64,
-    gen: Option<super::Gen>,
+    /// what each generator was last set to
+    gen: [Option<super::Gen>; GENERATORS],
     big: Option<Bar1>,
     mcu: Option<std::fs::File>,
     mcu_tried: bool,
-    /// the wave in generator 1's memory: shape, duty, symmetry, arbitrary wave's id
-    table: Option<(usize, f64, f64, u32)>,
+    /// the wave in each generator's memory: shape, duty, symmetry, arbitrary wave's id
+    table: [Option<(usize, f64, f64, u32)>; GENERATORS],
 }
+
+/// The board's generators (`afg::regs`: 1 and 2).
+const GENERATORS: usize = 2;
 
 impl Units {
     pub(super) fn tick(&mut self, bar: &mut Bar1, out: &HwShared) {
         self.counter(bar, out);
-        let g = lock(out).afg[0];
-        if g.is_some() && g != self.gen {
-            if let Some(g) = &g {
-                self.generator(g);
+        let want = lock(out).afg;
+        for (i, g) in want.into_iter().enumerate().take(GENERATORS) {
+            if g.is_some() && g != self.gen[i] {
+                if let Some(g) = &g {
+                    self.generator(i + 1, g);
+                }
+                self.gen[i] = g;
             }
-            self.gen = g;
         }
     }
 
@@ -90,9 +96,9 @@ impl Units {
         }
     }
 
-    /// Sets generator 1: the FPGA's words with the output off, its waveform memory when the wave changed, then the
-    /// relays, then the output bit.
-    fn generator(&mut self, g: &super::Gen) {
+    /// Sets generator `n` (1 or 2): the FPGA's words with the output off, its waveform memory when the wave changed,
+    /// then the relays, then the output bit.
+    fn generator(&mut self, n: usize, g: &super::Gen) {
         let &(on, hz, vpp, offset, wave, duty, symmetry, arb) = g;
         let shape = match wave {
             0 => Shape::Sine,
@@ -116,15 +122,15 @@ impl Units {
             self.mcu = find_mcu();
         }
         let Some(big) = self.big.as_mut() else { return };
-        let r = afg::regs(1);
+        let r = afg::regs(n);
         let (out_old, offset_old) = (big.rd(r.out), big.rd(r.offset));
-        big.apply(&afg::words(1, &o, out_old, offset_old));
-        if self.table != Some(wave_key) {
+        big.apply(&afg::words(n, &o, out_old, offset_old));
+        if self.table[n - 1] != Some(wave_key) {
             let samples = afg::table(shape, &crate::board::lock(&super::ARB));
-            big.apply(&afg::table_words(1, &samples));
-            self.table = Some(wave_key);
+            big.apply(&afg::table_words(n, &samples));
+            self.table[n - 1] = Some(wave_key);
         }
-        let lines = afg::relays(1, on);
+        let lines = afg::relays(n, on);
         match self.mcu.as_mut() {
             Some(m) => {
                 for l in lines.iter().map(String::as_str).chain(on.then_some(DAC_LINE)) {
@@ -145,7 +151,8 @@ impl Units {
                 .map(|&a| format!("{:#x}={:#x}", a, big.rd(a)))
                 .collect();
         eprintln!(
-            "oos-ui mho: generator 1 {} {:?} {} Hz {} Vpp offset {} V (read back: {})",
+            "oos-ui mho: generator {} {} {:?} {} Hz {} Vpp offset {} V (read back: {})",
+            n,
             if on { "on" } else { "off" },
             shape,
             hz,

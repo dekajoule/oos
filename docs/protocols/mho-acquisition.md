@@ -981,7 +981,13 @@ that way; the live path still writes the recorded 0x200xx words with each settin
 
 ### 12.5 Generator
 
-Generator 2's words are generator 1's moved by 0x100000 (output 0x50004, amplitude 0x20020, offset 0x10108).
+Generator 2's words are generator 1's moved by 0x100000 (output 0x50004, amplitude 0x20020, offset 0x10108), its
+waveform memory from 0x200000, its relays `:AFG:RELAY:CH2:...` on the same microcontroller. **Verified on the unit**
+(hp197's MHO98, generator 2 into CH2 at 1 MOhm, 1 kHz 1 Vpp, this oos-ui over mho-dev-49): sine 1.017 Vpp 1.0004 kHz
+rms 0.353 V, square 1.064 Vpp 999.999 Hz, ramp 1.008 Vpp rms 0.288 V, pulse 1.020 Vpp, noise 0.92 Vpp rms 0.130 V,
+DC 0.3 V 0.307 V; the offset word 0x10108 = 0x5501000 at +0.5 V. Both together, generator 1 a 1 kHz square into
+CH1 and generator 2 a 2.5 kHz sine of 0.6 Vpp into CH2: 1.037 Vpp 999.9995 Hz and 0.615 Vpp 2.4998 kHz; generator 2
+off left generator 1 unchanged (1.036 Vpp).
 
 - Output: 0x40004 bit 0. Amplitude: 0x2001c, 16 bits of the full scale, linear within a relay gear (1 Vpp 0x7b0a,
   2 Vpp 0xf60d in the gear with every relay off). Offset: 0x10100 bits 31:16, a PWM code (0 V 0x0481, +0.5 V 0x0550,
