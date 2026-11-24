@@ -38,6 +38,10 @@ const FAST: &str = "/oos/mho-fast";
 /// and with the other no ADC sync is pulsed after a setting: to compare on a unit without another build.
 const S1000_STOCK: &str = "/oos/mho-s1000-stock";
 const NO_ADC_SYNC: &str = "/oos/mho-no-adc-sync";
+/// To try on a unit how the arm differs from the stock system's (`snapshot::ArmVariant`): a pause in ms after the stop
+/// sequence (the file holds the number), and the stop sequence without the SPU and TX reset pulses.
+const ARM_PAUSE: &str = "/oos/mho-arm-pause-ms";
+const ARM_NO_RESET: &str = "/oos/mho-arm-no-reset";
 /// How long one acquisition may take to complete at least (`Now::done_ms` adds twice the record's span: a 1 s limit
 /// left 50 and 100 ms/div broken on an MHO98, issue #4), the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
@@ -275,6 +279,7 @@ fn run(out: &HwShared) {
         sh.s1000 = snapshot::S1000;
     }
     let adc_sync = !std::path::Path::new(NO_ADC_SYNC).exists();
+    let variant = arm_variant();
     let mut applied: Option<super::Want> = None;
     status(format!(
         "MHO900: CH{} at {} V/div (snapshot){}",
@@ -349,13 +354,14 @@ fn run(out: &HwShared) {
         sh.s4008 = snapshot::mode_word(sh.s4008, now.mask);
         let win = now.window(&s);
         let pass = snapshot::passthrough_keeping(keep_1154);
-        let r = snapshot::acquire_with(
+        let r = snapshot::acquire_variant(
             &mut bar,
             &mut sh,
             &win,
             now.done_ms(),
             &mut |ms| std::thread::sleep(Duration::from_millis(ms)),
             &pass,
+            variant,
         );
         let a = match r {
             Ok(a) => a,
@@ -452,6 +458,16 @@ fn set_sweep(
             *set = Some(w);
         }
     }
+}
+
+/// The arm's variant from `ARM_PAUSE` and `ARM_NO_RESET`, logged when it is not the plain one.
+fn arm_variant() -> snapshot::ArmVariant {
+    let pause_ms = std::fs::read_to_string(ARM_PAUSE).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
+    let v = snapshot::ArmVariant { pause_ms, no_spu_reset: std::path::Path::new(ARM_NO_RESET).exists() };
+    if v != snapshot::ArmVariant::default() {
+        eprintln!("oos-ui mho: arm variant: {:?}", v);
+    }
+    v
 }
 
 /// The sweep the screen asks for: AUTO or not, its time base and holdoff.

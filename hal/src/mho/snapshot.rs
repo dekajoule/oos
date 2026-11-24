@@ -376,9 +376,45 @@ pub fn acquire_with<B: Bus>(
     sleep: &mut dyn FnMut(u64),
     pass: &[crate::dho::Write],
 ) -> Result<Armed, Armed> {
+    acquire_variant(bus, sh, win, done_ms, sleep, pass, ArmVariant::default())
+}
+
+/// How an arm may differ from the DHO800/DHO900's, to try on a unit: a pause between the stop sequence and the run
+/// (the stock system's reset pulses come right after the previous frame, about 24 ms before its next arm; OOS's 1.2 ms
+/// before), and the stop sequence without the SPU and TX reset pulses of 0x1000. On an MHO98 about half of OOS's
+/// acquisitions fire on the other slope, the stock system's single shots never (mho-dev-48, issue #4).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ArmVariant {
+    pub pause_ms: u64,
+    pub no_spu_reset: bool,
+}
+
+/// The writes of `scu::arm`'s stop sequence, at its start.
+const STOP_WRITES: usize = 17;
+
+/// `acquire_with` with the arm varied as `v` says.
+pub fn acquire_variant<B: Bus>(
+    bus: &mut B,
+    sh: &mut Shadows,
+    win: &Window,
+    done_ms: u64,
+    sleep: &mut dyn FnMut(u64),
+    pass: &[crate::dho::Write],
+    v: ArmVariant,
+) -> Result<Armed, Armed> {
     let last = bus.rd(0x4034);
     bus.apply(&scu::clear_status(last));
-    bus.apply(&scu::arm(win.fsm, sh, 0, 1));
+    let arm = scu::arm(win.fsm, sh, 0, 1);
+    let (stop, run) = arm.split_at(STOP_WRITES);
+    for &(a, w) in stop {
+        if !(v.no_spu_reset && a == 0x1000) {
+            bus.wr(a, w);
+        }
+    }
+    if v.pause_ms > 0 {
+        sleep(v.pause_ms);
+    }
+    bus.apply(run);
     let mut ms = 0;
     let mut v = bus.rd(0x4080);
     while v & scu::PLAYINFO_DONE == 0 && ms < done_ms {
@@ -524,6 +560,16 @@ mod tests {
     }
 
     // Break it catches: the interleave field of the mode word left 0 (the DHO's word), another field than bits 11:8.
+    // Break it catches: the arm split elsewhere than after its stop sequence, a variant changing the writes.
+    #[test]
+    fn an_arm_variant_only_pauses_or_leaves_out_the_reset_pulses() {
+        let mut sh = Shadows::HANDOVER;
+        let mut stop = Vec::new();
+        scu::stop_sequence(&mut stop, &mut sh.clone());
+        assert_eq!(&scu::arm(1, &mut sh, 0, 1)[..STOP_WRITES], &stop[..]);
+        assert_eq!(stop.len(), STOP_WRITES);
+    }
+
     #[test]
     fn the_mode_word_carries_the_interleave_factor() {
         assert_eq!(mode_word(0x0880_0001, 1), 0x0880_0101);
