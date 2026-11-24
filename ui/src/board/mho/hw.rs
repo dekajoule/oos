@@ -35,11 +35,14 @@ const FAST: &str = "/oos/mho-fast";
 /// and with the other no ADC sync is pulsed after a setting: to compare on a unit without another build.
 const S1000_STOCK: &str = "/oos/mho-s1000-stock";
 const NO_ADC_SYNC: &str = "/oos/mho-no-adc-sync";
-/// How long one acquisition may take to complete, the frames dropped after a change while the board settles (the
+/// How long one acquisition may take to complete at least (`Now::done_ms` adds twice the record's span: a 1 s limit
+/// left 50 and 100 ms/div broken on an MHO98, issue #4), the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
 const DONE_MS: u64 = 1000;
 const SETTLE: u32 = 2;
 const PERIOD_MS: u64 = 20;
+/// The SPU's slope bit in 0x1004.
+const SLOPE_1004: u32 = 1 << 14;
 /// Frames the queue holds at most: the screen takes the newest.
 const QUEUE_MAX: usize = 4;
 /// Points read of a record at most (a deeper record is read from its middle, around the trigger): a recording whose
@@ -95,6 +98,12 @@ impl Now {
             })
             .collect();
         Now { shown, dt: k as f64 / p.srate, n: p.depth.min(POINTS_MAX), pre: p.pre.min(p.depth), mask: p.mask, k }
+    }
+
+    /// How long an acquisition may take: `DONE_MS` and twice the record's span (the points before the trigger, the wait
+    /// for it, the points after it).
+    fn done_ms(&self) -> u64 {
+        DONE_MS + (2000.0 * self.n as f64 * self.dt / self.k.max(1) as f64) as u64
     }
 
     /// The channel the trigger is on: `ch` when it is shown, else the first one shown.
@@ -212,6 +221,8 @@ fn run(out: &HwShared) {
     let mut edges = EdgeLog::default();
     // the stock system's upper bits of 0x1154 for the pass-through: the snapshot's, then each plan's
     let mut keep_1154 = s.fpga.get(&0x1154).copied().unwrap_or(0);
+    // the plan's 0x1004, whose bit 14 the trigger sets with its slope
+    let mut keep_1004 = None;
     // after a setting, the levels of every channel recorded go to the log once (which word holds which channel)
     let mut show = false;
     loop {
@@ -232,6 +243,7 @@ fn run(out: &HwShared) {
                             // the plan wrote the recorded level words (the stock level, 0 V): the screen's again
                             trig_set = None;
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
+                            keep_1004 = p.fpga.iter().find(|w| w.0 == 0x1004).map(|w| w.1);
                             now = Now::of(&w.chans, &p, k);
                             status(set_text(&p, k));
                             (settle, show) = (SETTLE, true);
@@ -243,7 +255,7 @@ fn run(out: &HwShared) {
             }
             if let Some(c) = now.trigger_on(w.trig.ch) {
                 if trig_set != Some((w.trig, c)) {
-                    trigger(&mut bar, &mut tsh, c, w.trig);
+                    trigger(&mut bar, &mut tsh, c, w.trig, keep_1004);
                     trig_set = Some((w.trig, c));
                 }
             }
@@ -255,7 +267,7 @@ fn run(out: &HwShared) {
             &mut bar,
             &mut sh,
             &win,
-            DONE_MS,
+            now.done_ms(),
             &mut |ms| std::thread::sleep(Duration::from_millis(ms)),
             &pass,
         );
@@ -469,8 +481,13 @@ fn edge_near(v: &[f32], pre: usize, level: f32, h: f32, slope: tpu::Slope) -> Op
 /// The edge trigger on channel `c` at the screen's level (V at the probe tip) for the hardware's scale and offset (at
 /// the BNC): the DHO800/DHO900's sequence (`tpu::edge`), the level converted with the channel's digital gain as the
 /// stock system does it (with 1.0 the comparator sat 17 mV above a 0.15 V level at 100 mV/div, an MHO98, issue #4),
-/// hysteresis by the scale as there, holdoff the shortest. The auto trigger's timeout stays the stock system's.
-fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, c: Shown, t: super::Trig) {
+/// hysteresis by the scale as there, holdoff the shortest. The auto trigger's timeout stays the stock system's. The
+/// SPU's 0x1004 bit 14 (`s1004`, the plan's word) follows the slope as the stock system sets it: 1 rising, 0 falling
+/// (an MHO98, issue #4).
+fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, c: Shown, t: super::Trig, s1004: Option<u32>) {
+    if let Some(v) = s1004 {
+        bar.wr(0x1004, if t.slope == tpu::Slope::Falling { v & !SLOPE_1004 } else { v | SLOPE_1004 });
+    }
     let nv = |v: f64| v * 1e9;
     let level = t.level / c.probe;
     let noise = tpu::noise_hysteresis(nv(c.scale), false);

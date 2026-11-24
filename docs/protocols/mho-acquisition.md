@@ -651,6 +651,13 @@ for both slopes, but the stock system converts the level with the channel's digi
 trigger point and the falling 46 ns before it. From mho-dev-32 on `tpu::edge` gets the channel's gain from its slot
 word (`Plan::gain`): the level codes come within 0.2 % (100 mV/div) and 1 % (1 V/div) of the stock system's.
 
+**Seen on the unit** (hp197's MHO98 under the stock system, issue #4): the SPU's 0x1004 bit 14 follows the trigger's
+slope (rising 0x04004a40, falling 0x04000a40); the auto trigger is in the TPU (0x226c bit 0 set with AUTO, the
+timeouts in 0x2270 and 0x2274 in 4 ns ticks), and 0x4060/0x4064 never change, so the "auto trigger wait" read above
+is the FPGA's value after its start, not a setting. From mho-dev-33 on the trigger sets bit 14 with the slope, and an
+acquisition may take 1 s plus twice the record's span (OOS waited 1 s at every time base: a 10-division record at 50
+ms/div alone takes 0.5 s).
+
 **Verified on the unit** (hp197's MHO98, mho-dev-32, issue #4): at 100 mV/div and 0.15 V the edge lies 1 to 2 samples
 after the trigger point for both slopes at 100 ns, 1, 2, 5 and 200 us/div (median of three blocks of 50 frames, every
 frame with the edge), where mho-dev-31 had -42 ns rising and +46 ns falling. Under the stock system the tester read
