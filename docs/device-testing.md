@@ -95,7 +95,7 @@ the build on the unit, the kernel log, and where the generator reaches.
 | `boot/`, `kernel/`, `rootfs/`, `hal/src/update/`, the cold boot, `Cargo.toml`/`Cargo.lock`, the test tools themselves, a file no rule knows | everything |
 
 `--list` prints the files with their areas and the tests that would run, and stops. The changes of the last pull
-requests chose between 6 tests (documents, CI) and 13 to 23 (one part of the hardware); all 89 run only when the
+requests chose between 6 tests (documents, CI) and 13 to 23 (one part of the hardware); all 90 run only when the
 image, the update path, the build or the tests themselves change.
 
 ## Noise and failures that were there before

@@ -1530,6 +1530,78 @@ def raw_window_is_one_unbroken_signal(s, o):
 
 
 @test("a1", need=(1,))
+def hardware_segments_hold_their_own_samples(s, o):
+    """Hardware segments (`:ACQuire:SEGMents:HARDware`) each hold their own samples: a slow sine with forced triggers
+    on a channel without a signal, so every segment starts at another phase; each one stepped to with the history
+    keys, a window of its raw samples read and compared with every other. A segment that reads back another's samples
+    shows as two equal windows (#530: the frames above 256 MiB landed on the lower ones, with right time stamps).
+    As many segments as the memory holds, so the last ones reach the top of the 256 MiB records use. The trigger
+    times rise from segment to segment."""
+    c = s.loop[0]
+    # a channel the generator does not reach, not one of the loop's: a signal there would lock every segment to the
+    # same phase
+    other = next((x for x in CH if x not in s.loop), None)
+    if other is None:
+        raise Skip("every channel carries the generator: no channel without a signal to force the triggers on")
+    # the segment count of the whole memory at 1 M points (hal/src/dho/hz.rs: mem_size, max_record_frames): segments
+    # of 2^17 bursts of 10 points, 15,728,640 bursts below the 1 M bursts the FPGA keeps at the top of 256 MiB
+    n, win = 15_728_640 // 131_072, 200_000
+    s.w(":STOP")
+    s.w(":ACQ:SEGM OFF")
+    s.gen("SIN", 37.3, 2.0)
+    s.w(f":CHAN{c}:SCAL 0.5")
+    s.w(":TIM:SCAL 0.002")
+    s.w(":TRIG:SWE AUTO")
+    # nothing on that channel: the triggers are forced, at any phase of the sine
+    s.w(f":TRIG:EDGE:SOUR CHAN{other}")
+    s.w(":ACQ:SEGM:HARD ON")
+    s.w(f":ACQ:SEGM {n}")
+    s.w(":ACQ:MDEP 1000000")
+    time.sleep(1)
+    s.w(":RUN")
+    end, times = time.time() + 180, []
+    while time.time() < end:
+        time.sleep(1)
+        times = [float(x) for x in s.q(":ACQ:SEGM:TIM?").split(",") if x]
+        if len(times) >= n:
+            break
+    row = f"{len(times)} of {n} segments of 1 M"
+    try:
+        assert len(times) == n, f"{row} within 180 s"
+        assert all(t < 9e37 for t in times), f"{row}: a segment without a time stamp: {times}"
+        assert all(a < b for a, b in zip(times, times[1:])), f"{row}: the trigger times do not rise: {times}"
+        s.w(f":WAV:SOUR CHAN{c}")
+        s.w(":WAV:MODE RAW")
+        s.w(":WAV:FORM BYTE")
+        # the newest first, then back one by one; a step shows when the window read changes, so two equal segments
+        # in a row read the same window after the wait
+        seen, prev = [None] * n, None
+        s.cmd("key navplay")
+        for i in range(n - 1, -1, -1):
+            if i != n - 1:
+                s.cmd("key navback")
+            for _ in range(20):
+                time.sleep(0.4)
+                s.w(":WAV:STAR 1")
+                s.w(f":WAV:STOP {win}")
+                d = bytes(s.block(":WAV:DATA?"))
+                if d != prev:
+                    break
+            prev = seen[i] = d
+        s.shot("hardware-segments-first", o.out)
+        flat = [i for i, d in enumerate(seen) if len(d) < win or max(d) - min(d) < 20]
+        assert not flat, f"{row}: segments without the signal or short: {flat}"
+        same = [(a, b) for a in range(n) for b in range(a + 1, n) if seen[a] == seen[b]]
+        assert not same, f"{row}: segments that read back the same samples: {same[:6]}"
+        return f"{row}, each window of {win} samples its own, the second {times[1] * 1e3:.1f} ms after the first, the last {times[-1]:.2f} s"
+    finally:
+        s.w(":ACQ:SEGM OFF")
+        s.w(":ACQ:SEGM:HARD OFF")
+        s.w(":ACQ:MDEP AUTO")
+        s.w(":RUN")
+
+
+@test("a1", need=(1,))
 def rates_for_the_record(s, o):
     """Update rate and web speed, figures for the docs."""
     c = s.loop[0]
