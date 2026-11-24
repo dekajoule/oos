@@ -1535,10 +1535,17 @@ def hardware_segments_hold_their_own_samples(s, o):
     on a channel without a signal, so every segment starts at another phase; each one stepped to with the history
     keys, a window of its raw samples read and compared with every other. A segment that reads back another's samples
     shows as two equal windows (#530: the frames above 256 MiB landed on the lower ones, with right time stamps).
-    The trigger times rise from segment to segment."""
+    As many segments as the memory holds, so the last ones reach the top of the 256 MiB records use. The trigger
+    times rise from segment to segment."""
     c = s.loop[0]
-    other = next(x for x in CH if x != c)
-    n, win = 20, 200_000
+    # a channel the generator does not reach, not one of the loop's: a signal there would lock every segment to the
+    # same phase
+    other = next((x for x in CH if x not in s.loop), None)
+    if other is None:
+        raise Skip("every channel carries the generator: no channel without a signal to force the triggers on")
+    # the segment count of the whole memory at 1 M points (hal/src/dho/hz.rs: mem_size, max_record_frames): segments
+    # of 2^17 bursts of 10 points, 15,728,640 bursts below the 1 M bursts the FPGA keeps at the top of 256 MiB
+    n, win = 15_728_640 // 131_072, 200_000
     s.w(":STOP")
     s.w(":ACQ:SEGM OFF")
     s.gen("SIN", 37.3, 2.0)
@@ -1552,7 +1559,7 @@ def hardware_segments_hold_their_own_samples(s, o):
     s.w(":ACQ:MDEP 1000000")
     time.sleep(1)
     s.w(":RUN")
-    end, times = time.time() + 120, []
+    end, times = time.time() + 180, []
     while time.time() < end:
         time.sleep(1)
         times = [float(x) for x in s.q(":ACQ:SEGM:TIM?").split(",") if x]
@@ -1560,7 +1567,7 @@ def hardware_segments_hold_their_own_samples(s, o):
             break
     row = f"{len(times)} of {n} segments of 1 M"
     try:
-        assert len(times) == n, f"{row} within 120 s"
+        assert len(times) == n, f"{row} within 180 s"
         assert all(t < 9e37 for t in times), f"{row}: a segment without a time stamp: {times}"
         assert all(a < b for a, b in zip(times, times[1:])), f"{row}: the trigger times do not rise: {times}"
         s.w(f":WAV:SOUR CHAN{c}")
