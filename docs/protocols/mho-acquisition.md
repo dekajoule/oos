@@ -803,6 +803,16 @@ not fire on the falling edge. Its SCU words with a single armed and waiting: 0x4
 DHO800/DHO900's mode word). From mho-dev-47 on it writes them (`snapshot::mode_word`, **assumed** to stop the triggers
 on the other slope).
 
+**Seen on the unit** (hp197's MHO98, mho-dev-47, issue #4): 0x4008 read 0x18803101 (bits 11:8 = 1) and the frames
+triggered on the falling edge stayed (12 to 31 of 50). The SCU and TPU against the stock system, sweep NORMAL: under
+OOS 0x226c read 1 (the auto trigger on, from the snapshot's AUTO; stock 0), 0x4020 never had bit 11 (stock 0x6800 with
+NORMAL), and a single with nothing to trigger on ended after 2 s where the stock system's waited. 0x4010 to 0x4018 read
+0 under OOS (stock 0x7800 running and stopped), 0x4080 0x1c006001 in every state (stock 0x1c00b101 running,
+0x1c006800 stopped, 0x1c000001 armed). From mho-dev-48 on the screen's sweep sets 0x226c, 0x2270, 0x2274 and 0x4020's
+bits 7 and 11 (`oos_hal::mho::sweep`, the stock system's timeouts): NORMAL turns the auto trigger off. **Assumed:** the
+auto trigger, which fires on the next level change after its timeout whatever its direction, caused the frames on the
+falling edge.
+
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
 the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
 0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div

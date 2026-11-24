@@ -23,7 +23,7 @@ use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
 use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
 use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
 use oos_hal::mho::settings::{Plan, Settings};
-use oos_hal::mho::{acq, la, record, snapshot, tpu, vertical};
+use oos_hal::mho::{acq, la, record, snapshot, sweep, tpu, vertical};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -300,6 +300,8 @@ fn run(out: &HwShared) {
     // roll (`roll`): the ring, and the TPU's sweep words before roll set its own
     let (mut ring, mut tpu_before): (Option<roll::Ring>, Option<[u32; 3]>) = (None, None);
     let mut la_was = None;
+    // the sweep last set (AUTO, s/div, holdoff), and the plan's 0x4020 under its sweep bits
+    let (mut sweep_set, mut keep_4020): (Option<(bool, f64, f64)>, u32) = (None, 0x6000);
     loop {
         let (hold, want, roll) = {
             let g = lock(out);
@@ -322,6 +324,8 @@ fn run(out: &HwShared) {
                             trig_set = None;
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
                             keep_1004 = p.fpga.iter().find(|w| w.0 == 0x1004).map(|w| w.1);
+                            keep_4020 = p.fpga.iter().find(|w| w.0 == sweep::MODE_4020).map_or(keep_4020, |w| w.1);
+                            sweep_set = None;
                             now = Now::of(&w.chans, &p, k);
                             ring = roll.then(|| roll::Ring::new(w.tdiv, now.dt));
                             status(set_text(&p, k) + if roll { ", roll" } else { "" });
@@ -340,6 +344,7 @@ fn run(out: &HwShared) {
             }
         }
         roll_sweep(&mut bar, ring.is_some(), &mut tpu_before);
+        set_sweep(&mut bar, want_sweep(out), ring.is_some(), &mut sweep_set, keep_4020);
         let la = la_enable(&mut bar, &mut sh, want_la(out), now.k as f64 / now.dt, &mut la_was) && ring.is_none();
         sh.s4008 = snapshot::mode_word(sh.s4008, now.mask);
         let win = now.window(&s);
@@ -424,6 +429,34 @@ fn la_enable(
     }
     sh.s4008 = (sh.s4008 & !LA_ON) | if want.is_some() { LA_ON } else { 0 };
     want.is_some()
+}
+
+/// Sets the sweep the screen asks for (`w`) when it changed, with 0x4020's sweep bits over the plan's `keep_4020`; in
+/// roll the sweep is roll's (`roll_sweep`) and set again after it.
+fn set_sweep(
+    bar: &mut Bar1,
+    w: Option<(bool, f64, f64)>,
+    roll: bool,
+    set: &mut Option<(bool, f64, f64)>,
+    keep_4020: u32,
+) {
+    if roll {
+        *set = None;
+        return;
+    }
+    if let Some(w) = w {
+        if *set != Some(w) {
+            bar.apply(&sweep::words(w.0, w.1, w.2));
+            bar.wr(sweep::MODE_4020, sweep::word_4020(keep_4020, w.0));
+            eprintln!("oos-ui mho: sweep {}", if w.0 { "AUTO" } else { "NORMAL" });
+            *set = Some(w);
+        }
+    }
+}
+
+/// The sweep the screen asks for: AUTO or not, its time base and holdoff.
+fn want_sweep(out: &HwShared) -> Option<(bool, f64, f64)> {
+    lock(out).want.as_ref().map(|w| (w.auto, w.tdiv, w.holdoff))
 }
 
 fn want_la(out: &HwShared) -> Option<[f64; 2]> {

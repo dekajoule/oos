@@ -36,6 +36,9 @@ pub struct Want {
     pub depth: Option<(f64, u32)>,
     /// the logic analyser on, with its pods' thresholds in V (`hw::read_la`)
     pub la: Option<[f64; 2]>,
+    /// the sweep: AUTO (else NORMAL, also for a single), and the trigger's holdoff in s (`oos_hal::mho::sweep`)
+    pub auto: bool,
+    pub holdoff: f64,
 }
 
 /// One channel on: its number (1 to 4), its scale at the BNC in V/div, the probe's ratio (the frames are volts at the
@@ -118,6 +121,8 @@ impl Board for Mho {
             },
             peak: m.acq == AcqMode::Peak,
             la: m.la_on().then(|| [m.la.thr(0) as f64, m.la.thr(1) as f64]),
+            auto: m.trig_mode == TrigMode::Auto,
+            holdoff: m.holdoff as f64,
             depth: (m.mdepth != 0).then(|| {
                 let (rate, depth) = m.srate_depth();
                 (rate, depth.min(u32::MAX as u64) as u32)

@@ -45,5 +45,6 @@ pub mod la;
 pub mod recipe;
 pub mod settings;
 pub mod snapshot;
+pub mod sweep;
 pub mod target;
 pub mod vertical;
