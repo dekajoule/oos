@@ -832,7 +832,16 @@ the square at 100 Hz nearly every frame was on the other edge. The square's fall
 with about +-0.1 V of ringing and no spike back across the level; the stock system's square rings about +-0.2 V on
 both sides of its step (band-limited, **assumed**), and its single shots took the set slope every time (40 of 40 at
 1 us/div, either slope). Every set-up word of the TPU, SCU and SPU that differs was tried at the stock value without
-effect. **Not understood; left open:** OOS drops such frames, so the picture stays right. The zoom slots
+effect. OOS drops such frames, so the picture stays right.
+
+**Seen on the unit** (the same MHO98, raw records at 4 GSa/s, 20 ns/div, of generator 1's square step): under OOS the
+two ADCs' samples are 49 to 57 samples (12 to 14 ns) apart, phases 0 and 2 of the index against 1 and 3, by another
+amount after every start (`oos-mho-live`); under the stock system the same step falls monotonically over about 3
+samples. At 1 us/div the phases lie within a few samples. Around a step faster than that skew the merged stream
+alternates high and low for a dozen ns, so the trigger's comparator sees a crossing in both directions at every edge:
+that is the frames on the other slope, and OOS's 4 GSa/s pictures of fast edges are wrong while it lasts. 0x1080's low
+half at 0 (as the stock system's with one channel) did not change it. **Assumed:** the stock start aligns the two
+ADCs at run time, a step OOS's start does not reproduce; not yet found. The zoom slots
 0x14f8-0x1514 read back in pairs under OOS (0x476 0x476 0xfffff124 0xfffff124 ...) whatever is written.
 
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
