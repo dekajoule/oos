@@ -75,6 +75,10 @@ into the waveform buffer. That is a copy on the processor's side, not part of th
 | 0x610c to 0x6158 | WAU: mask and pass/fail | the DHO has this block at 0x1184 to 0x11cc |
 | 0x10100, 0x10108 | a PWM output (assumed: an offset or level DAC) | new |
 | 0x20004 to 0x20818 | JESD204 receiver of the two ADCs | new |
+| 0x2001c, 0x20020 | generator 1 and 2: amplitude (section 12.5) | new |
+| 0x40004, 0x50004 | generator 1 and 2: output (section 12.5) | new |
+| 0x100000 to 0x107ffc, 0x200000 to 0x207ffc | generator 1 and 2: waveform memory (section 12.5) | new |
+| 0x130000 to 0x1300fc, 0x230000 to 0x2300fc | generator 1 and 2: frequency, shape, modulation (section 12.5) | new |
 | 0x30000 | multi-channel sync (assumed: the generator board) | new |
 
 ### What is the same
@@ -707,8 +711,8 @@ From mho-dev-35 on, also **not yet verified on hardware**:
   (output bit, frequency word, square, noise, amplitude, offset), in the relays' 1 Vpp gear up to 2 Vpp, offset
   within 1 V. Before the output is switched on the gear relays go off and the output relay on over `/dev/ttyS4`
   (uart4, now in the device tree), whose speed oos-ui finds with the identity query. Sine, ramp, pulse and arbitrary
-  go out square: they need the waveform memory, not known yet. A Bode plot with the built-in generator works on the
-  fundamental of the square (the sweep fits a sine at each frequency to input and output).
+  go out square here; from mho-dev-38 on every shape comes from the waveform memory (12.5). A Bode plot with the
+  built-in generator works on the fundamental (the sweep fits a sine at each frequency to input and output).
 - **Roll** (Auto Roll from 200 ms/div), in software (`ui/src/board/mho/roll.rs`): one division per record at the
   slowest recorded sample rate, no points before the trigger, the TPU's auto trigger set to 1 ms (12.1) so a record
   ends without an edge; the records are joined into ten divisions, newest at the right. Between two records the board
@@ -806,6 +810,22 @@ that way; the live path still writes the recorded 0x200xx words with each settin
 
 ### 12.5 Generator
 
+Generator 2's words are generator 1's moved by 0x100000 (output 0x50004, amplitude 0x20020, offset 0x10108).
+
+- Output: 0x40004 bit 0. Amplitude: 0x2001c, 16 bits of the full scale, linear within a relay gear (1 Vpp 0x7b0a,
+  2 Vpp 0xf60d in the gear with every relay off). Offset: 0x10100 bits 31:16, a PWM code (0 V 0x0481, +0.5 V 0x0550,
+  -0.5 V 0x03b3), bits 15:0 kept.
+- Frequency: a phase step through the waveform memory, f / 250 MHz x (2^51 - 1), low 32 bits in 0x130028, the rest
+  in 0x13002c (1 kHz: 0x2_18def416). Noise: 0x13006c = 1 and the step fixed at 0x20_00000000 (one sample per clock).
+  0x13007c = 1 with square, 0 with every other shape; the square's duty cycle changed none of the words of 0x130000.
+- Waveform memory: 0x100000 to 0x107ffc (generator 2: 0x200000), 16384 signed 16-bit samples, two per word (the
+  earlier one in bits 15:0, **assumed**: a square cannot tell), one period at full scale; the amplitude word scales
+  it. It reads back 0. **Verified on the unit** (hp197's MHO98, mho-dev-37, generator 1 into CH1 at 1 MOhm): with
+  the memory as the start leaves it the output stays at the offset whatever the words above say; after 8192 words of
+  a square (first half 0x7fff, second half 0x8001) written with the output off, 1 kHz at an amplitude word of 0x7b08
+  read 1.08 Vpp and 1.000001 kHz. With the memory cleared first and oos-ui loading it: square 1 Vpp at 1 kHz 1.034
+  Vpp and 1.000000 kHz, 2 Vpp 2.094 Vpp, 0.5 Vpp at 10 kHz 0.528 Vpp and 9.99999 kHz, 1 Vpp at +0.5 V offset -0.04
+  to 1.05 V; noise (a pseudo-random table) 0.99 Vpp, rms 0.15 V, mean 4 mV; DC (a table of zeros) at 0.3 V 0.304 V.
 - Modulation: AM 100 %, 100 Hz: 0x130070 = 0x9, 0x130048 = 0x13004c = 0x3fff, the rate 0x13000c = 0xd6bf94d5
   (f / 62.5 MHz x (2^51 - 1)); FM 100 Hz: 0x130070 = 0x11, 0x130050 = 0x0d6bf94d; PM 90 degrees: 0x130070 = 0x21,
   0x130054 = 0x4000.

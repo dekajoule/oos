@@ -121,7 +121,7 @@ impl Units {
         big.apply(&afg::words(1, &o, out_old, offset_old));
         if self.table != Some(wave_key) {
             let samples = afg::table(shape, &crate::board::lock(&super::ARB));
-            big.apply(&afg::table_words(&samples));
+            big.apply(&afg::table_words(1, &samples));
             self.table = Some(wave_key);
         }
         let lines = afg::relays(1, on);

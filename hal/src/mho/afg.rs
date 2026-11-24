@@ -6,7 +6,8 @@
 //! system** (issue #4): the output bit, the frequency word, square and noise, the amplitude and offset words, the relay
 //! lines. **Verified on the unit** under OOS (the same MHO98, mho-dev-35 and -37): the offset, and that the output
 //! needs the waveform memory filled, the square too: a square written there gave 1.08 Vpp at 1 kHz with the amplitude
-//! word of 1 Vpp. The memory reads back 0. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about
+//! word of 1 Vpp; square, noise and DC loaded by oos-ui read 1.034 Vpp at 1.000000 kHz, 0.99 Vpp of noise and the
+//! offset's 0.304 V for DC (hp197). The memory reads back 0. Amplitude is set in the relays' gear of 1 Vpp (all relays off), from about
 //! 0.8 to 2 Vpp in the stock system; OOS uses that gear for every amplitude.
 
 /// The frequency word's clock: f / 250 MHz x (2^51 - 1) (1 kHz: 0x2_18def416, read under the stock system).
@@ -58,15 +59,29 @@ pub enum Shape {
     Dc,
 }
 
-/// The waveform memory of generator 1: 16384 signed 16-bit samples, two per word from 0x100000 (8192 words), loaded
-/// with the output off. **Verified on the unit** with a square (the first half of the words 0x7fff7fff, the second
-/// 0x80018001). Which half of a word holds the earlier sample is **assumed** (bits 15:0); a square cannot tell.
-pub const TABLE: u32 = 0x10_0000;
+/// A generator's waveform memory: 16384 signed 16-bit samples, two per word (8192 words), one period at full scale
+/// (the amplitude word scales it), loaded with the output off; generator 1's from 0x100000, generator 2's from
+/// 0x200000. **Verified on the unit** with a square (the first half of the words 0x7fff7fff, the second 0x80018001),
+/// noise and DC. Which half of a word holds the earlier sample is **assumed** (bits 15:0); a square cannot tell.
 pub const TABLE_SAMPLES: usize = 16384;
 
+pub fn table_base(n: usize) -> u32 {
+    if n == 2 {
+        0x20_0000
+    } else {
+        0x10_0000
+    }
+}
+
 /// One period of `shape` as the memory's samples (full scale +-32767); `arb` the stored wave's samples (-1 to 1) for
-/// `Shape::Arb`. Noise and DC take the square's (their output does not come from the memory's shape).
+/// `Shape::Arb`. Noise is a band-limited pseudo-random sequence (a fixed seed, so every start loads the same; the
+/// memory is played at one sample per clock for noise, `NOISE_WORD`), DC all zero (its level is the offset's).
 pub fn table(shape: Shape, arb: &[f32]) -> Vec<i16> {
+    match shape {
+        Shape::Noise => return noise(),
+        Shape::Dc => return vec![0; TABLE_SAMPLES],
+        _ => {}
+    }
     let n = TABLE_SAMPLES;
     let full = 32767.0;
     (0..n)
@@ -103,13 +118,29 @@ pub fn table(shape: Shape, arb: &[f32]) -> Vec<i16> {
         .collect()
 }
 
-/// The writes that load `samples` (`TABLE_SAMPLES` of them) into generator 1's memory: two per word, the earlier in
+/// Noise: xorshift32, each value the mean of four draws (a softer spectrum than single draws), scaled to full scale
+/// and held for four samples.
+fn noise() -> Vec<i16> {
+    let mut x = 0x2545_f491u32;
+    let mut draw = || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x as i32 as f64
+    };
+    let v: Vec<f64> = (0..TABLE_SAMPLES / 4).map(|_| (0..4).map(|_| draw()).sum::<f64>()).collect();
+    let peak = v.iter().fold(0.0f64, |m, a| m.max(a.abs()));
+    v.iter().flat_map(|a| [(a / peak * 32767.0).round() as i16; 4]).collect()
+}
+
+/// The writes that load `samples` (`TABLE_SAMPLES` of them) into generator `n`'s memory: two per word, the earlier in
 /// bits 15:0.
-pub fn table_words(samples: &[i16]) -> Vec<(u32, u32)> {
+pub fn table_words(n: usize, samples: &[i16]) -> Vec<(u32, u32)> {
+    let base = table_base(n);
     samples
         .chunks(2)
         .enumerate()
-        .map(|(k, p)| (TABLE + 4 * k as u32, (p.get(1).copied().unwrap_or(0) as u16 as u32) << 16 | p[0] as u16 as u32))
+        .map(|(k, p)| (base + 4 * k as u32, (p.get(1).copied().unwrap_or(0) as u16 as u32) << 16 | p[0] as u16 as u32))
         .collect()
 }
 
@@ -199,11 +230,11 @@ mod tests {
     // does not start at 0 or misses its peak, a ramp's symmetry ignored.
     #[test]
     fn the_memory_holds_one_period() {
-        let sq = table_words(&table(Shape::Square, &[]));
+        let sq = table_words(1, &table(Shape::Square, &[]));
         assert_eq!(sq.len(), 8192);
         assert_eq!(
             (sq[0], sq[4095].1, sq[4096].1, sq[8191]),
-            ((TABLE, 0x7fff_7fff), 0x7fff_7fff, 0x8001_8001, (TABLE + 4 * 8191, 0x8001_8001))
+            ((0x10_0000, 0x7fff_7fff), 0x7fff_7fff, 0x8001_8001, (0x10_0000 + 4 * 8191, 0x8001_8001))
         );
         let sine = table(Shape::Sine, &[]);
         assert_eq!((sine[0], sine[4096], sine[12288]), (0, 32767, -32767));
@@ -211,5 +242,12 @@ mod tests {
         assert!(ramp[0] == -32767 && ramp[8192] == 0 && ramp[16383] > 32700);
         let arb = table(Shape::Arb, &[0.0, 1.0]);
         assert_eq!((arb[0], arb[8192]), (0, 32767));
+        // noise: full scale, about no offset, the same at every start; DC all zero; generator 2's memory
+        let n = table(Shape::Noise, &[]);
+        let mean = n.iter().map(|&v| v as f64).sum::<f64>() / n.len() as f64;
+        assert!(n.len() == TABLE_SAMPLES && n.iter().any(|v| v.abs() == 32767) && mean.abs() < 1500.0);
+        assert_eq!(n, table(Shape::Noise, &[]));
+        assert!(table(Shape::Dc, &[]).iter().all(|&v| v == 0));
+        assert_eq!(table_words(2, &n)[0].0, 0x20_0000);
     }
 }
