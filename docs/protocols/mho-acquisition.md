@@ -701,7 +701,10 @@ From mho-dev-34 on (**not yet verified on hardware**), from section 12's words a
 - **A fixed depth** (not Auto) records at the rate the screen computes for it, with the words of the recorded time
   base that ran at that rate, and the depth (0x10e4), segment (0x10e0) and points before and after the trigger
   (0x4050/0x4054) set as for the 4 GSa/s recording of mho-dev-25 (`Settings::plan_deep`), up to 1 M points read.
-  Auto keeps the recorded depth (10 k at most time bases). The stock system also sets 0x1118 = depth + 56; OOS leaves
+  From mho-dev-52 on a deeper setting records 1 M points over the same span (up to mho-dev-51 it fell back to the
+  recorded depth), and of the recorded rates the nearest one is taken at which the span fits in 1 M points (1 M points
+  at 200 us/div, 500 MSa/s asked, took 1 GSa/s on an MHO934 and filled half the screen with a broken record, mho-dev-51,
+  issue #248; whether 1 M points of two channels read whole is not yet verified). Auto keeps the recorded depth (10 k at most time bases). The stock system also sets 0x1118 = depth + 56; OOS leaves
   it as recorded.
 - **50 ohm** replays the channel's recorded 50 ohm setting (`CHn_impedance=FIFTy`): its front-end words and the
   channel's gain and offset words in each of its slots (`vertical::fifty`). The stock system records it at one scale

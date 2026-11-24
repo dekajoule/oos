@@ -204,15 +204,18 @@ fn roll_plan(st: &Settings, chans: &[(usize, f64)], tdiv: f64) -> Result<Plan, S
 /// A fixed depth at its rate, else the recorded setting (at 4 GSa/s, thinned, with `fast`).
 fn base_plan(st: &Settings, w: &super::Want, chans: &[(usize, f64)], fast: bool) -> Result<(Plan, u32), String> {
     let deep = match w.depth {
-        Some((rate, depth)) if depth <= POINTS_MAX => st.plan_deep(chans, w.tdiv, rate, depth).map_err(|e| {
-            eprintln!("oos-ui mho: depth {} points: {}; the recorded depth instead", depth, e);
-        }),
-        Some((_, depth)) => {
-            eprintln!(
-                "oos-ui mho: depth {} points: more than {} are not read; the recorded depth instead",
-                depth, POINTS_MAX
-            );
-            Err(())
+        Some((rate, depth)) => {
+            // more than POINTS_MAX are not read: the same span in POINTS_MAX points, at a lower rate
+            let fit = depth.min(POINTS_MAX);
+            if fit < depth {
+                eprintln!(
+                    "oos-ui mho: depth {} points: more than {} are not read; {} over the same span",
+                    depth, fit, fit
+                );
+            }
+            st.plan_deep(chans, w.tdiv, rate * fit as f64 / depth as f64, fit).map_err(|e| {
+                eprintln!("oos-ui mho: depth {} points: {}; the recorded depth instead", depth, e);
+            })
         }
         None => Err(()),
     };
