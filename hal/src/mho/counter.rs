@@ -3,10 +3,9 @@
 
 //! The MHO900's frequency counter: the DHO800/DHO900's (protocols/counter.md) at the same addresses, with other clocks
 //! (protocols/mho-acquisition.md section 12.4). Its gate counts 4 ns (1 s: 0x0ee6b280, 0.25 s: 0x03b9aca0, **verified
-//! on the unit** under the stock system). The tick of its time stamps is **assumed** to be one ADC sample, as on the
-//! DHO800/DHO900 (0.8 ns at 1.25 GSa/s): 0.25 ns at 4 GSa/s. It only scales the two stamps from the gate's edges to
-//! the first and the last signal edge, each less than a period, so a wrong tick moves the period by less than two
-//! periods over the gate.
+//! on the unit** under the stock system). The tick of its time stamps is one ADC sample, 0.25 ns at 4 GSa/s, as on the
+//! DHO800/DHO900 (0.8 ns at 1.25 GSa/s): **verified on the unit** under OOS (an MHO98, mho-dev-35, issue #4: the single
+//! period of the 1 kHz probe compensation signal read 4000002 ticks, the counter 1.000000 kHz).
 
 pub use crate::dho::counter::{gate_s, read, stop, Config, Mode, Raw};
 

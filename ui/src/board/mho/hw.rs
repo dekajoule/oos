@@ -54,7 +54,7 @@ const QUEUE_MAX: usize = 4;
 /// Points read of a record at most (a deeper record is read from its middle, around the trigger): a recording whose
 /// depth the stock system set to 1 M (an MHO934's, issue #248) is read whole, as the DHO800/DHO900 reads its deep
 /// records.
-const POINTS_MAX: u32 = 1_000_000;
+const POINTS_MAX: u32 = oos_hal::mho::settings::DEEP_MAX;
 
 /// Starts the thread; its state is the board's `Shared`, as the DHO800/DHO900's thread keeps it.
 pub(super) fn spawn() -> HwShared {
@@ -75,6 +75,9 @@ struct Now {
     mask: u32,
     /// every how many points of the record make the frame (`settings::plan_fast`: recorded at 4 GSa/s)
     k: u32,
+    /// peak detect on: the record holds the minimum and maximum of each interval in turn (`Frame::envelope`; read as
+    /// plain points the measurements counted twice the frequency on an MHO98, mho-dev-35, issue #4)
+    peak: bool,
 }
 
 /// A channel shown: its number (1 to 4), the hardware's scale in V/div at the BNC, the probe's ratio, the offset at the
@@ -103,7 +106,16 @@ impl Now {
                 gain: p.gain(c.ch),
             })
             .collect();
-        Now { shown, dt: k as f64 / p.srate, n: p.depth.min(POINTS_MAX), pre: p.pre.min(p.depth), mask: p.mask, k }
+        let peak = p.fpga.iter().any(|w| w.0 == 0x1004 && w.1 & oos_hal::mho::settings::PEAK_1004 != 0);
+        Now {
+            shown,
+            dt: k as f64 / p.srate,
+            n: p.depth.min(POINTS_MAX),
+            pre: p.pre.min(p.depth),
+            mask: p.mask,
+            k,
+            peak,
+        }
     }
 
     /// How long an acquisition may take: `DONE_MS` and twice the record's span (the points before the trigger, the wait
@@ -254,6 +266,7 @@ fn run(out: &HwShared) {
         pre: depth / 2,
         mask: s.fsm_mask(),
         k: 1,
+        peak: false,
     };
     let mut sh = s.shadows();
     if std::path::Path::new(S1000_STOCK).exists() {
@@ -666,7 +679,7 @@ fn thin(words: &[u16], pre: u32, k: u32) -> (Vec<u16>, u32) {
 /// screen's offset at mid-code) times the probe's ratio, 0 V with GND coupling, every `k`-th point, the trigger at its
 /// sample of the window.
 fn frame(words: &[Vec<u16>; 4], now: &Now) -> Frame {
-    let mut f = Frame { dt: now.dt, ..Frame::default() };
+    let mut f = Frame { dt: now.dt, envelope: now.peak, ..Frame::default() };
     for c in &now.shown {
         let (w, pre) = thin(&words[c.ch - 1], now.pre - now.start(), now.k);
         let volt = |x: u16| if c.gnd { 0.0 } else { (acq::volts(x, c.scale, c.offset) * c.probe) as f32 };

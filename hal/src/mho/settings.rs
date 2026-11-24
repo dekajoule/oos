@@ -34,6 +34,8 @@ pub const FILTER: u32 = 0x1098;
 /// every n-th point (`plan_fast`), up to `OVERSAMPLE_MAX` times.
 pub const FAST: f64 = 4e9;
 pub const OVERSAMPLE_MAX: u32 = 100;
+/// The deepest record `plan_deep` makes (the acquisition thread reads at most this many points).
+pub const DEEP_MAX: u32 = 1_000_000;
 
 /// One recorded setting.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -229,20 +231,27 @@ impl Settings {
         Ok((f, k))
     }
 
-    /// The plan for the channels `chans` at `tdiv` with a record `depth` points deep at `rate` Sa/s (a depth the screen
-    /// fixes instead of the recorded 10 k): the words of the recorded time base that ran at `rate` (the slowest of
-    /// them), with the depth (0x10e4), the segment (0x10e0) and the points before and after the trigger
-    /// (0x4050/0x4054) set as `plan_fast` sets them. Err when no setting of these channels ran at `rate`.
+    /// The plan for the channels `chans` at `tdiv` with a record of the span of `depth` points at `rate` Sa/s (a depth
+    /// the screen fixes instead of the recorded 10 k): the words of the recorded time base whose rate is nearest to
+    /// `rate` (the slowest of equal ones), the depth scaled to its rate so the record spans the same time (at most
+    /// `DEEP_MAX`), and the depth (0x10e4), segment (0x10e0) and points before and after the trigger (0x4050/0x4054)
+    /// set as `plan_fast` sets them. The screen's rates need not be the board's: 8 MSa/s asked at 100 k points took
+    /// none on an MHO98 (mho-dev-35, issue #4). Err when no setting of these channels is recorded.
     pub fn plan_deep(&self, chans: &[(usize, f64)], tdiv: f64, rate: f64, depth: u32) -> Result<Plan, String> {
         let ch = chans.first().ok_or("no channel on")?.0;
+        let off = |p: &Plan| (p.srate / rate).ln().abs();
         let mut best: Option<Plan> = None;
         for (t, _) in self.steps(ch, "tdiv") {
             let Ok(p) = self.plan_many(chans, t) else { continue };
-            if (p.srate / rate - 1.0).abs() < 1e-6 && best.as_ref().is_none_or(|b| p.tdiv > b.tdiv) {
+            let better = best
+                .as_ref()
+                .is_none_or(|b| off(&p) < off(b) - 1e-9 || (off(&p) - off(b)).abs() < 1e-9 && p.tdiv > b.tdiv);
+            if better {
                 best = Some(p);
             }
         }
-        let mut p = best.ok_or(format!("no setting of these channels recorded at {:.4e} Sa/s", rate))?;
+        let mut p = best.ok_or("no setting of these channels recorded")?;
+        let depth = ((depth as f64 * p.srate / rate).round() as u32).clamp(1000, DEEP_MAX);
         let pre = depth / 2;
         p.set(super::snapshot::DEPTH, depth);
         p.set(0x10e0, segment(depth) * crate::dho::hz::ratio(p.mask));
@@ -603,6 +612,9 @@ mod tests {
         assert_eq!((p.srate, p.tdiv, p.depth, p.pre), (5e6, 2e-3, 100_000, 50_000));
         assert_eq!((w[&0x10d8], w[&0x10e4], w[&0x4050], w[&0x4054]), (50, 100_000, 50_000, 50_000));
         assert_eq!(w[&0x10e0], segment(100_000) * 2, "CH2 recorded with CH1");
-        assert!(s.plan_deep(&[(2, 0.1)], 2e-3, 1e9, 100_000).is_err());
+        // a rate no setting ran at: the nearest one, the depth scaled to the same span
+        let q = s.plan_deep(&[(2, 0.1)], 2e-3, 8e6, 100_000).unwrap();
+        assert_eq!((q.srate, q.depth), (5e6, 62_500));
+        assert!(s.plan_deep(&[(3, 0.1)], 2e-3, 5e6, 100_000).is_err(), "CH3 is not recorded");
     }
 }

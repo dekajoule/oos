@@ -133,17 +133,19 @@ impl Units {
         if on {
             big.wr(r.out, out_old | 1);
         }
+        // every word read back, so a report shows which of them the board took
+        let back: Vec<String> = [r.out, r.offset, r.ampl, r.freq_lo, r.freq_hi, r.square, r.noise]
+            .iter()
+            .map(|&a| format!("{:#x}={:#x}", a, big.rd(a)))
+            .collect();
         eprintln!(
-            "oos-ui mho: generator 1 {} {:?} {} Hz {} Vpp offset {} V (words {:#x} {:#x}: {:#x} {:#x})",
+            "oos-ui mho: generator 1 {} {:?} {} Hz {} Vpp offset {} V (read back: {})",
             if on { "on" } else { "off" },
             shape,
             hz,
             vpp.min(afg::MAX_VPP),
             offset,
-            r.out,
-            r.offset,
-            big.rd(r.out),
-            big.rd(r.offset)
+            back.join(" ")
         );
     }
 }

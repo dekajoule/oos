@@ -719,6 +719,22 @@ From mho-dev-35 on, also **not yet verified on hardware**:
 - `oos-mho-report` collects the build, the start's report, the screen's log, the fan and temperatures and the lines
   of these units into `/oos/mho-report-<date>.txt` ([mho.md](../mho.md#reporting-back)).
 
+**Seen on the unit** (hp197's MHO98, mho-dev-35, issue #4; generator 1 to CH1, generator 2 to CH2, the probe
+compensation signal on CH3 and CH4):
+
+- **Verified:** the fan (`step_wise`, level 0 after the start, 3 of 7 at 42.8 deg C); the counter (1.000000 kHz; the
+  single period 4000002 ticks, so the tick is 0.25 ns); peak detect's picture at 1 and 10 ms/div; 50 and 100 ms/div
+  triggered with the edge at the trigger point for both slopes; roll at 200 and 500 ms/div; the generator board found
+  at 115200 Bd; generator 1's offset (+0.5 V read 0.49 to 0.51 V on CH1), so the output relay and the offset PWM work.
+- **Not working:** generator 1's square gave a flat line at 0.5, 1 and 2 Vpp, 1 and 10 kHz; the shape DC crashed
+  oos-ui (its frequency clamped to a maximum of 0); the measurements counted twice the frequency on peak detect's
+  frames; a fixed depth took no setting (8 MSa/s asked, none recorded at that rate); at 50 ms/div the first 25 ms
+  after the trigger point stayed empty.
+
+From mho-dev-37 on: DC has the other shapes' frequency range; peak detect's frames are marked as minimum and maximum
+pairs (`Frame::envelope`); a fixed depth takes the recorded rate nearest to the screen's with the depth scaled to
+the same span (`Settings::plan_deep`); the log reads every word of generator 1 back after setting it.
+
 ## 12. Further blocks, seen under the stock system
 
 Read on one MHO98 (issue #4) while the setting was changed over the stock system's remote commands, every word set

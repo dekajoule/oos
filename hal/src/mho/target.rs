@@ -63,8 +63,9 @@ fn limits() -> Limits {
         max_srate: [4e9, 2e9, 1e9],
         max_mem: [100_000_000, 50_000_000, 25_000_000],
         max_mem_la: [25_000_000, 12_500_000, 10_000_000],
-        // generator 1 puts every shape out square (afg.rs); 10 MHz **assumed** for it
-        afg_max_hz: AfgMax { sine: 10e6, square: 10e6, ramp: 10e6, pulse: 10e6, noise: 10e6, dc: 0.0, arb: 10e6 },
+        // generator 1 puts every shape out square (afg.rs); 10 MHz **assumed** for it. DC keeps a frequency too: the
+        // generator page clamps its frequency to this (0 crashed oos-ui on an MHO98, mho-dev-35, issue #4)
+        afg_max_hz: AfgMax { sine: 10e6, square: 10e6, ramp: 10e6, pulse: 10e6, noise: 10e6, dc: 10e6, arb: 10e6 },
         adc_clock_hz: 2e9,
         afg_clock_hz: super::afg::CLOCK_HZ,
     }
