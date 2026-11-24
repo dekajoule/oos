@@ -112,6 +112,19 @@ hysteresis; below 38 deg C it is at level 0. The fan runs at full speed from the
 first acts, and stays so if no thermal zone takes it. The CPU's own passive trips stay (the frequency is lowered from
 85 deg C). `cat /sys/class/hwmon/hwmon*/pwm1` and `/sys/class/thermal/cooling_device*/cur_state` show the fan's level.
 
+## Reporting back
+
+An owner who tests a build sends what it saw with one command over SSH, which only reads:
+
+```sh
+oos-mho-report
+```
+
+It writes `/oos/mho-report-<date>.txt` (and a copy on a USB stick in the front port): the build, the start's report
+(`/oos/mho-start.txt`), the screen's log, the fan and temperatures, and the lines of the generator, counter, logic
+analyser, roll, depth, peak detect and 50 ohm. Lines with a MAC address, a network address or the word "serial" are
+left out, so the file can be attached to the GitHub issue as it is: `scp root@<scope>:/oos/mho-report-*.txt .`.
+
 ## Build
 
 ```sh
@@ -230,7 +243,8 @@ measures at that one setting: the probe compensation signal on the snapshot's ch
    (its output in `/tmp/oos-mho-live.log`); a file `/oos/mho-manual` leaves it to the owner again. With a recording
    of `mho-settings.py --extended` the screen's channels on (several at once), their offset, AC and GND coupling and
    bandwidth limit set the board too. From mho-dev-34 on also peak detect, a fixed memory depth and 50 ohm (at
-   the recorded scale only; protocols/mho-acquisition.md, section 11).
+   the recorded scale only), from mho-dev-35 on the counter, generator 1 (square, noise, DC), roll and the logic
+   analyser (protocols/mho-acquisition.md, section 11).
 
 What `mho-start` does, step by step, is in protocols/mho-acquisition.md section 10; `--dry` lists every step without
 touching the board. Only that setting is measured: the scale, time base and trigger keys still act on the demo's

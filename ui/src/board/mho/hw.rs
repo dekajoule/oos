@@ -11,12 +11,14 @@
 //! (`settings::Settings::plan`): the FPGA's words, the ADCs' registers, the front end's words and select lines.
 //! Without it the board stays at the snapshot's setting. With a recording of `--extended` several channels at once
 //! (`plan_many`) and each channel's offset, AC coupling, bandwidth limit and 50 ohm (`vertical`); GND shows 0 V; peak
-//! detect and a fixed depth (`Plan::peak`, `Settings::plan_deep`; not yet verified on hardware). The trigger
+//! detect and a fixed depth (`Plan::peak`, `Settings::plan_deep`), roll in software (`roll`), the logic analyser
+//! (`read_la`), the counter and generator 1 (`units`); none of these verified on hardware yet. The trigger
 //! is the edge on the trigger's channel (the first one shown when it is off) at the screen's level and slope
 //! (`tpu::edge`, the DHO's TPU, verified on two MHO98). **Verified on the unit** that
 //! the board measures at the snapshot's setting (three units, issues #4, #248, #491) and that the keys set the scale
 //! and the time base up to 500 MSa/s (two MHO98, #4 and #491); the trigger and 1 GSa/s and above not yet.
 
+use super::{roll, units};
 use crate::board::{lock, BasicStats, Frame, HwShared, Shared};
 use oos_hal::mho::afe_bus::{AfeBus, GpioAfe, Line};
 use oos_hal::mho::bus::{Bar1, Bus, DmaBuf};
@@ -42,6 +44,10 @@ const NO_ADC_SYNC: &str = "/oos/mho-no-adc-sync";
 const DONE_MS: u64 = 1000;
 const SETTLE: u32 = 2;
 const PERIOD_MS: u64 = 20;
+/// The logic analyser's enable bit in 0x4008, its deskew and its thresholds.
+const LA_ON: u32 = 1 << 26;
+const LA_DESKEW: u32 = 0x128c;
+const LA_THRESHOLDS: u32 = 0x12d4;
 /// The SPU's slope bit in 0x1004.
 const SLOPE_1004: u32 = 1 << 14;
 /// Frames the queue holds at most: the screen takes the newest.
@@ -143,26 +149,9 @@ fn set_text(p: &Plan, k: u32) -> String {
 /// The plan for what the screen asks: a fixed depth at its rate (`plan_deep`, up to `POINTS_MAX`), else the recorded
 /// setting, then each channel's 50 ohm and vertical settings and peak detect laid over it; what could not be set goes
 /// to the log.
-fn plan_for(st: &Settings, w: &super::Want, fast: bool) -> Result<(Plan, u32), String> {
+fn plan_for(st: &Settings, w: &super::Want, fast: bool, roll: bool) -> Result<(Plan, u32), String> {
     let chans: Vec<(usize, f64)> = w.chans.iter().map(|c| (c.ch, c.scale)).collect();
-    let deep = match w.depth {
-        Some((rate, depth)) if depth <= POINTS_MAX => st.plan_deep(&chans, w.tdiv, rate, depth).map_err(|e| {
-            eprintln!("oos-ui mho: depth {} points: {}; the recorded depth instead", depth, e);
-        }),
-        Some((_, depth)) => {
-            eprintln!(
-                "oos-ui mho: depth {} points: more than {} are not read; the recorded depth instead",
-                depth, POINTS_MAX
-            );
-            Err(())
-        }
-        None => Err(()),
-    };
-    let (mut p, k) = match (deep, chans.as_slice()) {
-        (Ok(p), _) => (p, 1),
-        (Err(()), [(ch, scale)]) if fast => st.plan_fast(*ch, w.tdiv, *scale)?,
-        (Err(()), _) => (st.plan_many(&chans, w.tdiv)?, 1),
-    };
+    let (mut p, k) = if roll { (roll_plan(st, &chans, w.tdiv)?, 1) } else { base_plan(st, w, &chans, fast)? };
     for c in &w.chans {
         let scale = p.scales[c.ch - 1];
         if c.fifty {
@@ -180,20 +169,53 @@ fn plan_for(st: &Settings, w: &super::Want, fast: bool) -> Result<(Plan, u32), S
     Ok((p, k))
 }
 
-fn run(out: &HwShared) {
-    let status = |s: String| {
-        eprintln!("oos-ui mho: {}", s);
-        lock(out).status = s;
+/// Roll's plan: one division per record at the slowest recorded setting's rate, no points before the trigger
+/// (`roll`).
+fn roll_plan(st: &Settings, chans: &[(usize, f64)], tdiv: f64) -> Result<Plan, String> {
+    let rate = Plan::slowest_rate(st, chans).ok_or("roll: no time base of these channels recorded")?;
+    let depth = ((tdiv * rate).round() as u32).clamp(100, POINTS_MAX);
+    let mut p = st.plan_deep(chans, tdiv, rate, depth)?;
+    p.set_pre(0);
+    Ok(p)
+}
+
+/// A fixed depth at its rate, else the recorded setting (at 4 GSa/s, thinned, with `fast`).
+fn base_plan(st: &Settings, w: &super::Want, chans: &[(usize, f64)], fast: bool) -> Result<(Plan, u32), String> {
+    let deep = match w.depth {
+        Some((rate, depth)) if depth <= POINTS_MAX => st.plan_deep(chans, w.tdiv, rate, depth).map_err(|e| {
+            eprintln!("oos-ui mho: depth {} points: {}; the recorded depth instead", depth, e);
+        }),
+        Some((_, depth)) => {
+            eprintln!(
+                "oos-ui mho: depth {} points: more than {} are not read; the recorded depth instead",
+                depth, POINTS_MAX
+            );
+            Err(())
+        }
+        None => Err(()),
     };
+    Ok(match (deep, chans) {
+        (Ok(p), _) => (p, 1),
+        (Err(()), [(ch, scale)]) if fast => st.plan_fast(*ch, w.tdiv, *scale)?,
+        (Err(()), _) => (st.plan_many(chans, w.tdiv)?, 1),
+    })
+}
+
+/// What the thread starts from: the snapshot, the recording of the stock settings (None without one or when it cannot
+/// be read: the board stays at the snapshot's setting), the register window and the read-out stream. None, with the
+/// reason in the status line, when one of the others is missing.
+fn open(status: &dyn Fn(String)) -> Option<(snapshot::Snapshot, Option<Settings>, Bar1, std::fs::File)> {
     let s = match std::fs::read_to_string(SNAPSHOT)
         .map_err(|e| e.to_string())
         .and_then(|t| snapshot::Snapshot::parse(&t))
     {
         Ok(s) => s,
-        Err(e) => return status(format!("{}: {} (oos-mho-live)", SNAPSHOT, e)),
+        Err(e) => {
+            status(format!("{}: {} (oos-mho-live)", SNAPSHOT, e));
+            return None;
+        }
     };
-    let settings = std::fs::read_to_string(SETTINGS).ok().map(|t| Settings::parse(&t));
-    let settings = match settings {
+    let settings = match std::fs::read_to_string(SETTINGS).ok().map(|t| Settings::parse(&t)) {
         Some(Ok(st)) => Some(st),
         Some(Err(e)) => {
             status(format!("{}: {}; the board stays at the snapshot's setting", SETTINGS, e));
@@ -201,14 +223,28 @@ fn run(out: &HwShared) {
         }
         None => None,
     };
-    let mut bar = match Bar1::open_len(acq::WINDOW_USED) {
+    let bar = match Bar1::open_len(acq::WINDOW_USED) {
         Ok(b) => b,
-        Err(e) => return status(format!("{}: {} (oos-fpgad mho-start first)", acq::BAR_DEVICE, e)),
+        Err(e) => {
+            status(format!("{}: {} (oos-fpgad mho-start first)", acq::BAR_DEVICE, e));
+            return None;
+        }
     };
-    let mut c2h = match std::fs::File::open(acq::C2H_DEVICE) {
-        Ok(f) => f,
-        Err(e) => return status(format!("{}: {}", acq::C2H_DEVICE, e)),
+    match std::fs::File::open(acq::C2H_DEVICE) {
+        Ok(c2h) => Some((s, settings, bar, c2h)),
+        Err(e) => {
+            status(format!("{}: {}", acq::C2H_DEVICE, e));
+            None
+        }
+    }
+}
+
+fn run(out: &HwShared) {
+    let status = |s: String| {
+        eprintln!("oos-ui mho: {}", s);
+        lock(out).status = s;
     };
+    let Some((s, settings, mut bar, mut c2h)) = open(&status) else { return };
     let mut afe = settings.as_ref().and_then(|_| GpioAfe::open().ok());
     let fast = std::path::Path::new(FAST).exists();
     let depth = s.fpga.get(&snapshot::DEPTH).copied().unwrap_or(4000);
@@ -246,20 +282,26 @@ fn run(out: &HwShared) {
     let mut keep_1004 = None;
     // after a setting, the levels of every channel recorded go to the log once (which word holds which channel)
     let mut show = false;
+    let mut units = units::Units::default();
+    // roll (`roll`): the ring, and the TPU's sweep words before roll set its own
+    let (mut ring, mut tpu_before): (Option<roll::Ring>, Option<[u32; 3]>) = (None, None);
+    let mut la_was = false;
     loop {
-        let (hold, want) = {
+        let (hold, want, roll) = {
             let g = lock(out);
-            (g.hold, g.want.clone())
+            (g.hold, g.want.clone(), g.slow == crate::board::Slow::Roll)
         };
+        units.tick(&mut bar, out);
         if hold {
             std::thread::sleep(Duration::from_millis(PERIOD_MS));
             continue;
         }
         if let (Some(st), Some(w)) = (&settings, want) {
-            let key = |a: &super::Want| (a.chans.clone(), a.tdiv, a.peak, a.depth);
-            if applied.as_ref().map(key) != Some(key(&w)) {
+            let key = |a: &super::Want| (a.chans.clone(), a.tdiv, a.peak, a.depth, a.la);
+            if applied.as_ref().map(key) != Some(key(&w)) || roll != ring.is_some() {
+                ring = None;
                 if !w.chans.is_empty() {
-                    match plan_for(st, &w, fast) {
+                    match plan_for(st, &w, fast, roll) {
                         Ok((p, k)) => {
                             apply(&mut bar, afe.as_mut(), &p, sh.s1000, adc_sync);
                             // the plan wrote the recorded level words (the stock level, 0 V): the screen's again
@@ -267,7 +309,8 @@ fn run(out: &HwShared) {
                             keep_1154 = p.fpga.iter().find(|w| w.0 == 0x1154).map_or(keep_1154, |w| w.1);
                             keep_1004 = p.fpga.iter().find(|w| w.0 == 0x1004).map(|w| w.1);
                             now = Now::of(&w.chans, &p, k);
-                            status(set_text(&p, k));
+                            ring = roll.then(|| roll::Ring::new(w.tdiv, now.dt));
+                            status(set_text(&p, k) + if roll { ", roll" } else { "" });
                             (settle, show) = (SETTLE, true);
                         }
                         Err(e) => status(format!("MHO900: {}", e)),
@@ -282,6 +325,8 @@ fn run(out: &HwShared) {
                 }
             }
         }
+        roll_sweep(&mut bar, ring.is_some(), &mut tpu_before);
+        let la = la_enable(&mut bar, &mut sh, want_la(out), &mut la_was) && ring.is_none();
         sh.s4008 = (sh.s4008 & !0xf) | now.mask;
         let win = now.window(&s);
         let pass = snapshot::passthrough_keeping(keep_1154);
@@ -318,11 +363,95 @@ fn run(out: &HwShared) {
         }
         let words = split(bytes, now.mask, now.shown[0].scale, std::mem::take(&mut show));
         let mut f = frame(&words, &now);
-        if let Some((t, c)) = trig_set {
+        if la {
+            f.la = read_la(&mut bar, &mut sh, &mut c2h, &mut buf, &now);
+        }
+        if let Some(r) = ring.as_mut() {
+            r.push(&f);
+            f = r.frame();
+        } else if let Some((t, c)) = trig_set {
             edges.align(&mut f, c.ch - 1, t, c.scale * c.probe, seq);
         }
         publish(out, f, seq);
         std::thread::sleep(Duration::from_millis(PERIOD_MS));
+    }
+}
+
+/// The logic analyser's enable (0x4008 bit 26) and deskew (0x128c = 283 with one channel), as an MHO98 under the stock
+/// system set them (protocols/mho-acquisition.md section 12.4). The thresholds (0x12d4) stay as the board has them: their
+/// zero codes on the MHO900 are not known yet; the log shows the word. Returns whether the LA is on.
+fn la_enable(bar: &mut Bar1, sh: &mut oos_hal::mho::la::Shadows, on: bool, was: &mut bool) -> bool {
+    if on != *was {
+        if on {
+            bar.wr(LA_DESKEW, 283);
+            eprintln!("oos-ui mho: logic analyser on (thresholds {:#010x} left as they are)", bar.rd(LA_THRESHOLDS));
+        }
+        *was = on;
+    }
+    sh.s4008 = (sh.s4008 & !LA_ON) | if on { LA_ON } else { 0 };
+    on
+}
+
+fn want_la(out: &HwShared) -> bool {
+    lock(out).want.as_ref().is_some_and(|w| w.la)
+}
+
+/// The LA's words of the record just read: the DHO800/DHO900's raw LA window (protocols/la.md 4.2: pass-through, the LA
+/// stream, one read), **assumed** the same on the MHO900; the analog stream again after it. The words are taken at
+/// the analog points' spacing from the record's first point read (**assumed**; the stock system reports 1.25 GSa/s for
+/// the digital channels at 1 GSa/s analog). None when the read fails (logged).
+fn read_la(
+    bar: &mut Bar1,
+    sh: &mut oos_hal::mho::la::Shadows,
+    c2h: &mut std::fs::File,
+    buf: &mut oos_hal::mho::bus::DmaBuf,
+    now: &Now,
+) -> Option<crate::logic::LaRec> {
+    use oos_hal::mho::la;
+    // the play engine idle first (la.md 4.2 step 5: 0x4034 bit 13)
+    for _ in 0..20 {
+        if bar.rd(0x4034) & (1 << 13) != 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    bar.apply(&la::passthrough());
+    bar.apply(&la::readout(sh, now.n, now.start(), record::ratio(now.mask), now.mask));
+    let r = buf.read(c2h, la::read_bytes(now.n), |_, _| {}).map(|b| {
+        b.as_chunks::<2>().0.iter().take(now.n as usize).map(|x| u16::from_le_bytes(*x)).collect::<Vec<u16>>()
+    });
+    bar.apply(&la::restore(sh));
+    match r {
+        Ok(words) => Some(crate::logic::LaRec {
+            words: std::sync::Arc::new(words),
+            t0: -((now.pre - now.start()) as f64) * now.dt,
+            dt: now.dt,
+        }),
+        Err(e) => {
+            eprintln!("oos-ui mho: logic analyser read-out: {}", e);
+            None
+        }
+    }
+}
+
+/// Roll's sweep: the TPU's auto trigger with a 1 ms timeout while `roll`, so each record ends without an edge; the
+/// words before it again after roll (`before`, read when roll began).
+fn roll_sweep(bar: &mut Bar1, roll: bool, before: &mut Option<[u32; 3]>) {
+    let words = [roll::SWEEP, roll::T1, roll::T2];
+    match (roll, *before) {
+        (true, None) => *before = Some(words.map(|a| bar.rd(a))),
+        (false, Some(b)) => {
+            for (a, v) in words.into_iter().zip(b) {
+                bar.wr(a, v);
+            }
+            *before = None;
+        }
+        _ => {}
+    }
+    if let (true, Some(b)) = (roll, *before) {
+        bar.wr(roll::SWEEP, b[0] | 1);
+        bar.wr(roll::T1, roll::AUTO_TICKS);
+        bar.wr(roll::T2, roll::AUTO_TICKS);
     }
 }
 

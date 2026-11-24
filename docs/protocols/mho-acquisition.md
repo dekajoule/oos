@@ -698,6 +698,28 @@ From mho-dev-34 on (**not yet verified on hardware**), from section 12's words a
   is the 1 Mohm path's (**assumed**).
 - The fan follows the SoC's temperature ([mho.md](../mho.md#fan)).
 
+From mho-dev-35 on, also **not yet verified on hardware**:
+
+- **Counter:** the DHO800/DHO900's counter at the same addresses (`oos_hal::mho::counter`), the gate in 4 ns steps
+  (12.4); the time stamps' tick **assumed** to be one sample at 4 GSa/s (0.25 ns; a wrong tick moves the result by
+  less than two periods over the gate). The screen's log shows every tenth reading raw.
+- **Generator 1** (`oos_hal::mho::afg`, `ui/src/board/mho/units.rs`): square, noise and DC from the words of 12.5
+  (output bit, frequency word, square, noise, amplitude, offset), in the relays' 1 Vpp gear up to 2 Vpp, offset
+  within 1 V. Before the output is switched on the gear relays go off and the output relay on over `/dev/ttyS4`
+  (uart4, now in the device tree), whose speed oos-ui finds with the identity query. Sine, ramp, pulse and arbitrary
+  go out square: they need the waveform memory, not known yet. A Bode plot with the built-in generator works on the
+  fundamental of the square (the sweep fits a sine at each frequency to input and output).
+- **Roll** (Auto Roll from 200 ms/div), in software (`ui/src/board/mho/roll.rs`): one division per record at the
+  slowest recorded sample rate, no points before the trigger, the TPU's auto trigger set to 1 ms (12.1) so a record
+  ends without an edge; the records are joined into ten divisions, newest at the right. Between two records the board
+  is armed and read, a few milliseconds without points. The TPU's sweep words are put back after roll.
+- **Logic analyser:** 0x4008 bit 26 and the deskew 0x128c = 283 (12.4); after each analog read the DHO800/DHO900's
+  raw LA window ([la.md](la.md) 4.2) is read as the LA's words, at the analog points' spacing (**assumed**). The
+  thresholds (0x12d4) stay as the board has them: their zero codes on the MHO900 are not known (the log shows the
+  word).
+- `oos-mho-report` collects the build, the start's report, the screen's log, the fan and temperatures and the lines
+  of these units into `/oos/mho-report-<date>.txt` ([mho.md](../mho.md#reporting-back)).
+
 ## 12. Further blocks, seen under the stock system
 
 Read on one MHO98 (issue #4) while the setting was changed over the stock system's remote commands, every word set

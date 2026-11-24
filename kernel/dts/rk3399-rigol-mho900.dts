@@ -133,6 +133,15 @@
 		"", "", "", "", "", "", "", "";
 };
 
+/*
+ * The generator board's microcontroller on uart4 (GPIO1_A7 RX, GPIO1_B0 TX; /dev/ttyS4 as under the stock system,
+ * protocols/mho-acquisition.md section 12.5): plain ASCII lines for the generator's relays. Its speed is not known;
+ * oos-ui finds it with an identity query. spi1, the DHO's user of these pins, is off on this board.
+ */
+&uart4 {
+	status = "okay";
+};
+
 /* the front ends' bus as on the DHO (verified on MHO900 units with mho-check.py --afe), and the FPGA's INIT_B, DONE */
 &gpio2 {
 	gpio-line-names =

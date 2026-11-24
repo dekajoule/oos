@@ -61,6 +61,11 @@ fn ctrl(c: &Config) -> u32 {
 
 /// The writes that start the counter on `c` from zero: source, gate, a clear, then run.
 pub fn start(c: &Config) -> Vec<(u32, u32)> {
+    start_ticked(c, GATE_TICK)
+}
+
+/// `start` for a board whose gate register counts in `gate_tick` seconds (the MHO900: 4 ns).
+pub fn start_ticked(c: &Config, gate_tick: f64) -> Vec<(u32, u32)> {
     let w = ctrl(c);
     vec![
         (THRESHOLD_A, 0x8080),
@@ -68,7 +73,7 @@ pub fn start(c: &Config) -> Vec<(u32, u32)> {
         (ANALOG, 1),
         (CH_MASK, 1 << c.ch),
         (CTRL, w),
-        (GATE, (gate_s(c.digits) / GATE_TICK).round() as u32),
+        (GATE, (gate_s(c.digits) / gate_tick).round() as u32),
         (CTRL, w | CLEAR),
         (CTRL, w | RUN),
     ]
@@ -113,15 +118,20 @@ pub fn read(bus: &mut impl Bus) -> Raw {
 /// The signal's period from a reading with gate `gate_s`: from the edges in the gate, else (slow signals) from the
 /// single period; None without either.
 pub fn period(r: &Raw, gate_s: f64) -> Option<f64> {
-    let g = (gate_s / TICK).round() as i64;
+    period_ticked(r, gate_s, TICK)
+}
+
+/// `period` for a board whose counter ticks in `tick` seconds.
+pub fn period_ticked(r: &Raw, gate_s: f64, tick: f64) -> Option<f64> {
+    let g = (gate_s / tick).round() as i64;
     if r.freq_valid && r.edges >= 2 {
         let span = g - r.start as i64 - r.end as i64;
         if span > 0 {
-            return Some(span as f64 / (r.edges - 1) as f64 * TICK);
+            return Some(span as f64 / (r.edges - 1) as f64 * tick);
         }
     }
     // at least 1.6 ms: below about 625 Hz the edge count says less than one period
-    (r.period_valid && r.period >= 2_000_000).then_some(r.period as f64 * TICK)
+    (r.period_valid && r.period >= (1.6e-3 / tick).round() as u64).then_some(r.period as f64 * tick)
 }
 
 #[cfg(test)]

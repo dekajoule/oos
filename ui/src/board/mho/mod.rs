@@ -11,6 +11,10 @@
 mod hw;
 #[cfg(target_os = "linux")]
 mod live;
+#[cfg(target_os = "linux")]
+mod roll;
+#[cfg(target_os = "linux")]
+mod units;
 
 use super::{Board, PanelCmd, Slow, Zone};
 use crate::model::{AcqMode, Coupling, GenCh, Model, TrigMode};
@@ -21,7 +25,7 @@ use std::sync::Mutex;
 pub struct Mho;
 
 /// What the screen asks of the board: the channels on (in order, none: nothing measured), the time base in s/div, the
-/// trigger, peak detect, and a depth the screen fixes (sample rate in Sa/s, points; `None` with depth Auto: the
+/// trigger, peak detect, the logic analyser, and a depth the screen fixes (sample rate in Sa/s, points; `None` with depth Auto: the
 /// recorded depth).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Want {
@@ -30,6 +34,8 @@ pub struct Want {
     pub trig: Trig,
     pub peak: bool,
     pub depth: Option<(f64, u32)>,
+    /// the logic analyser on (`hw::read_la`)
+    pub la: bool,
 }
 
 /// One channel on: its number (1 to 4), its scale at the BNC in V/div, the probe's ratio (the frames are volts at the
@@ -54,6 +60,9 @@ pub struct Trig {
     pub slope: oos_hal::mho::tpu::Slope,
 }
 
+/// Generator 1 as the acquisition thread sets it (`units`): on, Hz, Vpp, offset in V, wave shape (`AFG_WAVES`).
+pub type Gen = (bool, f64, f64, f64, usize);
+
 /// Time base from which the screen rolls (as on the DHO800/DHO900 and stock: 200 ms/div).
 const ROLL_TDIV: f64 = 0.2;
 
@@ -67,8 +76,8 @@ impl Board for Mho {
 
     /// the channel the board measures and its setting (`hw::Want`): applied by hand only (`oos-mho-live`)
     type Want = Want;
-    /// (on, Hz, Vpp, V): for the demo source only
-    type Gen = (bool, f64, f64, f64);
+    /// generator 1 (`Gen`), set by the acquisition thread (`units`)
+    type Gen = Gen;
 
     fn name(&self) -> &'static str {
         "MHO900"
@@ -107,6 +116,7 @@ impl Board for Mho {
                 },
             },
             peak: m.acq == AcqMode::Peak,
+            la: m.la_on(),
             depth: (m.mdepth != 0).then(|| {
                 let (rate, depth) = m.srate_depth();
                 (rate, depth.min(u32::MAX as u64) as u32)
@@ -204,15 +214,22 @@ impl Board for Mho {
     }
 
     fn gen(&self, g: &GenCh) -> Self::Gen {
-        (g.on, g.freq, g.ampl, g.offset)
+        (g.on, g.freq, g.ampl, g.offset, g.wave)
     }
 
-    fn gen_max_hz(&self, _: &GenCh) -> f64 {
-        0.0
+    fn gen_max_hz(&self, g: &GenCh) -> f64 {
+        let m = oos_hal::model::platform().limits.afg_max_hz;
+        match g.wave {
+            crate::model::AFG_DC => m.dc,
+            crate::model::AFG_NOISE => m.noise,
+            _ => m.square,
+        }
     }
 
     fn gen_clamp(&self, ampl_nv: f64, offset_nv: f64, _: f64) -> (f64, f64) {
-        (ampl_nv, offset_nv)
+        // the 1 Vpp gear only (oos_hal::mho::afg)
+        let (a, o) = (oos_hal::mho::afg::MAX_VPP * 1e9, oos_hal::mho::afg::MAX_OFFSET * 1e9);
+        (ampl_nv.clamp(0.0, a), offset_nv.clamp(-o, o))
     }
 
     fn arb_store(&self, v: &[f32]) -> Option<u32> {

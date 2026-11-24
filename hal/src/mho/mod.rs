@@ -7,6 +7,7 @@
 //! and nothing here touches it. `acq` describes the board (registers, read-out format) for the bring-up to come.
 
 pub mod acq;
+pub mod afg;
 /// The register window and the read-out stream: the same XDMA devices and access as on the DHO800/DHO900
 /// (`acq::BAR_DEVICE`, `acq::C2H_DEVICE`), mapped to `acq::WINDOW_USED`.
 pub mod bus {
@@ -37,8 +38,15 @@ pub mod record {
 pub mod tpu {
     pub use crate::dho::tpu::{edge, noise_hysteresis, Shadows, Slope};
 }
+/// The logic analyser's raw read-out of the DHO800/DHO900 (protocols/la.md 4.2), **assumed** the same on the MHO900,
+/// and the shadows of the SCU's words it changes.
+pub mod la {
+    pub use crate::dho::la::{passthrough, read_bytes, readout, restore};
+    pub use crate::dho::scu::Shadows;
+}
 pub mod board;
 pub mod bringup;
+pub mod counter;
 pub mod recipe;
 pub mod settings;
 pub mod snapshot;

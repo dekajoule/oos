@@ -104,6 +104,21 @@ impl Plan {
         self.fpga.sort_unstable();
     }
 
+    /// The points before the trigger: `pre` of the record's depth (0x4050), the rest after it (0x4054).
+    pub fn set_pre(&mut self, pre: u32) {
+        self.pre = pre.min(self.depth);
+        self.set(0x4050, self.pre);
+        self.set(0x4054, self.depth - self.pre);
+        self.fpga.sort_unstable();
+    }
+
+    /// The slowest recorded setting's sample rate for these channels (roll records at it).
+    pub fn slowest_rate(st: &Settings, chans: &[(usize, f64)]) -> Option<f64> {
+        let ch = chans.first()?.0;
+        let t = st.steps(ch, "tdiv").into_iter().map(|x| x.0).reduce(f64::max)?;
+        st.plan_many(chans, t).ok().map(|p| p.srate)
+    }
+
     /// Peak detect: 0x1004 bit 1, below the board's highest rate for the channels recorded (4 GSa/s alone, 2 with
     /// two, 1 with four: there is nothing to detect over at that rate). False where it is not set.
     pub fn peak(&mut self) -> bool {
