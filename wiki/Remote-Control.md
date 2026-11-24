@@ -15,6 +15,12 @@
 | SSH | 22 | root shell with the scope's own password or a trusted key, off by default ([below](#ssh)) |
 | mDNS, DNS-SD | 5353 (UDP) | the scope by name, `http://dho924s-123456.local:8080`, and its services for browsing ([below](#ethernet)): the web remote (`_http._tcp`, path `/`), LXI discovery (`_lxi._tcp`, path `/lxi/identification`), the SCPI socket and VXI-11; on a computer (`--serve`) HiSLIP instead of VXI-11 |
 
+**A program for the desktop:** [oos-desktop](https://github.com/dekajoule/oos-desktop) shows and controls the scope
+from Windows, macOS or Linux, over the network or the USB cable: the live waveforms, Run/Stop, the settings, cursors,
+measurements, screenshots and records as files. It talks SCPI like any other program, so nothing on the scope needs
+more than the switches below. How to install and use it: [the oos-desktop
+wiki](https://github.com/dekajoule/oos-desktop/wiki).
+
 None of them slows the scope down: they are read without waiting, and the live picture of the web remote is made on
 the slow cores with spare time only. All of them run over Ethernet, over [WLAN](#wlan) and over a
 [USB cable](#usb-cable).
