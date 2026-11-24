@@ -105,6 +105,26 @@ pub fn align_both(w1014: u32, v: u32) -> Vec<(u32, u32)> {
     vec![sel(1), (ALIGN, v), sel(2), (ALIGN, v), (ALIGN_SELECT, w1014)]
 }
 
+/// The read-out delays 0x1120 to 0x112c (coarse and fine, horizontal-config.md step 48) and their lane field, bits
+/// 19:16, one bit per SPU lane. A recording holds the last lane's word: 1 with CH1 alone, 2 with two channels, 8 with
+/// four (an MHO934's recording, issue #248), as one write per lane in use, lowest first, would leave it. A plan replays
+/// the word once, so only that lane got it; with four channels the fine delay of 5 or 6 then lay on one lane only, and
+/// one channel was 6 to 7 samples apart from the others at 500 us/div and a few at 5 us/div (seen on the unit, MHO934,
+/// mho-dev-51). **Assumed** that every lane in use takes the same word, as the recording shows for the last.
+pub const DELAYS: [u32; 4] = [0x1120, 0x1124, 0x1128, 0x112c];
+const LANE_FIELD: u32 = 0xf << 16;
+
+/// The writes that put each of the plan's read-out delays `words` into every lane up to the one it names, the lowest
+/// first, so the last write is the recording's word.
+pub fn delays_every_lane(words: &[(u32, u32)]) -> Vec<(u32, u32)> {
+    let lanes = |v: u32| (0..4).map(|b| 1u32 << b).filter(move |&l| l <= (v & LANE_FIELD) >> 16);
+    words
+        .iter()
+        .filter(|w| DELAYS.contains(&w.0))
+        .flat_map(|&(a, v)| lanes(v).map(move |l| (a, v & !LANE_FIELD | l << 16)))
+        .collect()
+}
+
 /// The SPU's peak-detect bit in 0x1004: an MHO98 under the stock system sets it at 1 ms/div (0x04004a84 to
 /// 0x04004a86) and not at 4 GSa/s (issue #4), as the DHO800/DHO900 do (horizontal-config.md, acquire modes).
 pub const PEAK_1004: u32 = 1 << 1;
@@ -698,6 +718,28 @@ mod tests {
             align_both(0x1400_2301, 0x1111),
             [(0x1014, 0x1400_1301), (0x1020, 0x1111), (0x1014, 0x1400_2301), (0x1020, 0x1111), (0x1014, 0x1400_2301)]
         );
+    }
+
+    // Break it catches: the delay into the recorded lane only, the lanes in the wrong order (the recording's word not
+    // last), a word without a lane field written at all, another word than the delays taken.
+    #[test]
+    fn the_delays_go_to_every_lane_in_use() {
+        let words = [(0x1120, 0x4008_0000), (0x1124, 0xc000_3c00), (0x1128, 0xc008_0006), (0x1014, 0x0008_0000)];
+        assert_eq!(
+            delays_every_lane(&words),
+            vec![
+                (0x1120, 0x4001_0000),
+                (0x1120, 0x4002_0000),
+                (0x1120, 0x4004_0000),
+                (0x1120, 0x4008_0000),
+                (0x1128, 0xc001_0006),
+                (0x1128, 0xc002_0006),
+                (0x1128, 0xc004_0006),
+                (0x1128, 0xc008_0006),
+            ]
+        );
+        assert_eq!(delays_every_lane(&[(0x1128, 0xc002_0006)]), vec![(0x1128, 0xc001_0006), (0x1128, 0xc002_0006)]);
+        assert_eq!(delays_every_lane(&[(0x1128, 0xc001_0007)]), vec![(0x1128, 0xc001_0007)]);
     }
 
     // Break it catches: a channel's setting putting the generator's offset or amplitude back to the recording's.
