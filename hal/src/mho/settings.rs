@@ -164,6 +164,40 @@ pub fn slots(ch: usize, mask: u32) -> Vec<usize> {
     }
 }
 
+/// A setting the stock system recorded in roll mode: 0x1170 bit 31 (with ROLL on it rolls from 50 ms/div, 0x1170
+/// 0x40000001 to 0xc000000a, protocols/mho-acquisition.md 12.3).
+fn rolled(s: &Setting) -> bool {
+    s.fpga.get(&0x1170).is_some_and(|v| v & 0x8000_0000 != 0)
+}
+
+/// The slowest of `steps` recorded as an ordinary record.
+fn normal_of(steps: Vec<(f64, &Setting)>) -> Option<Setting> {
+    steps.into_iter().filter(|(_, s)| !rolled(s)).map(|x| x.1).next_back().cloned()
+}
+
+/// A plan made from a setting recorded in roll mode, made an ordinary record as the stock system records 50 and 100
+/// ms/div with Auto Roll off: the trigger in the middle (0x4050 = 0x4054 = depth / 2), and 0x11fc, 0x1154 and 0x1170
+/// from the slowest ordinary setting `normal` of the same channels (**assumed** to hold at the slower time bases). On
+/// an MHO98 OOS replayed the roll words (0x4050 999999, 0x4054 1, 0x11fc 100) and 23.4 ms after the trigger point read
+/// 0 V, where the stock system holds 0x4050 = 0x4054 = 500000 and 0x11fc = 1000 at 50 ms/div (mho-dev-41, issue #4).
+fn unroll(mut p: Plan, normal: Option<Setting>) -> Result<Plan, String> {
+    if !p.fpga.iter().any(|w| w.0 == 0x1170 && w.1 & 0x8000_0000 != 0) {
+        return Ok(p);
+    }
+    if let Some(n) = normal {
+        for a in [0x11fc, 0x1154, 0x1170] {
+            if let Some(&v) = n.fpga.get(&a) {
+                p.set(a, v);
+            }
+        }
+    }
+    p.pre = p.depth / 2;
+    p.set(0x4050, p.pre);
+    p.set(0x4054, p.depth - p.pre);
+    p.fpga.sort_unstable();
+    Ok(p)
+}
+
 /// Words a plan never writes: not settings, live values, the sync, the SCU's mode word (the arm's).
 fn skipped(a: u32) -> bool {
     NOT_REPLAYED.iter().any(|(n, _)| *n == a) || LIVE.contains(&a) || a == SYNC || a == super::snapshot::MODE
@@ -364,19 +398,23 @@ impl Settings {
         // 3:0 = 3, 5, 9 in an MHO98's recording, issue #491); the channel's own bit if none is recorded
         let own_bit = 1 << (ch - 1);
         let mask = tb.fpga.get(&super::snapshot::MODE).map(|m| m & 0xf).filter(|m| m & own_bit != 0).unwrap_or(own_bit);
-        Ok(Plan {
-            fpga,
-            adc,
-            afe: [own(&switch_on), own(&sc.afe)].concat(),
-            select: sc.select.clone(),
-            tdiv: td,
-            scale: sv,
-            srate,
-            depth: tb.fpga.get(&super::snapshot::DEPTH).copied().unwrap_or(10_000),
-            pre: tb.fpga.get(&0x4050).copied().unwrap_or(5000),
-            mask,
-            scales: std::array::from_fn(|c| if c + 1 == ch { sv } else { 0.0 }),
-        })
+        let normal = normal_of(self.steps(ch, "tdiv"));
+        unroll(
+            Plan {
+                fpga,
+                adc,
+                afe: [own(&switch_on), own(&sc.afe)].concat(),
+                select: sc.select.clone(),
+                tdiv: td,
+                scale: sv,
+                srate,
+                depth: tb.fpga.get(&super::snapshot::DEPTH).copied().unwrap_or(10_000),
+                pre: tb.fpga.get(&0x4050).copied().unwrap_or(5000),
+                mask,
+                scales: std::array::from_fn(|c| if c + 1 == ch { sv } else { 0.0 }),
+            },
+            normal,
+        )
     }
 
     /// The board's state for the channels `chans` (channel 1 to 4, scale in V/div, in channel order) at the time base
@@ -397,6 +435,7 @@ impl Settings {
         let prefix =
             if chans.len() == 4 { "CH1-4_tdiv=".to_string() } else { format!("combo={}_tdiv=", list.join(",")) };
         let steps = self.named(&prefix);
+        let normal = normal_of(steps.clone());
         let missing = || format!("CH{} together not recorded (mho-settings.py --extended)", list.join("+CH"));
         let adc =
             steps.iter().map(|x| x.1).find(|s| !s.adc[0].is_empty()).map(|s| s.adc.clone()).ok_or_else(missing)?;
@@ -433,19 +472,22 @@ impl Settings {
             *f = *f & !3 | 1;
         }
         let srate = tb.num("srate").filter(|&r| r > 0.0).ok_or("the time base's sample rate is not recorded")?;
-        Ok(Plan {
-            fpga: fpga.into_iter().collect(),
-            adc,
-            afe,
-            select,
-            tdiv: td,
-            scale: scales[chans[0].0 - 1],
-            srate,
-            depth: tb.fpga.get(&super::snapshot::DEPTH).copied().unwrap_or(10_000),
-            pre: tb.fpga.get(&0x4050).copied().unwrap_or(5000),
-            mask,
-            scales,
-        })
+        unroll(
+            Plan {
+                fpga: fpga.into_iter().collect(),
+                adc,
+                afe,
+                select,
+                tdiv: td,
+                scale: scales[chans[0].0 - 1],
+                srate,
+                depth: tb.fpga.get(&super::snapshot::DEPTH).copied().unwrap_or(10_000),
+                pre: tb.fpga.get(&0x4050).copied().unwrap_or(5000),
+                mask,
+                scales,
+            },
+            normal,
+        )
     }
 
     /// The settings whose names start with `prefix` followed by a number, by that number.
@@ -600,6 +642,29 @@ mod tests {
         );
         assert_eq!(w.get(&0x1014), Some(&0x0400_0000), "the scale's bits stay");
         assert_eq!((segment(10_000), segment(1_000_000)), (0x200, 0x8000));
+    }
+
+    // Break it catches: a setting the stock system recorded rolling replayed as it is (everything before the trigger,
+    // the roll words), the ordinary setting's words not taken over.
+    #[test]
+    fn a_rolled_setting_becomes_an_ordinary_record() {
+        let t = file().replace(
+            "setting CH2_scale=0.1",
+            "setting CH2_tdiv=5e-2\nscpi :X\nstate on1=0 on2=1 tdiv=5e-2 srate=2e6 mdepth=1.0000E+06\nfpga 0x10e4 1000000\n\
+             fpga 0x4050 999999\nfpga 0x4054 1\nfpga 0x11fc 50\nfpga 0x1154 0xc3\nfpga 0x1170 0xc0000014\nselect c131 1\n\
+             endsetting\nsetting CH2_scale=0.1",
+        )
+        .replace("fpga 0x4008 0x188832a3\n", "fpga 0x4008 0x188832a3\nfpga 0x11fc 0x3e8\nfpga 0x1154 0x4c3\nfpga 0x1170 0x40000002\n");
+        let s = Settings::parse(&t).unwrap();
+        let p = s.plan(2, 5e-2, 0.1).unwrap();
+        let w: BTreeMap<u32, u32> = p.fpga.iter().copied().collect();
+        assert_eq!((p.depth, p.pre), (1_000_000, 500_000));
+        assert_eq!(
+            (w[&0x4050], w[&0x4054], w[&0x11fc], w[&0x1154], w[&0x1170]),
+            (500_000, 500_000, 1000, 0x4c3, 0x4000_0002)
+        );
+        let q = s.plan(2, 2e-4, 0.1).unwrap();
+        assert_eq!(q.pre, 5000, "an ordinary setting stays as recorded");
     }
 
     // Break it catches: a fixed depth taken at the screen's time base's own rate, the depth words of the shallow record

@@ -764,6 +764,19 @@ mho-dev-41 on a frame whose edge lies farther than 1 % of the frame from the tri
 counts them with whether the other slope's edge is at the trigger point; after each setting the log names the longest
 run of one word in each channel's record.
 
+**Seen on the unit** (hp197's MHO98, the stock system against mho-dev-41, generator 1's 1 kHz square on CH1, rising
+edge at 0 V, sweep Auto): the stock system holds the TPU's 0x2034 at 0 for the edge trigger, both slopes (only 0x201c
+changes, 0x00aa4100 / 0x00220041), at 20 us to 50 ms/div, where OOS wrote the DHO800/DHO900's source B, 0x6060. Its
+other trigger words there: 0x2004 0x78208000, 0x2008 0x800087d0, 0x200c 0x77708000, 0x2010 0x80008880, 0x204c
+0x00220000, 0x2070 = 0x2074 = 1, 0x205c, 0x2014, 0x2018, 0x202c, 0x2030, 0x2044, 0x2048, 0x2060, 0x2068 0. At 50
+ms/div (1 M points, 2 MSa/s) the stock system records as at the faster time bases (0x4050 = 0x4054 = 500000, the
+window from 0, 0x11fc 1000), where OOS had replayed the recording's settings of 50 and 100 ms/div: `mho-settings.py`
+recorded them in roll mode (the stock system's ROLL on: 0x4008 bit 17, 0x11fc 100 / 50 / 25 with 1 / 2 / 4
+channels, 0x1154 0xc3, 0x1170 0xc000000a, 0x4050 999999, 0x4054 1), on both an MHO98 and an MHO934. From mho-dev-44
+on OOS writes 0x2034 = 0 with the edge trigger, and makes such a setting an ordinary record: the trigger in the middle
+and 0x11fc, 0x1154 and 0x1170 from the slowest ordinary setting of the same channels (`settings::unroll`, **assumed**
+to hold there).
+
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
 the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
 0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div

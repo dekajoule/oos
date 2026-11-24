@@ -47,6 +47,8 @@ const PERIOD_MS: u64 = 20;
 /// The logic analyser's enable bit in 0x4008 and its deskew.
 const LA_ON: u32 = 1 << 26;
 const LA_DESKEW: u32 = 0x128c;
+/// The TPU's word the DHO800/DHO900's edge trigger writes source B to; 0 on the MHO900.
+const TPU_SOURCE_B: u32 = 0x2034;
 /// The SPU's slope bit in 0x1004.
 const SLOPE_1004: u32 = 1 << 14;
 /// Frames the queue holds at most: the screen takes the newest.
@@ -757,7 +759,10 @@ fn trigger(bar: &mut Bar1, sh: &mut tpu::Shadows, c: Shown, t: super::Trig, s100
     let level = t.level / c.probe;
     let noise = tpu::noise_hysteresis(nv(c.scale), false);
     for (a, v) in tpu::edge(sh, c.ch as u32, t.slope, nv(level), nv(c.offset), nv(c.scale), c.gain, noise, 8_000_000) {
-        bar.wr(a, v);
+        // the MHO900's stock system holds 0x2034 at 0 for the edge trigger, both slopes, where the DHO800/DHO900's
+        // sequence writes its source B (0x6060): an event B taking part would trigger on the other edge (an MHO98,
+        // issue #4: frames triggered half a period away at 50 to 200 us/div)
+        bar.wr(a, if a == TPU_SOURCE_B { 0 } else { v });
     }
     eprintln!("oos-ui mho: trigger: CH{} {:?} at {} V ({} V at the BNC)", c.ch, t.slope, t.level, level);
 }
