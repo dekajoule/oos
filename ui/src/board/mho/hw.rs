@@ -341,7 +341,7 @@ fn run(out: &HwShared) {
         }
         roll_sweep(&mut bar, ring.is_some(), &mut tpu_before);
         let la = la_enable(&mut bar, &mut sh, want_la(out), now.k as f64 / now.dt, &mut la_was) && ring.is_none();
-        sh.s4008 = (sh.s4008 & !0xf) | now.mask;
+        sh.s4008 = snapshot::mode_word(sh.s4008, now.mask);
         let win = now.window(&s);
         let pass = snapshot::passthrough_keeping(keep_1154);
         let r = snapshot::acquire_with(

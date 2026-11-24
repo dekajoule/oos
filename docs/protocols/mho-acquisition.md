@@ -795,6 +795,14 @@ fires on the falling edge, the data are not inverted. Not yet understood. The sa
 putting generator 1's offset back to 0 V: the plans replayed the recording's 0x10100. From mho-dev-46 on a plan writes
 none of the generators' offset and amplitude words (0x10100, 0x10108, 0x2001c, 0x20020).
 
+**Seen on the unit** (hp197's MHO98 under the stock system, issue #4): 50 single shots at 1 ms/div (edge rising at 0
+V, generator 1's 1 kHz square on CH1, sweep NORMal) caught the rising edge every time, so the stock system's arm does
+not fire on the falling edge. Its SCU words with a single armed and waiting: 0x4004 0x809, 0x4008 0x08801101, 0x400c
+0xa2008000, 0x4010/0x4014/0x4018 0, 0x4080 0x1c000001. In every 0x4008 of two units' recordings (940 settings) bits
+11:8 hold the record's interleave factor, 1, 2 or 4 for the channels in bits 3:0, never 0; OOS's arm wrote them 0 (the
+DHO800/DHO900's mode word). From mho-dev-47 on it writes them (`snapshot::mode_word`, **assumed** to stop the triggers
+on the other slope).
+
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
 the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
 0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div

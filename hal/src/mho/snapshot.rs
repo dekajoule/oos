@@ -62,6 +62,14 @@ pub const S1000: u32 = 0x80;
 pub const DEPTH: u32 = 0x10e4;
 /// The SCU's mode word: bits 3:0 the FSM's channel mask.
 pub const MODE: u32 = 0x4008;
+/// The SCU's mode word for the channels `mask`: bits 3:0 the mask, bits 11:8 the record's interleave factor (1, 2 or 4),
+/// as in every 0x4008 of two units' recordings (940 settings of an MHO98 and an MHO934, issue #4 and #248), the rest of
+/// `base`. OOS left bits 11:8 at 0 with the DHO800/DHO900's word, and about half the acquisitions fired on the other
+/// slope (mho-dev-45, issue #4); **assumed** to be why.
+pub fn mode_word(base: u32, mask: u32) -> u32 {
+    (base & !0xf0f) | (mask & 0xf) | crate::dho::hz::ratio(mask) << 8
+}
+
 /// The bits of 0x4080 the stock system holds set in every recorded setting (bits 28:26).
 pub const S4080_STOCK: u32 = 0x1c00_0000;
 
@@ -245,7 +253,7 @@ impl Snapshot {
         let g = |a: u32, d: u32| self.fpga.get(&a).copied().unwrap_or(d);
         Shadows {
             s4004: h.s4004 & !(1 | 4 | 1 << 31),
-            s4008: (h.s4008 & !0xf) | self.fsm_mask() | (g(MODE, 0) & 1 << 27),
+            s4008: mode_word(h.s4008 | (g(MODE, 0) & 1 << 27), self.fsm_mask()),
             s400c: h.s400c,
             s1000: h.s1000,
             s1010: g(0x1010, h.s1010),
@@ -507,12 +515,21 @@ mod tests {
             ]
         );
         // the mode word: the DHO's with the snapshot's channel mask and bit 27, not its state bits
-        assert_eq!(p[2].1, [Step::Wr(0x1004, 0x0400_4a50), Step::Wr(0x10e4, 0x2710), Step::Wr(0x4008, 0x0880_0002)]);
+        assert_eq!(p[2].1, [Step::Wr(0x1004, 0x0400_4a50), Step::Wr(0x10e4, 0x2710), Step::Wr(0x4008, 0x0880_0102)]);
         // the PMIC's VSEL lines, the panel's reset and sysref_reset are in the snapshot, never in the plan
         assert_eq!(
             p[3].1[4..],
             [Step::Select("afe_sel_a_ch2".into(), false), Step::Select("afe_sel_c_ch2".into(), true)]
         );
+    }
+
+    // Break it catches: the interleave field of the mode word left 0 (the DHO's word), another field than bits 11:8.
+    #[test]
+    fn the_mode_word_carries_the_interleave_factor() {
+        assert_eq!(mode_word(0x0880_0001, 1), 0x0880_0101);
+        assert_eq!(mode_word(0x0880_0001, 0x3), 0x0880_0203);
+        assert_eq!(mode_word(0x0880_0001, 0xd), 0x0880_040d);
+        assert_eq!(mode_word(0x0880_0101, 0x8), 0x0880_0108, "CH4 alone: one channel");
     }
 
     #[test]
