@@ -513,10 +513,19 @@ impl Ui {
                 let i = all.iter().position(|&x| x == m.cursor).unwrap_or(0);
                 m.cursor = all[cycle(i, all.len(), d)];
             }
-            Item::CurA => m.cur_a = (m.cur_a + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurB => m.cur_b = (m.cur_b + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurC => m.cur_c = (m.cur_c + d as f32 * 0.005).clamp(0.0, 1.0),
-            Item::CurD => m.cur_d = (m.cur_d + d as f32 * 0.005).clamp(0.0, 1.0),
+            Item::CurA | Item::CurB | Item::CurC | Item::CurD => {
+                // the place counts from the left and from the top: + moves a time cursor right and a voltage cursor
+                // (A and B in Volt, C and D in XY) up, both to a higher value
+                let up = matches!(it, Item::CurC | Item::CurD) || m.cursor == CursorMode::Volt;
+                let step = (if up { -d } else { d }) as f32 * 0.005;
+                let place = match it {
+                    Item::CurA => &mut m.cur_a,
+                    Item::CurB => &mut m.cur_b,
+                    Item::CurC => &mut m.cur_c,
+                    _ => &mut m.cur_d,
+                };
+                *place = (*place + step).clamp(0.0, 1.0);
+            }
             Item::RefSel => {
                 let slot = (self.ref_page.sel as i32 + d).rem_euclid(NREF as i32) as usize;
                 self.select_workspace_source(WaveId::Ref(slot));
