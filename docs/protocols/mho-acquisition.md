@@ -649,7 +649,13 @@ for both slopes, but the stock system converts the level with the channel's digi
 (gain 0x475/1024 = 1.114: 7500/1.114 = 6731), 7253 at 1 V/div (gain 1.023: 7328), 7477 at 10 mV/div (gain 1.001:
 7493). With 1.0 OOS's comparator sat 17 mV above a 0.15 V level at 100 mV/div, so the rising edge lay 42 ns after the
 trigger point and the falling 46 ns before it. From mho-dev-32 on `tpu::edge` gets the channel's gain from its slot
-word (`Plan::gain`): the level codes come within 0.2 % (100 mV/div) and 1 % (1 V/div) of the stock system's. The trigger: the stock system's level words hold a window around the level (0x2004
+word (`Plan::gain`): the level codes come within 0.2 % (100 mV/div) and 1 % (1 V/div) of the stock system's.
+
+**Verified on the unit** (hp197's MHO98, mho-dev-32, issue #4): at 100 mV/div and 0.15 V the edge lies 1 to 2 samples
+after the trigger point for both slopes at 100 ns, 1, 2, 5 and 200 us/div (median of three blocks of 50 frames, every
+frame with the edge), where mho-dev-31 had -42 ns rising and +46 ns falling. Under the stock system the tester read
+the level words at +2 divisions on every scale of all four channels: the same `g`, the stock system rounding the
+codes down to a multiple of 16, which OOS leaves out. The trigger: the stock system's level words hold a window around the level (0x2004
 0x7760/0x8000, 0x2008 0x8000/0x8890 at 0 V and 1 V/div: about 2200 codes either side) and its auto trigger waits
 0x4060 = 5 000 000 ticks at every time base; the screen showed TRIG'D at 100 us/div and slower only, where a record
 holds an edge of the 1 kHz signal anyway, so whether the FPGA's trigger fires is open.
