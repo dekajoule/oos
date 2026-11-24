@@ -90,6 +90,21 @@ impl Plan {
     }
 }
 
+/// The ADCs' alignment word 0x1020 and its select field, bits 19:12 of 0x1014 (1: ADC 0, 2: ADC 1): a write of 0x1020
+/// goes to the ADC 0x1014 selects. **Verified on the unit** (an MHO98, mho-dev-49, issue #4): a plan replays 0x1020 once,
+/// with the recording's 0x1014, so only ADC 1 got it and the two ADCs were 12 to 14 ns apart at 4 GSa/s; the same
+/// value written to both ended the frames triggered on the other slope (50 of 50 at 100 Hz and 1 kHz). The stock start
+/// measures the best value at every start (through 0x1014 bits 9:8 and 0x1030); OOS takes the recording's.
+pub const ALIGN: u32 = 0x1020;
+const ALIGN_SELECT: u32 = 0x1014;
+const SELECT_FIELD: u32 = 0xff << 12;
+
+/// The writes that put the alignment word `v` into both ADCs and leave 0x1014 at `w1014` (the plan's).
+pub fn align_both(w1014: u32, v: u32) -> Vec<(u32, u32)> {
+    let sel = |n: u32| (ALIGN_SELECT, (w1014 & !SELECT_FIELD) | n << 12);
+    vec![sel(1), (ALIGN, v), sel(2), (ALIGN, v), (ALIGN_SELECT, w1014)]
+}
+
 /// The SPU's peak-detect bit in 0x1004: an MHO98 under the stock system sets it at 1 ms/div (0x04004a84 to
 /// 0x04004a86) and not at 4 GSa/s (issue #4), as the DHO800/DHO900 do (horizontal-config.md, acquire modes).
 pub const PEAK_1004: u32 = 1 << 1;
@@ -674,6 +689,15 @@ mod tests {
         );
         let q = s.plan(2, 2e-4, 0.1).unwrap();
         assert_eq!(q.pre, 5000, "an ordinary setting stays as recorded");
+    }
+
+    // Break it catches: the alignment written to one ADC only, the select field elsewhere, 0x1014 left selecting.
+    #[test]
+    fn the_alignment_goes_to_both_adcs() {
+        assert_eq!(
+            align_both(0x1400_2301, 0x1111),
+            [(0x1014, 0x1400_1301), (0x1020, 0x1111), (0x1014, 0x1400_2301), (0x1020, 0x1111), (0x1014, 0x1400_2301)]
+        );
     }
 
     // Break it catches: a channel's setting putting the generator's offset or amplitude back to the recording's.
