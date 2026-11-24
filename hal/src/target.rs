@@ -136,6 +136,13 @@ pub const DEPTHS: &[(&str, u64)] = &crate::dho::target::DEPTHS;
 #[cfg(oos_board = "mho")]
 pub const DEPTHS: &[(&str, u64)] = &crate::mho::target::DEPTHS;
 
+/// The built-in generators of the largest model of the board this build is for: the UI's generator slots (`NGEN`).
+/// Chosen together with `ACTIVE`, beside `Target` like `DEPTHS`: 1 on the DHO800/DHO900, 2 on the MHO900 (G1 and G2).
+#[cfg(oos_board = "dho")]
+pub const GENERATORS: usize = 1;
+#[cfg(oos_board = "mho")]
+pub const GENERATORS: usize = 2;
+
 #[cfg(test)]
 mod tests {
     use super::*;

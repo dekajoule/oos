@@ -66,7 +66,7 @@ const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp
 
 /// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`). The board of the
 /// build has as many (`platform.rs`): two on the MHO900 (G1 and G2), one on the DHO800/DHO900.
-pub const NGEN: usize = if cfg!(oos_board = "mho") { 2 } else { 1 };
+pub const NGEN: usize = oos_hal::target::GENERATORS;
 
 /// Analog inputs of the unit (`oos_hal::model::platform()`), at most NCH.
 pub fn n_ch() -> usize {
