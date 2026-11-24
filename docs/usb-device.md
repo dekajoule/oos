@@ -10,9 +10,12 @@ computer on the other end of the cable, each on its own or both together:
   `USB::0x1209::0x0001::<serial>::INSTR`, with the SCPI interpreter of [scpi.md](scpi.md) and no network
   ([below](#the-usb-instrument-usbtmc)). The decisions are in ADR 0080.
 
-**Verified on the unit** (DHO924S, 2026-11-24, a Mac on the cable): the gadget at power-on, the network (a lease,
-the web remote and SSH over it) and the instrument (pyvisa-py: `*IDN?`, sets, a PNG, a RAW record). **Not yet verified
-on hardware**: Linux and Windows hosts, NI-VISA, the switches toggled while a host is connected (below).
+**Verified on the unit** (DHO924S, 2026-11-24): with a Mac, the gadget at power-on, the network (a lease, the web
+remote and SSH over it) and the instrument (pyvisa-py: `*IDN?`, sets, a PNG, a RAW record); with Linux, the
+instrument through the kernel's `usbtmc` driver; with Windows 11, the network alone and the instrument alone. **On
+Windows the two do not go together:** with both switches on, Windows sees only the network (below, and #570). **Not
+yet verified on hardware**: NI-VISA, the network on Linux, answers over several transfers on Windows (#571), the
+switches toggled while a host is connected.
 
 ## The gadget
 
@@ -118,6 +121,13 @@ and ignored.
 REG_MULTI_SZ form). Windows takes configuration 1, the one the OS descriptors are linked to, and binds WinUSB to the
 interface without an install: pyvisa-py over libusb and the desktop client (nusb) reach it. NI-VISA and Keysight VISA
 have their own USBTMC driver, which Windows then does not pick by itself; the Device Manager can assign it by hand.
+
+**Windows with both switches on (verified on the unit, #570):** Windows loads its driver for composite devices only for
+a device with a single configuration. With the network on the gadget has two (RNDIS for Windows, ECM for macOS and
+Linux), so Windows takes the device as one function, the first interface of configuration 1: the RNDIS network. The
+instrument does not appear. On Windows, switch USB network off to use the instrument; macOS and Linux take
+configuration 2 and get both. A single configuration with CDC NCM in place of RNDIS and ECM would give Windows 10 and
+11 both; that is open in #570.
 **Linux** binds its `usbtmc` driver (`/dev/usbtmcN`, `CONFIG_USB_TMC` on the computer) or libusb takes the interface;
 **macOS** has no USBTMC driver, libusb and nusb take it.
 
@@ -140,9 +150,13 @@ stand-ins for `mount` and `ip`. Verified on the unit (DHO924S, macOS host, pyvis
 descriptors and the gadget bound at power-on with both functions; macOS took configuration 2; GET_CAPABILITIES and a
 clear answered; `*IDN?`, a set and its query, a PNG of 91 KB in 0.05 s and a RAW record of 3.75 MB at 14.4 MB/s, a
 query after a read that timed out. That run found that a read of the header alone lost the message in the same
-packet; Bulk-OUT is read in whole packets since. Not yet verified on hardware: Linux (`usbtmc` driver, its ioctls),
-Windows (WinUSB without a prompt, NI-VISA), READ_STATUS_BYTE and the aborts from a real host, the switches toggled
-while a host is connected.
+packet; Bulk-OUT is read in whole packets since. Verified on the unit with Linux (an Alpine VM with the LTS kernel,
+the device passed through): the `usbtmc` driver binds, `*IDN?` through `/dev/usbtmc0`, READ_STATUS_BYTE with MAV and
+EAV, USBTMC_IOCTL_CLEAR in the middle of a BMP of 1.84 MB and the whole BMP after it. With Windows 11 (a VM, the
+device passed through): WinUSB bound without a prompt, `*IDN?`, a set and its query, INITIATE_CLEAR with Bulk-IN read
+empty; an answer over several transfers stopped after the first (#571, not yet known whether the device or the VM's
+passthrough). Not yet verified on hardware: NI-VISA, the aborts from a real host, the switches toggled while a host
+is connected.
 
 The network: verified on the host: in an arm64 container with the image's busybox and `nft`, veth pairs in place of the two
 interfaces and a folder in place of configfs: the attributes and links the script writes, one address on both
@@ -150,5 +164,5 @@ interfaces, a lease of .2 and .3 without router and DNS, a service reached from 
 `net.allow` set, another address on the cable refused, the teardown (DHCP stopped, the prefix file gone), a wrong
 `usb.net.prefix` refused; the switch, the rows and the address check of oos-ui (`sysconf`, `gadget`, `ui::remote`
 tests). Verified on the unit (DHO924S, #566): the gadget at power-on, a Mac's lease of .3 over ECM, the web remote and
-SSH over the cable with `net.allow` set to another network. Not yet verified on hardware: Windows (RNDIS), Linux,
-mDNS over the cable.
+SSH over the cable with `net.allow` set to another network; Windows 11 (a VM): the RNDIS adapter without an install,
+a lease of .2, the web remote. Not yet verified on hardware: Linux, mDNS over the cable.

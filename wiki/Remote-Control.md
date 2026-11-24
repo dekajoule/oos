@@ -64,7 +64,7 @@ joined a home network with a password and worked over it for days.
 ## USB cable
 
 No Ethernet at the bench? A USB cable from your computer to the USB-B port on the back of the scope does the same job.
-Switch on **System > Network > Remote services > USB network** (off by default: **tried on one scope with a Mac so far**,
+Switch on **System > Network > Remote services > USB network** (off by default: **tried on one scope with a Mac and Windows 11 so far**,
 please tell us in [#235](https://github.com/dekajoule/oos/issues/235) how it went). The computer then sees a new
 network adapter and gets an address by itself:
 
@@ -85,7 +85,8 @@ settings file ([docs/usb-device.md](https://github.com/dekajoule/oos/blob/main/d
 The same USB-B port on the back can also make the scope a USB instrument, as bench instruments with a USB port are:
 VISA finds it as `USB::0x1209::0x0001::<serial>::INSTR` with no network at all, and it speaks the same SCPI as port
 5555 ([[SCPI and VXI-11]]). Switch on **System > Network > Remote services > USB instrument** (off by default: **tried on one
-scope with pyvisa on a Mac so far**; tell us in an issue how it went on Linux and Windows). It works on its own or together with USB network; the
+scope with a Mac, Linux and Windows 11**; tell us in an issue how it went for you). It works on its own or, on macOS
+and Linux, together with USB network; the
 row **USBTMC** next to it says `no computer` until a computer has taken the device, then `connected`.
 
 ```python
@@ -109,7 +110,8 @@ png = scope.query_binary_values(":DISP:DATA? PNG", datatype="B", container=bytes
 - **Windows** 10 and 11: the scope asks Windows for its WinUSB driver itself, so nothing needs installing for
   pyvisa-py (with `pip install pyusb libusb-package`) or the OOS desktop client. NI-VISA and Keysight VISA bring their
   own USBTMC driver, which Windows does not pick for the scope by itself: to use them, choose their driver for the
-  scope's "OOS USBTMC" device once in the Device Manager (Update driver > Browse > Let me pick).
+  scope's "OOS USBTMC" device once in the Device Manager (Update driver > Browse > Let me pick). **With USB network
+  on as well, Windows sees only the network**: switch USB network off to use the instrument on Windows.
 
 The product ID 0x0001 is the test ID of [pid.codes](https://pid.codes) and will change to one of OOS's own before a
 release; the details are in [docs/usb-device.md](https://github.com/dekajoule/oos/blob/main/docs/usb-device.md).
