@@ -10,8 +10,9 @@ computer on the other end of the cable, each on its own or both together:
   `USB::0x1209::0x0001::<serial>::INSTR`, with the SCPI interpreter of [scpi.md](scpi.md) and no network
   ([below](#the-usb-instrument-usbtmc)). The decisions are in ADR 0080.
 
-**Not yet verified on hardware**: a configfs gadget on this port is reported to work on a DHO804 (#235); this one has
-run on the host only (below).
+**Verified on the unit** (DHO924S, 2026-11-24, a Mac on the cable): the gadget at power-on, the network (a lease,
+the web remote and SSH over it) and the instrument (pyvisa-py: `*IDN?`, sets, a PNG, a RAW record). **Not yet verified
+on hardware**: Linux and Windows hosts, NI-VISA, the switches toggled while a host is connected (below).
 
 ## The gadget
 
@@ -135,13 +136,19 @@ GET_CAPABILITIES, an answer over several requests smaller than it, a wrong bTag,
 messages larger than a packet in reads of any size, EOM, READ_STATUS_BYTE), and a round trip through oos-ui's
 interpreter with the scope's own USBTMC host code (`scpi::tests::transports`); the script's start, bind, rebind and
 stop with the instrument, the IDs and the lock in an arm64 container with busybox, a folder in place of configfs and
-stand-ins for `mount` and `ip`. Not yet verified on hardware: FunctionFS taking the descriptors, the bind, the
-enumeration on Windows, macOS and Linux, VISA and pyvisa over the cable, the endpoint threads against a real host.
+stand-ins for `mount` and `ip`. Verified on the unit (DHO924S, macOS host, pyvisa-py): FunctionFS took the
+descriptors and the gadget bound at power-on with both functions; macOS took configuration 2; GET_CAPABILITIES and a
+clear answered; `*IDN?`, a set and its query, a PNG of 91 KB in 0.05 s and a RAW record of 3.75 MB at 14.4 MB/s, a
+query after a read that timed out. That run found that a read of the header alone lost the message in the same
+packet; Bulk-OUT is read in whole packets since. Not yet verified on hardware: Linux (`usbtmc` driver, its ioctls),
+Windows (WinUSB without a prompt, NI-VISA), READ_STATUS_BYTE and the aborts from a real host, the switches toggled
+while a host is connected.
 
 The network: verified on the host: in an arm64 container with the image's busybox and `nft`, veth pairs in place of the two
 interfaces and a folder in place of configfs: the attributes and links the script writes, one address on both
 interfaces, a lease of .2 and .3 without router and DNS, a service reached from both through the firewall with
 `net.allow` set, another address on the cable refused, the teardown (DHCP stopped, the prefix file gone), a wrong
 `usb.net.prefix` refused; the switch, the rows and the address check of oos-ui (`sysconf`, `gadget`, `ui::remote`
-tests). Not yet verified on hardware: the gadget, the enumeration on Windows, macOS and Linux, the lease over the
-cable, mDNS over it.
+tests). Verified on the unit (DHO924S, #566): the gadget at power-on, a Mac's lease of .3 over ECM, the web remote and
+SSH over the cable with `net.allow` set to another network. Not yet verified on hardware: Windows (RNDIS), Linux,
+mDNS over the cable.

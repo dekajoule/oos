@@ -164,6 +164,23 @@ fn a_long_answer_comes_in_transfers_of_what_the_host_asked_for() {
     assert_eq!((data.len(), eom), (MAX_IN_DATA, false));
 }
 
+// Break it catches: the next message run while the last transfer of the answer before it is still being written
+// (a slow host), so the replies could pass each other
+#[test]
+fn the_next_message_waits_until_the_last_transfer_is_out() {
+    let mut d = Device::default();
+    feed(&mut d, &out_transfer(1, b"*IDN?\n", true)).unwrap();
+    run(&mut d, |_| Some("OOS".into()));
+    feed(&mut d, &request_header(2, 100, None)).unwrap();
+    let t = d.next_in().unwrap();
+    assert!(data_of(&t, 2).1, "the whole answer in one transfer");
+    feed(&mut d, &out_transfer(3, b":RUN\n", true)).unwrap();
+    assert_eq!(d.take_message(), None, "the transfer is not written yet");
+    d.in_written(t.len());
+    d.in_done();
+    assert_eq!(d.take_message().map(|m| m.1), Some(b":RUN\n".to_vec()));
+}
+
 // Break it catches: a transfer ending on a packet boundary (the host waits for more until its timeout), or padding
 // that is not zeros
 #[test]

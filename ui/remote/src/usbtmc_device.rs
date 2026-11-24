@@ -546,9 +546,10 @@ impl Device {
     }
 
     /// The next complete message for the interpreter, with the epoch its answer has to carry; only once the answers
-    /// before it are out (ADR 0066: replies keep their order and do not pile up).
+    /// before it are out, the last transfer of one included until `in_done` (ADR 0066: replies keep their order and
+    /// do not pile up).
     pub fn take_message(&mut self) -> Option<(u64, Vec<u8>)> {
-        if !self.answers.is_empty() {
+        if !self.answers.is_empty() || self.in_flight.is_some() {
             return None;
         }
         self.inbox.pop_front().map(|m| (self.epoch, m))

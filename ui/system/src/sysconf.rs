@@ -69,11 +69,11 @@ pub struct SysConf {
     pub remote_ssh: bool,
     /// SSH login with the generated password as well as with a trusted key (`/bin/oos-ssh`)
     pub ssh_password: bool,
-    /// the rear USB port as a network link to one computer (`/bin/oos-gadget` reads it too; off by default, not yet
-    /// verified on hardware, docs/usb-device.md)
+    /// the rear USB port as a network link to one computer (`/bin/oos-gadget` reads it too; off by default; verified on
+    /// the unit with a Mac, not yet with Windows and Linux, docs/usb-device.md)
     pub usb_net: bool,
     /// the rear USB port as a USBTMC instrument for VISA (`oos_remote::usbtmc_device`, `/bin/oos-gadget` reads it too;
-    /// off by default, not yet verified on hardware, ADR 0080)
+    /// off by default; verified on the unit with pyvisa-py on a Mac, not yet with Linux and Windows, ADR 0080)
     pub usb_tmc: bool,
     /// the mDNS responder (mdns.rs): `<net_name>.local` and the services for computers that browse
     pub remote_mdns: bool,

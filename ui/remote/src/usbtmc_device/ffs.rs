@@ -238,7 +238,7 @@ fn bulk_in(shared: &Shared, alive: &AtomicBool, mut f: File) {
             if shared.dev().in_aborted() {
                 break;
             }
-            if let Err(e) = f.write_all(piece) {
+            if let Err(e) = write_piece(shared, alive, &mut f, piece) {
                 if !idle(&e) {
                     eprintln!("oos-ui: USBTMC: Bulk-IN: {}", e);
                 }
@@ -254,6 +254,27 @@ fn bulk_in(shared: &Shared, alive: &AtomicBool, mut f: File) {
         shared.dev().in_done();
         shared.wake();
     }
+}
+
+/// One piece of a Bulk-IN transfer, all of it: `WouldBlock` (the file is O_NONBLOCK, a slow host has not taken the
+/// last packets yet) waits and tries again, until the piece is out, the transfer is aborted, the session ends or the
+/// host is gone (ESHUTDOWN). Err only for those last cases and real errors.
+fn write_piece(shared: &Shared, alive: &AtomicBool, f: &mut File, mut piece: &[u8]) -> io::Result<()> {
+    while !piece.is_empty() {
+        match f.write(piece) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => piece = &piece[n..],
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                if !alive.load(SeqCst) || shared.dev().in_aborted() {
+                    return Err(e);
+                }
+                drop(shared.wait(shared.dev(), WAIT_MS));
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 /// Interrupt-IN: the status byte with its tag, after READ_STATUS_BYTE.
