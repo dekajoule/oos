@@ -44,6 +44,9 @@ const ARM_PAUSE: &str = "/oos/mho-arm-pause-ms";
 const ARM_NO_RESET: &str = "/oos/mho-arm-no-reset";
 /// The ADCs' alignment word 0x1020 to write to both ADCs instead of the recording's (`align_override`).
 const ALIGN_FILE: &str = "/oos/mho-adc-align";
+/// With this file there, a plan's read-out delays go to the recorded lane only, as up to mho-dev-51
+/// (`settings::delays_every_lane`): to compare on a unit.
+const DELAY_ONE_LANE: &str = "/oos/mho-delay-one-lane";
 /// How long one acquisition may take to complete at least (`Now::done_ms` adds twice the record's span: a 1 s limit
 /// left 50 and 100 ms/div broken on an MHO98, issue #4), the frames dropped after a change while the board settles (the
 /// first two after the set-up came with spikes on an MHO98, issue #491), and the pause between frames.
@@ -637,6 +640,10 @@ fn apply(bar: &mut Bar1, afe: Option<&mut GpioAfe>, p: &Plan, s1000: u32, adc_sy
     let word = |a: u32| p.fpga.iter().find(|w| w.0 == a).map(|w| w.1);
     if let (Some(w1014), Some(v)) = (word(0x1014), align_override().or(word(settings::ALIGN))) {
         bar.apply(&settings::align_both(w1014, v));
+    }
+    // the read-out delays into every lane in use, not only into the one the recording names
+    if !std::path::Path::new(DELAY_ONE_LANE).exists() {
+        bar.apply(&settings::delays_every_lane(&p.fpga));
     }
     reset(bar);
     // the ADC sync of the DHO800/DHO900's cold boot (0x1000 bit 1: clear, set, clear; cold-boot.md, `spu_adc_sync`),

@@ -859,6 +859,22 @@ recording's 0x1020 to both ADCs after every plan (`settings::align_both`); a fil
 another value. **Not yet done:** measuring the value at every start, as the stock system does. The zoom slots
 0x14f8-0x1514 read back in pairs under OOS (0x476 0x476 0xfffff124 0xfffff124 ...) whatever is written.
 
+**Seen on the unit** (JimmyPedersen's MHO934, mho-dev-51, issue #248; the probe compensation signal on all four
+channels, 1 V/div, 500 us/div, 2 MSa/s): CH3 lay about 3.3 us (6 to 7 samples) behind CH1, CH2 and CH4 about 0.4 us;
+at 5 us/div CH1 and CH3 were only a little apart and CH1 and CH2 on top of each other, so the gap is a number of
+samples, not a time. The recording's read-out delays carry a lane field in bits 19:16 that follows the channels on
+(0x1128 = 0xc0010007 with CH1 alone, 0xc0020006 with two channels, 0xc0080006 with four), one bit per lane, the last
+lane of the ones in use: **assumed** the stock system writes the word once per lane, lowest first. A plan wrote it
+once, to that lane alone. From mho-dev-52 on the plan's delays go to every lane up to the recorded one
+(`settings::delays_every_lane`); a file `/oos/mho-delay-one-lane` writes the recorded lane only, as before.
+
+**Seen on the unit** (the same MHO934, mho-dev-51): the counter on CH1 counted 25 to 48 kHz for the 1 kHz probe
+compensation signal while its 0 V level lay on the screen's centre line (offset 0), and 1 kHz once the trace was moved
+so that the centre line crossed the square's edges. The counter's comparator switches at the screen's centre with no
+hysteresis that OOS sets (0x2200 = 0x2204 = 0x8080, counter.md); noise on a flat level right there counts as edges.
+On hp197's MHO98 the signal crossed the centre at its edges only, and the counter counted 1000. Whether the stock
+system sets the threshold elsewhere (the trigger level) is not yet known.
+
 **Verified on the unit** (hp197's MHO98 under the stock system, 10 k points, CH1 alone): the LA samples at a quarter of
 the analog rate at every time base. Its rate block 0x12a4 / 0x12a8 / 0x12ac read 0 / 0 / 5000 at 5 ms/div (200 kSa/s),
 0 / 0 / 1000 at 1 ms/div, 0 / 0 / 200 at 200 us/div, 0 / 0 / 20 at 20 us/div (50 MSa/s), 0x8004 / 0 / 1 at 1 us/div
