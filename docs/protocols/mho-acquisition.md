@@ -770,6 +770,18 @@ channels, then, after the time base changed, a flat line; the read-out gave no e
 on the DHO800/DHO900 the block 0x12a4..0x12ac holds it (la.md 3.2), on the MHO900 its values are not known yet. From
 mho-dev-42 on the log shows, every 50 frames with the LA on, what its words hold and the board's LA words.
 
+**Seen on the unit** (JimmyPedersen's MHO934, mho-dev-39, issue #248): with all four probes on the probe compensation
+signal (1 V/div, 10x) the stock system read the four channels' means alike (1.525 to 1.548 V), OOS CH1 and CH2 alike
+(1.54, 1.53 V) but CH3 and CH4 about 0.1 V lower (1.44, 1.45 V), their Vpp about 4 % lower than the stock system's;
+with CH3 alone the same, and with one probe moved from channel to channel too. The gain and offset words of every slot
+and every front-end register OOS sets are the recording's, word for word. That unit started without a capture of the
+stock system's cold start (`mho-check.py --capture-all`): both ADCs then read 14 to 16 registers otherwise than in the
+snapshot (0x09, 0x0a, 0x0e, 0x0f, 0x16 to 0x4e in steps of 8 (0x0004 against 0x0044), 0x50), also after they were
+written again, while on hp197's MHO98, started with a capture, they read as in the snapshot. **Assumed:** those are
+the ADCs' own set-up or calibration, which the capture's replay of the cold start carries out and a write of the
+registers does not; without it the channels' gains are off by a few percent. A start without a capture is not
+recommended (`mho-setup.py record` takes it).
+
 **Verified on the unit** (hp197's MHO98, mho-dev-37, issue #4): with mho-dev-37's words read back as written, the
 output stayed flat; under the stock system switching generator 1's square on and off changes only 0x40004 (and the
 status words 0x1300a8..0x1300b0), nothing in the 0x20000 block, also not between square and sine. With the output
