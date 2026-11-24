@@ -753,8 +753,35 @@ per word), then the output on: a clean 1 kHz square of 1.08 Vpp (-0.54 to +0.54 
 (0x7b08). 0x40000 and 0x130048, which the stock system holds at 4 and 0x7fff, made no difference without
 modulation. The memory reads back 0. So generator 1 needs its waveform memory filled for every shape. From
 mho-dev-38 on OOS loads one period of the shape there (16384 samples: sine, square, ramp with its symmetry, pulse
-with its duty, the stored arbitrary wave) when the wave changes, with the output off (`afg::table`); which half of a
-word holds the earlier sample is **assumed** (bits 15:0).
+with its duty, the stored arbitrary wave) when the wave changes, with the output off (`afg::table`); bits 15:0 of a
+word hold the earlier sample (verified below).
+
+**Verified on the unit** (the same MHO98, mho-dev-38 started by `kexec` from OOS, so the FPGA's generator words were
+OOS's start's and not the stock system's): every shape stayed flat again, also with a square written by hand. The
+offset still worked. 0x130048 and 0x13004c both read 0, and the output's scale is their sum as signed 16-bit numbers:
+0x7fff in either one with 0 in the other gave the full 1 Vpp, 0x3fff in each the same, 0x3fff in one with 0 in the
+other half of it (0.52 Vpp), 0x7fff in both (a sum of -2) and 0 in both nothing. So the earlier "no difference" of
+0x130048 came from the stock system's 0x7fff left in 0x13004c. From mho-dev-40 on OOS writes 0x7fff and 0
+(`afg::Regs::scale`): with both set to 0 by hand first, that build's oos-ui gave the same results as below. With them
+set by hand on mho-dev-38, generator 1 into CH1 at 1 MOhm, 1 kHz 1 Vpp:
+
+- sine 1.020 Vpp, 999.8 Hz, rms 0.355 V; square 1.034 Vpp, 1.000 kHz, duty 50.0 %; ramp 1.015 Vpp, rms 0.289 V
+  (symmetry 50 % the same, 999 Hz); pulse with 10 % duty 1.035 Vpp, duty 10.0 %. DC 0.3 V read 0.298 V, -0.3 V
+  -0.304 V, 0.5 V 0.499 V.
+- Bits 15:0 hold the earlier sample: a table high up to sample 8190 and low from sample 8191 (an odd sample, so the
+  step lies inside word 4095), played at 100 Hz, fell once from high to low; with the halves the other way round it
+  would have dipped for one sample first. The fall took one sample's time (0.61 us) as a straight line: the output
+  moves linearly from one sample to the next (**assumed**: the FPGA interpolates).
+- Noise (0x13006c = 1) with the square's table gave a random square between the two levels (rms 0.485 V at 1 Vpp):
+  noise plays the memory's samples in random order, so the table must hold the values noise takes. With a table of
+  sums of four random draws (`afg::table`, from mho-dev-40 on; mho-dev-39's held each value for four samples) it read
+  0.98 Vpp, rms 0.135 V, mean 7 mV.
+- A Bode sweep with the built-in generator, input and output CH1 (the cable alone), 100 Hz to 1 MHz, 40 points, 1 Vpp:
+  0.04 to 0.14 dB up to 28 kHz, -0.05 dB at 1 MHz.
+- Before the scale words were found the DAC's alarm registers were read through the board's microcontroller (0x64
+  0x70f, 0x6c 0xc00f, 0x6d 0x9f), cleared, and the DAC's JESD204 receiver set back by its register 0x4a (the reset
+  bit low and the initial-state bits set, then back to 0x0f21; the DAC's data sheet's sequence); after that the three
+  read 0, 0xc007 and 0x90. Whether a start without that gives the output too is **not yet verified on hardware**.
 
 ## 12. Further blocks, seen under the stock system
 
@@ -825,8 +852,8 @@ Generator 2's words are generator 1's moved by 0x100000 (output 0x50004, amplitu
   in 0x13002c (1 kHz: 0x2_18def416). Noise: 0x13006c = 1 and the step fixed at 0x20_00000000 (one sample per clock).
   0x13007c = 1 with square, 0 with every other shape; the square's duty cycle changed none of the words of 0x130000.
 - Waveform memory: 0x100000 to 0x107ffc (generator 2: 0x200000), 16384 signed 16-bit samples, two per word (the
-  earlier one in bits 15:0, **assumed**: a square cannot tell), one period at full scale; the amplitude word scales
-  it. It reads back 0. **Verified on the unit** (hp197's MHO98, mho-dev-37, generator 1 into CH1 at 1 MOhm): with
+  earlier one in bits 15:0), one period at full scale; the amplitude word and the scale words 0x130048 and 0x13004c
+  scale it. It reads back 0. **Verified on the unit** (hp197's MHO98, mho-dev-37, generator 1 into CH1 at 1 MOhm): with
   the memory as the start leaves it the output stays at the offset whatever the words above say; after 8192 words of
   a square (first half 0x7fff, second half 0x8001) written with the output off, 1 kHz at an amplitude word of 0x7b08
   read 1.08 Vpp and 1.000001 kHz. With the memory cleared first and oos-ui loading it: square 1 Vpp at 1 kHz 1.034
