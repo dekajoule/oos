@@ -163,9 +163,9 @@ Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or th
 switched off closes its port at once, with the connections on it. Switching off the web remote also takes away the
 update page: an update then comes from a USB stick. SSH is the only shell on the network: `rcS` starts it at power-on
 (`/bin/oos-ssh`, which reads `remote.ssh` from `/oos/system.conf`), and oos-ui starts or stops it when its switch
-changes. There is no telnet (ADR 0054): an image of this version starts no `telnetd` and nothing listens on port 23;
-a `remote.telnet` line that an earlier version wrote is read without a complaint and left out when the file is written
-again. The serial console (UART2) keeps its shell without a login.
+changes. There is no telnet (ADR 0054): an image of this version starts no `telnetd`, nothing listens on port 23,
+and the image's busybox has no `telnetd` (ADR 0078); a `remote.telnet` line that an earlier version wrote is read
+without a complaint and left out when the file is written again. The serial console (UART2) keeps its shell without a login.
 
 The last row: **Allowed**, the addresses that may reach the scope (`net.allow`, section 6), and **Firewall** beside it,
 which shows the state in force: `on`, `off: everyone`, `applying` while a change is being put in force, `failed: see

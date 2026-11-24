@@ -98,6 +98,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0075](ui-ux/0075-an-on-off-setting-is-one-switch.md) | ui-ux | A setting that is only off or on is one switch in the menus | proposed |
 | [0076](ui-ux/0076-the-top-bar-holds-display-and-storage.md) | ui-ux | The top bar holds Display and Storage; Measure and Cursor are keys and start-menu entries | proposed |
 | [0077](ui-ux/0077-a-menu-opens-at-what-opened-it-an-entry-pad-in-the-centre.md) | ui-ux | a menu opens at what opened it; an entry pad opens in the centre, large | proposed |
+| [0078](system/0078-the-image-builds-its-own-busybox-without-network-servers.md) | system | The image builds its own busybox, without telnet and the network servers it does not run | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents

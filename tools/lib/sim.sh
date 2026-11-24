@@ -4,7 +4,8 @@
 # and a small virtual machine with Alpine's LTS kernel for the tests that need a kernel of their own. Sources
 # tools/lib/docker.sh; the caller sets root. The functions keep their variables to the sim_ prefix.
 #
-#   sim_busybox DIR                       DIR/busybox: the busybox of the image (the initramfs image's)
+#   sim_busybox DIR                       DIR/busybox: the busybox of the image (rootfs/out/busybox, or OOS_OUT's;
+#                                         rootfs/build-busybox.sh builds it when it is missing)
 #   sim_vm_initramfs DIR PACKAGES MODULES SCRIPT [docker run options]
 #                                         in an arm64 Alpine container with the LTS kernel and PACKAGES: the VM's root
 #                                         in $r with the busybox of DIR and DIR/init as /init, SCRIPT run (sh -eu, DIR
@@ -14,8 +15,9 @@
 . "$root/tools/lib/docker.sh"
 
 sim_busybox() {
-	docker run --rm --platform linux/arm64 "$(initramfs_image)" cat /bin/busybox > "$1/busybox"
-	chmod +x "$1/busybox"
+	sim_o="${OOS_OUT:-$root/rootfs/out}"
+	[ -x "$sim_o/busybox" ] || { "$root/rootfs/build-busybox.sh"; sim_o="$root/rootfs/out"; }
+	cp "$sim_o/busybox" "$1/busybox"
 }
 
 sim_vm_initramfs() {
