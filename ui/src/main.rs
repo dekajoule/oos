@@ -59,8 +59,8 @@ use oos_remote::{announce, hislip, http, vxi11};
 // the model and the settings table (ADR 0064): their paths in this crate stay `crate::model` and the like
 use oos_model::{decode, logic, math, model, settings, words, zone};
 use oos_system::{
-    base64, clock, ethlink, gadget, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf, system,
-    usbtmc,
+    base64, clock, clockfloor, ethlink, gadget, json, mdns, net, net6, netacl, placement, remote, sntp, ssh, sysconf,
+    system, usbtmc,
 };
 
 use gfx::Canvas;
@@ -1354,6 +1354,8 @@ impl Device {
         // goodbyes on the network (SIGTERM, quit)
         self.mdns.stop();
         self.inp.set_leds(0);
+        // the clocks' minimums as they were before RUN
+        clockfloor::running(false);
         if let Some(h) = self.hdmi.take() {
             h.close();
         }

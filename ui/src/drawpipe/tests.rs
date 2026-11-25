@@ -1003,3 +1003,24 @@ fn the_workers_draw_the_zoom_picture_of_every_frame() {
     assert_eq!(frames, 9, "the main picture is merged");
     assert!(z2.map[0].iter().all(|&x| x == 0), "zoom maps merged with the zoom off");
 }
+
+// Break it catches (ADR 0081): a grant that is not what the workers draw in one picture (frames of 0.625 ms a worker:
+// 4 workers draw 211 in 33 ms), one beyond the plan or below one frame, a cost of another mapping kept, or a grant
+// before anything was measured that shortens the batch.
+#[test]
+fn the_grant_is_what_the_workers_draw_in_a_picture() {
+    let mut c = Cost::default();
+    assert_eq!(c.grant(1, 4, 1000), 1000, "nothing measured: the plan");
+    c.note(1, 8, 8 * 625_000);
+    assert_eq!([c.grant(1, 4, 1000), c.grant(1, 1, 1000), c.grant(1, 4, 100)], [211, 52, 100]);
+    assert_eq!(c.grant(2, 4, 1000), 1000, "another mapping: the plan");
+    // the average follows a frame that costs twice as much, by a quarter a batch
+    c.note(1, 4, 4 * 1_250_000);
+    assert_eq!(c.grant(1, 4, 1000), 168);
+    // a frame of a second: one frame, not none
+    c.note(1, 1, 4_000_000_000);
+    assert_eq!(c.grant(1, 4, 1000), 1);
+    // a new mapping starts over from its first batch
+    c.note(3, 2, 2 * 33_000_000);
+    assert_eq!(c.grant(3, 4, 1000), 4);
+}

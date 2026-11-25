@@ -15,7 +15,10 @@
 //!
 //! The picture is the one of `draw_frame` on every frame, one by one: the workers run it on the frames of a batch but
 //! the newest, which takes the UI's path. A batch whose workers are still busy, frames of older settings and maps of
-//! an older mapping are dropped and counted (`board::pipe::Counters`). Where the workers do not take a batch (no view: the fast
+//! an older mapping are dropped and counted (`board::pipe::Counters`). So that the first of these stays rare, the
+//! workers measure what a frame costs them and grant the acquisition thread as many frames as they draw in about one
+//! picture (`grant`); it arms no more and waits while they still hold the buffers it needs (`lent`, ADR 0081). Where
+//! the workers do not take a batch (no view: the fast
 //! path does not apply; batches of one frame; the hardware average) the acquisition thread queues its frames for the
 //! frame loop. The other sources (demo, replay, live, SIM) have no batches and no workers.
 //!
@@ -267,6 +270,8 @@ pub fn draw_frame_codes(
 struct Lease {
     raw: Option<Box<dyn RawBatch>>,
     home: Sender<Box<dyn RawBatch>>,
+    /// buffers out (`Pipe::lent`), one less when this one goes home
+    lent: Arc<AtomicUsize>,
 }
 
 impl Drop for Lease {
@@ -275,6 +280,35 @@ impl Drop for Lease {
             // the pool is gone only when the pipe is: nothing to return to
             let _ = self.home.send(r);
         }
+        self.lent.fetch_sub(1, Ordering::Release);
+    }
+}
+
+/// The time a grant is for (`Pipe::grant`): about one picture at 30 screens a second.
+const GRANT_PERIOD_NS: u64 = 33_000_000;
+
+/// What a frame costs a worker under the current mapping: a moving average over its batches of the time from taking
+/// a batch to handing its maps on, per frame it drew (folds included), in nanoseconds; 0 while none is measured.
+#[derive(Default)]
+struct Cost {
+    gen: u64,
+    ns: u64,
+}
+
+impl Cost {
+    /// A worker's batch of view `gen`: `frames` drawn in `ns`. A new mapping starts the average over.
+    fn note(&mut self, gen: u64, frames: usize, ns: u64) {
+        let per = ns / frames.max(1) as u64;
+        self.ns = if gen == self.gen && self.ns > 0 { (3 * self.ns + per) / 4 } else { per.max(1) };
+        self.gen = gen;
+    }
+
+    /// Frames `workers` draw in `GRANT_PERIOD_NS` under view `gen`: from 1 to `cap`, `cap` while nothing is measured.
+    fn grant(&self, gen: u64, workers: usize, cap: u32) -> u32 {
+        if gen != self.gen || self.ns == 0 {
+            return cap;
+        }
+        (GRANT_PERIOD_NS * workers.max(1) as u64 / self.ns).clamp(1, cap.max(1) as u64) as u32
     }
 }
 
@@ -504,6 +538,10 @@ pub struct Pipe {
     open: Mutex<std::collections::VecDeque<std::sync::Weak<Batch>>>,
     /// batches fed and not done (drawn and handed on, or dropped)
     live: Arc<AtomicUsize>,
+    /// read-out buffers fed and not back yet
+    lent: Arc<AtomicUsize>,
+    /// what a frame costs the workers (`grant`)
+    cost: Arc<Mutex<Cost>>,
     home: Sender<Box<dyn RawBatch>>,
     pool: Mutex<Receiver<Box<dyn RawBatch>>>,
 }
@@ -526,16 +564,17 @@ impl Pipe {
         // a slot for each worker and, last, the helper's
         let mail = Arc::new(Mutex::new(Mail { parked: (0..=n).map(|_| None).collect(), ..Default::default() }));
         let mut workers = Vec::new();
+        let cost: Arc<Mutex<Cost>> = Default::default();
         for k in 0..n {
             // a few batches at most: their buffers (`hw::POOL`) come back with the last frame drawn, and a worker
             // behind finds nothing left to claim in the ones the others drew
             let (tx, rx) = sync_channel::<Arc<Batch>>(16);
-            let (v, m) = (view.clone(), mail.clone());
+            let (v, m, c) = (view.clone(), mail.clone(), cost.clone());
             match std::thread::Builder::new().name(format!("deposit{}", k)).spawn(move || {
                 if little {
                     crate::placement::to_little_cores();
                 }
-                work(k, rx, &v, &m)
+                work(k, rx, &v, &m, &c)
             }) {
                 Ok(_) => workers.push(tx),
                 Err(e) => eprintln!("oos-ui: deposit worker: {}", e),
@@ -550,6 +589,8 @@ impl Pipe {
             helper: n,
             open: Default::default(),
             live: Default::default(),
+            lent: Default::default(),
+            cost,
             home,
             pool: Mutex::new(pool),
         }
@@ -588,6 +629,18 @@ impl Pipe {
         lock(&self.view).view.is_some()
     }
 
+    /// Frames the workers draw in about one picture at what a frame cost them under the current mapping, from 1 to
+    /// `cap`; `cap` before a batch of this mapping is measured.
+    pub fn grant(&self, cap: u32) -> u32 {
+        let gen = lock(&self.view).gen;
+        lock(&self.cost).grant(gen, self.workers.len(), cap)
+    }
+
+    /// Read-out buffers fed and not given back yet.
+    pub fn lent(&self) -> usize {
+        self.lent.load(Ordering::Acquire)
+    }
+
     /// A buffer back from the workers, to read the next batch into (None: all are still out).
     pub fn take_buffer(&self) -> Option<Box<dyn Any + Send>> {
         lock(&self.pool).try_recv().ok().map(|r| r.into_any())
@@ -617,8 +670,10 @@ impl Pipe {
     ) -> Arc<Batch> {
         let frames = raw.bytes().len().checked_div(fb).map_or(0, |n| frames.min(n));
         let next = AtomicUsize::new(first.min(frames));
+        self.lent.fetch_add(1, Ordering::AcqRel);
+        let lease = Lease { raw: Some(raw), home: self.home.clone(), lent: self.lent.clone() };
         let b = Arc::new(Batch {
-            lease: Mutex::new(Some(Arc::new(Lease { raw: Some(raw), home: self.home.clone() }))),
+            lease: Mutex::new(Some(Arc::new(lease))),
             fb,
             frames,
             decode,
@@ -886,8 +941,8 @@ fn publish(mail: &Mutex<Mail>, mut a: Acc, counters: &Counters) -> Option<Acc> {
 }
 
 /// Worker `id`: claims frames of each batch until none are left, draws them into its own maps, then hands them on or
-/// parks them (`hand`).
-fn work(id: usize, rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>) {
+/// parks them (`hand`), and notes what its frames cost (`Cost`).
+fn work(id: usize, rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mutex<Mail>, cost: &Mutex<Cost>) {
     let mut f = Frame::default();
     let (mut spare, mut seen): (Option<Acc>, Option<u64>) = (None, None);
     while let Ok(b) = rx.recv() {
@@ -903,14 +958,18 @@ fn work(id: usize, rx: Receiver<Arc<Batch>>, view: &Mutex<ViewState>, mail: &Mut
             continue;
         };
         // the maps only when there is something to draw: the others took every frame already
-        let mut a = None;
+        let (mut a, t, mut drawn) = (None, std::time::Instant::now(), 0);
         while let Some((r, lease)) = b.claim(CLAIM) {
             let a = a.get_or_insert_with(|| take_set(mail, id, &mut spare, &v, b.counters));
+            drawn += r.len();
             draw_range(&b, &lease, r, &v, a, &mut f, b.counters);
         }
         // handed on or parked before the batch goes: once it is gone, its frames are in the mailbox
         if let Some(s) = hand(mail, id, &mut seen, a, b.counters) {
             spare = Some(s);
+        }
+        if drawn > 0 {
+            lock(cost).note(v.gen, drawn, t.elapsed().as_nanos().min(u64::MAX as u128) as u64);
         }
     }
 }
@@ -1016,6 +1075,12 @@ fn workers() -> Option<&'static dyn crate::board::pipe::Workers> {
 impl crate::board::pipe::Workers for Pipe {
     fn accepting(&self) -> bool {
         Pipe::accepting(self)
+    }
+    fn grant(&self, cap: u32) -> u32 {
+        Pipe::grant(self, cap)
+    }
+    fn lent(&self) -> usize {
+        Pipe::lent(self)
     }
     fn take_buffer(&self) -> Option<Box<dyn Any + Send>> {
         Pipe::take_buffer(self)

@@ -78,6 +78,41 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     b
 }
 
+/// Frames a batch arms with the deposit workers' grant (`pipe::Workers::grant`, ADR 0081): a batch planned with up to
+/// `FRAME0_CHECK_MAX_FRAMES` (slow time bases, SINGLE) as planned, a longer one at most `grant` but not that short, so
+/// the rules for frames 0 and 1 of a short batch stay with the slow time bases.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn admitted(planned: u32, grant: u32) -> u32 {
+    planned.min(grant.max(FRAME0_CHECK_MAX_FRAMES as u32 + 1))
+}
+
+/// Longest wait for the deposit workers before a batch is armed (`wait_for_workers`): a stuck worker must not stop
+/// the acquisition.
+#[cfg(any(target_os = "linux", test))]
+pub(super) const ADMIT_WAIT_US: u64 = 200_000;
+
+/// Waits before a batch is armed until the deposit workers can take it without its being dropped (`free`), drawing
+/// frames for them meanwhile (`help`, as while the ring fills) and looking at `changed` (new settings, STOP) between.
+/// False when the wait ended without `free` (changed, or after `ADMIT_WAIT_US`): the batch then goes on as before.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn wait_for_workers<C: oos_hal::dho::boot::Clock>(
+    clock: &mut C,
+    free: impl Fn() -> bool,
+    mut help: impl FnMut() -> bool,
+    changed: impl Fn() -> bool,
+) -> bool {
+    let t0 = clock.now_us();
+    while !free() {
+        if changed() || clock.now_us().saturating_sub(t0) >= ADMIT_WAIT_US {
+            return false;
+        }
+        if !help() {
+            clock.sleep_us(250);
+        }
+    }
+    true
+}
+
 /// Longest record whose first batch after a change of settings is left out (`read_with` in `spawn`), in seconds.
 pub(super) const FIRST_LEFT_MAX_S: f64 = 0.05;
 

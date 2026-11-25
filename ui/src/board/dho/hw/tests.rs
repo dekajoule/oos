@@ -1290,3 +1290,97 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
     let (lo, hi) = f.ch[0].iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
     assert!((hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01, "CH1 from {} to {} V", lo, hi);
 }
+
+// Break it catches (ADR 0081): the workers' grant shortening a batch of the slow time bases (frames 0 and 1 of a short
+// batch have rules of their own) or lengthening one past its plan.
+#[test]
+fn the_grant_limits_only_long_batches() {
+    use super::plan::admitted;
+    let short = FRAME0_CHECK_MAX_FRAMES as u32;
+    assert_eq!([admitted(1, 1), admitted(short, 1), admitted(2, 1000)], [1, short, 2]);
+    assert_eq!([admitted(1000, 211), admitted(1000, 1), admitted(20, 1000)], [211, short + 1, 20]);
+}
+
+/// The acquisition thread's wait for the workers on the unit's virtual clock: `free` after `busy` looks, `help` true
+/// for the first `helps` calls; whether it ended free, the looks at `changed`, and the time it took in us.
+fn wait_for(busy: usize, helps: usize, changed_at: usize) -> (bool, usize, u64) {
+    let (looks, helped, seen) = (std::cell::Cell::new(0), std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let mut clock = oos_hal::dho::boot::sim::SimClock::default();
+    let free = || {
+        looks.set(looks.get() + 1);
+        looks.get() > busy
+    };
+    let help = || {
+        helped.set(helped.get() + 1);
+        helped.get() <= helps
+    };
+    let changed = || {
+        seen.set(seen.get() + 1);
+        seen.get() >= changed_at
+    };
+    let got = super::plan::wait_for_workers(&mut clock, free, help, changed);
+    (got, seen.get(), clock.t_us)
+}
+
+// Break it catches (ADR 0081): the thread arming while the workers still hold the buffers (the batch would be read and
+// dropped), waiting for ever on a stuck worker, sleeping while it could draw for them, or waiting on through new
+// settings or a STOP.
+#[test]
+fn the_thread_waits_for_busy_workers_and_not_for_ever() {
+    use super::plan::ADMIT_WAIT_US;
+    // free at once: no wait
+    assert_eq!(wait_for(0, 0, usize::MAX), (true, 0, 0));
+    // busy, then free: it helped while there were frames to draw, slept only after
+    let (free, looks, us) = wait_for(10, 4, usize::MAX);
+    assert!(free && looks == 10 && us == 6 * 250, "{} looks, {} us", looks, us);
+    // a stuck worker: the wait ends after its time, and the batch goes on as before
+    let (free, _, us) = wait_for(usize::MAX, 0, usize::MAX);
+    assert!(!free && (ADMIT_WAIT_US..ADMIT_WAIT_US + 250).contains(&us), "{} us", us);
+    // new settings or STOP while it waits: at once to them
+    assert_eq!(wait_for(usize::MAX, 0, 3), (false, 3, 2 * 250));
+}
+
+// Break it catches (ADR 0081): the read-out buffers lent to the workers miscounted, so the thread arms a batch that
+// finds no buffer to swap in and is dropped whole, or waits although one is back.
+#[test]
+fn a_batch_after_the_wait_finds_a_buffer_and_is_not_dropped() {
+    let counters: &'static crate::board::pipe::Counters = Box::leak(Box::default());
+    let pipe = crate::drawpipe::Pipe::start(0, false, counters);
+    let p = hz::Params {
+        ratio: 1,
+        rate: 1_250_000_000,
+        memsel: 1408,
+        dot_fs: 800_000,
+        seg: 0,
+        max_frames: 1000,
+        pre: 704,
+        post: 704,
+    };
+    let s = Settings { mask: 1, window: None, compress: 1, header: false, ..Settings::default() };
+    let fb = oos_hal::dho::seq::frame_bytes(&s, &p);
+    let mut m = Model::default();
+    m.ch[0].on = true;
+    pipe.set_view(Some(&m), 970, 448);
+    let decode: crate::board::pipe::DecodeInto = {
+        let (s, p) = (s.clone(), p);
+        Arc::new(move |c: &[u8], f: &mut Frame| super::decode_into(c, &s, &p, 0, f))
+    };
+    // the board's pool: one buffer to read into, two lent to the workers (held here as the workers hold them)
+    let fed: Vec<_> = (0..2)
+        .map(|_| {
+            let mut d = oos_hal::dho::bus::DmaBuf::new();
+            d.read(&mut &vec![0u8; 8 * fb][..], 8 * fb, |_, _| {}).expect("read");
+            pipe.feed_codes(Box::new(d), fb, 0, 8, 0, decode.clone(), None)
+        })
+        .collect();
+    let free = || pipe.lent() + 2 <= super::decode::POOL;
+    assert!(!free(), "both buffers are with the workers");
+    let mut clock = oos_hal::dho::boot::sim::SimClock::default();
+    let mut hp = crate::drawpipe::Helper::default();
+    assert!(super::plan::wait_for_workers(&mut clock, free, || pipe.help(&mut hp), || false));
+    // the first batch was drawn to its end and its buffer is back for the next read; nothing was dropped
+    assert_eq!((pipe.lent(), clock.t_us), (1, 0));
+    assert!(pipe.take_buffer().is_some());
+    assert_eq!(counters.read().2, 0);
+    drop(fed);
+}
