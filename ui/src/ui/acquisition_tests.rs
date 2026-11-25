@@ -1165,6 +1165,72 @@ fn a_new_time_base_while_waiting_draws_the_held_record_at_its_own_times() {
     assert!(ui.phz.map[0].iter().any(|&c| c != 0), "the zoom pane shows the held record");
 }
 
+// Break it catches (#578, 0.1.15 on a DHO924S): while the scope waited for a trigger, a new volts per division or offset
+// kept the picture of the old scale. A sine of ±1 V stayed two divisions high at 0.5 V/div, and an offset moved the grid
+// labels but not the trace, so the screen read wrong values until the next trigger. The held record is drawn again at
+// its own volts: the picture is the one the same record makes when it is taken at the new scale.
+#[test]
+fn a_new_vertical_scale_while_waiting_draws_the_held_record_at_its_own_volts() {
+    use super::*;
+    let record = |ui: &mut Ui, shared: &crate::board::HwShared| {
+        let n = 10_000usize;
+        let window = ui.m.time_per_div() as f64 * HDIV as f64;
+        let v: Vec<f32> = (0..n).map(|k| (k as f32 * 0.01).sin()).collect();
+        shared.lock().unwrap().queue.push_back(crate::board::Frame {
+            seq: 1,
+            stamp: ui.m.hw_stamp,
+            dt: window / n as f64,
+            pre: n / 2,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            ..Default::default()
+        });
+        ui.step(0.033);
+    };
+    let fresh = || {
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.run = RunState::Run;
+        for c in 1..NCH {
+            ui.m.ch[c].on = false;
+        }
+        ui.m.meas.clear();
+        ui.m.meas2.clear();
+        ui.step(0.033);
+        (ui, shared)
+    };
+    let rows = |ui: &Ui| {
+        let (w, h) = (ui.ph.w, ui.ph.h);
+        (0..h).filter(|&y| (0..w).any(|x| ui.ph.map[0][y * w + x] != 0)).collect::<Vec<_>>()
+    };
+    let wide = |ui: &mut Ui| {
+        ui.m.ch[0].vscale = VSCALES.iter().position(|&x| x >= 0.999).unwrap();
+        ui.m.ch[0].offset = 0.0;
+    };
+    let narrow = |ui: &mut Ui| {
+        ui.m.ch[0].vscale = VSCALES.iter().position(|&x| x >= 0.4995).unwrap();
+        ui.m.ch[0].offset = 1.0;
+    };
+    let (mut held, shared) = fresh();
+    wide(&mut held);
+    held.settings_changed();
+    held.step(0.033);
+    record(&mut held, &shared);
+    let before = rows(&held);
+    narrow(&mut held);
+    held.settings_changed();
+    for _ in 0..3 {
+        held.step(0.033);
+    }
+    let (mut want, shared) = fresh();
+    narrow(&mut want);
+    want.settings_changed();
+    want.step(0.033);
+    record(&mut want, &shared);
+    let want_rows = rows(&want);
+    assert_ne!(before, want_rows, "the two scales draw the record at different rows");
+    assert_eq!(rows(&held), want_rows, "the held record at 0.5 V/div and 1 V offset, as a record taken there");
+}
+
 // Break it catches (#441, a DHO802 on 0.1.14, 100 ms persistence): the picture aged every screen step whether a record
 // had come or not. With records slower than the persistence time (slow time bases, deep memory) the newest record
 // faded out before the next one, and the trace pulsed. It ages when the next record comes, by the time since the last

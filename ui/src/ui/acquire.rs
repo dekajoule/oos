@@ -100,9 +100,35 @@ pub(super) struct Seen {
     /// the analyser view the last frame had: a change of view analyses what is already there (a stopped record gets
     /// no new one)
     pub view: AView,
-    /// the horizontal view the running picture was drawn at: time per division, delay, zoom on, zoom scale and zoom
-    /// delay (`redraw_held`, #548)
-    pub drawn: (f32, f32, bool, usize, f32),
+    /// the view the running picture was drawn at (`redraw_held`, #548, #578)
+    pub drawn: HeldView,
+}
+
+/// The view a running picture was drawn at: time per division, delay, zoom on, zoom scale and zoom delay, and for each
+/// channel whether it is on, its volts per division and offset. A change of any of them while the scope waits for a
+/// trigger draws the held record again (`redraw_held`). Inversion and zero correction are not here: they are applied
+/// when a record is taken, so drawing the held record again would show it as it was.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct HeldView {
+    h: (f32, f32, bool, usize, f32),
+    v: [(bool, f32, f32); NCH],
+}
+
+impl HeldView {
+    fn of(m: &Model) -> Self {
+        HeldView {
+            h: (m.time_per_div(), m.delay, m.zoom, m.zscale, m.zdelay),
+            v: std::array::from_fn(|c| {
+                let ch = &m.ch[c];
+                (ch.on, ch.volts_per_div(), ch.offset)
+            }),
+        }
+    }
+
+    /// Before the first picture: the first look is no change.
+    fn none() -> Self {
+        HeldView { h: (f32::NAN, 0.0, false, 0, 0.0), v: [(false, 0.0, 0.0); NCH] }
+    }
 }
 
 impl Default for Seen {
@@ -116,7 +142,7 @@ impl Default for Seen {
             unaged: 0.0,
             running: false,
             view: AView::Scope,
-            drawn: (f32::NAN, 0.0, false, 0, 0.0),
+            drawn: HeldView::none(),
         }
     }
 }
@@ -441,14 +467,15 @@ impl Ui {
         self.step_measure(&mut take);
     }
 
-    /// A new time base, delay or zoom while running and no record came: the held record is drawn again at its own
-    /// times, as after a STOP. The picture of the old view stayed, and a 2 ms record taken at 0.2 ms/div filled the
-    /// whole screen at 10 ms/div while the scope waited for a trigger (#548). Any horizontal change counts, also a
-    /// zoom switched without `dirty_map`; a changed trigger level keeps the picture as it is (#280).
+    /// A new time base, delay, zoom, vertical scale, offset or channel while running and no record came: the held
+    /// record is drawn again at its own times and volts, as after a STOP. The picture of the old view stayed, and a
+    /// 2 ms record taken at 0.2 ms/div filled the whole screen at 10 ms/div while the scope waited for a trigger
+    /// (#548); a sine of ±1 V kept its height of two divisions at 0.5 V/div, and an offset moved the grid but not the
+    /// trace (#578). A zoom switched without `dirty_map` counts too; a changed trigger level keeps the picture as it
+    /// is (#280).
     fn redraw_held(&mut self, got: usize) {
-        let m = &self.m;
-        let view = (m.time_per_div(), m.delay, m.zoom, m.zscale, m.zdelay);
-        if got > 0 || self.seen.drawn.0.is_nan() {
+        let view = HeldView::of(&self.m);
+        if got > 0 || self.seen.drawn.h.0.is_nan() {
             self.seen.drawn = view;
             return;
         }
