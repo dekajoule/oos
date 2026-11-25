@@ -459,8 +459,8 @@ impl Ui {
             self.seen.unaged = 0.0;
         }
         if deferred && take.renew == Renew::Keep {
-            // the first record after the change was drawn on a cleared picture (`step_commit` clears the zoom picture
-            // too; the fast path does not run with zoom)
+            // the first record after the change was drawn on a cleared picture (`step_commit` and the fast path renew
+            // the zoom picture with the main one)
             self.dirty_map = false;
         }
         self.step_rates(&take, dt_wall, persist);
@@ -497,8 +497,18 @@ impl Ui {
     fn step_fast_frames(&mut self, take: &mut StepTake) {
         let t0 = std::time::Instant::now();
         let frames = self.src.drain_newest(self.fast_max());
+        let zoom = self.m.zoom.then(|| self.zoom_draw_model());
         if !frames.is_empty() {
-            self.ph.renew(std::mem::replace(&mut take.renew, Renew::Keep));
+            let renew = std::mem::replace(&mut take.renew, Renew::Keep);
+            self.ph.renew(renew);
+            self.phz.renew(renew);
+        }
+        // the zoom picture from the same frames, on this thread: with the workers drawing the batches only the newest
+        // frame of each comes here
+        if let Some(zm) = &zoom {
+            for f in &frames {
+                crate::drawpipe::draw_frame(&mut self.phz, zm, f, None);
+            }
         }
         let n = frames.len();
         if let Some(f) = frames.iter().rev().find(|f| take.deep_raw && crate::deepmeas::deep_raw_frame(f)) {
@@ -521,8 +531,10 @@ impl Ui {
         // batch mode: the other frames of the batches, drawn by the deposit workers (drawpipe.rs)
         if let Some(p) = crate::drawpipe::pipe() {
             let t1 = std::time::Instant::now();
-            p.set_view(Some(&self.m), self.ph.w, self.ph.h);
-            let d = p.merge(&mut self.ph, &mut take.renew, &mut self.fast.edges, &mut self.fast.off);
+            let (w, h, zw, zh) = (self.ph.w, self.ph.h, self.phz.w, self.phz.h);
+            p.set_view_zoom(Some(&self.m), w, h, zoom.as_ref().map(|z| (z, zw, zh)));
+            let phz = zoom.is_some().then_some(&mut self.phz);
+            let d = p.merge(&mut self.ph, phz, &mut take.renew, &mut self.fast.edges, &mut self.fast.off);
             if d.triggered > 0 {
                 self.m.status = TrigStatus::Triggered;
             }
@@ -595,6 +607,10 @@ impl Ui {
         if let Some(f) = frame {
             let stats = crate::drawpipe::Stats { edges: &mut self.fast.edges, off: &mut self.fast.off };
             crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
+            if self.m.zoom {
+                let zm = self.zoom_draw_model();
+                crate::drawpipe::draw_frame(&mut self.phz, &zm, &f, None);
+            }
         } else {
             self.draw_channels(&rec, detail.as_deref(), zw.as_deref(), 24);
         }
@@ -948,21 +964,30 @@ impl Ui {
         self.stop.pic.as_ref().filter(|_| same)
     }
 
+    /// The model the fast path draws a frame into the zoom picture with: the zoom's time base and delay as the main
+    /// ones, and the zoom picture's vertical view (`zoom_display_model`), as the record path draws it (`draw_channels`).
+    pub(super) fn zoom_draw_model(&self) -> Model {
+        let mut z = self.zoom_display_model();
+        (z.tscale, z.tfine, z.delay, z.zoom) = (self.m.zscale, 1.0, self.m.zdelay, false);
+        z
+    }
+
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
     /// as a full record (averaging, a software mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
     /// Peak detect and High res frames are drawn from their screen records there (`wave::drawn_as_record`), on the
-    /// deposit workers, instead of one by one in the frame loop (#582); not with a deskewed channel, whose record the
-    /// record path shifts (`deskew_channel_view`).
+    /// deposit workers, instead of one by one in the frame loop (#582). With the zoom on, every frame is drawn into the
+    /// zoom picture too (`zoom_draw_model`). Neither with a deskewed channel, whose record the record path shifts
+    /// (`deskew_channel_view`).
     pub(super) fn fast_ok(&self) -> bool {
         let m = &self.m;
         let deskewed = (0..NCH).any(|c| m.ch[c].on && m.deskew_ch[c] != 0.0);
         matches!(self.src, Source::Hw { .. })
             && m.trig_type == TrigType::Edge
             && (m.acq == AcqMode::Normal || (matches!(m.acq, AcqMode::Peak | AcqMode::HiRes) && !deskewed))
+            && (!m.zoom || !deskewed)
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && (!m.mask_on || self.mask_hw_active())
-            && !m.zoom
             && !self.xy
             && m.z_src.is_none()
             && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())

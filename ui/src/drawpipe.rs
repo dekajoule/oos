@@ -325,12 +325,25 @@ impl Drop for Batch {
 const CLAIM: usize = 4;
 
 /// The screen mapping the workers draw with, and a generation that changes with anything the drawing depends on.
+/// `zoom`: the zoom picture's model (its time base and delay as the main ones, `Ui::zoom_draw_model`) and size, when
+/// the zoom is on: every frame is drawn into it too.
 struct View {
     gen: u64,
     m: Model,
     w: usize,
     h: usize,
+    zoom: Option<(Model, usize, usize)>,
 }
+
+impl View {
+    /// The sizes of the main and the zoom maps drawn with this view ((1, 1) for the zoom when it is off).
+    fn dims(&self) -> Dims {
+        ((self.w, self.h), self.zoom.as_ref().map_or((1, 1), |z| (z.1, z.2)))
+    }
+}
+
+/// The sizes of the main and the zoom maps.
+type Dims = ((usize, usize), (usize, usize));
 
 /// The fields of the model `draw_frame` depends on (a change of any other field keeps the workers' maps).
 #[derive(Clone, PartialEq)]
@@ -342,6 +355,8 @@ struct Key {
     acq: AcqMode,
     dots: bool,
     size: (usize, usize),
+    /// the zoom picture's own key
+    zoom: Option<Box<Key>>,
 }
 
 impl Key {
@@ -363,6 +378,7 @@ impl Key {
             acq: m.acq,
             dots: m.dots,
             size: (w, h),
+            zoom: None,
         }
     }
 }
@@ -371,6 +387,8 @@ impl Key {
 struct Acc {
     gen: u64,
     ph: Phosphor,
+    /// the zoom picture's maps ((1, 1) while the zoom is off), the same channels as `ph`
+    phz: Phosphor,
     /// the maps that may hold counts: the channels on in the view drawn with (drawing writes no other map), all of
     /// them for maps that were the UI's picture (`Pipe::merge`); only these are cleared and added
     used: [bool; NCH],
@@ -383,15 +401,20 @@ struct Acc {
 }
 
 impl Acc {
-    fn new(gen: u64, w: usize, h: usize) -> Acc {
-        let ph = Phosphor::new(w, h);
-        Acc { gen, ph, used: [false; NCH], folds: Vec::new(), frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0) }
+    fn new(gen: u64, ((w, h), (zw, zh)): Dims) -> Acc {
+        let (ph, phz) = (Phosphor::new(w, h), Phosphor::new(zw, zh));
+        let (used, folds) = ([false; NCH], Vec::new());
+        Acc { gen, ph, phz, used, folds, frames: 0, triggered: 0, edges: [0; 4], off: (0.0, 0.0) }
+    }
+    fn dims(&self) -> Dims {
+        ((self.ph.w, self.ph.h), (self.phz.w, self.phz.h))
     }
     /// Empty again, keeping the maps' memory.
     fn reset(&mut self, gen: u64) {
-        for (m, u) in self.ph.map.iter_mut().zip(&mut self.used) {
-            if std::mem::take(u) {
-                clear_map(m);
+        for c in 0..NCH {
+            if std::mem::take(&mut self.used[c]) {
+                clear_map(&mut self.ph.map[c]);
+                clear_map(&mut self.phz.map[c]);
             }
         }
         self.folds.clear();
@@ -401,6 +424,7 @@ impl Acc {
     fn add(&mut self, o: &Acc) {
         for c in (0..NCH).filter(|&c| o.used[c]) {
             add_map(&mut self.ph.map[c], &o.ph.map[c]);
+            add_map(&mut self.phz.map[c], &o.phz.map[c]);
             self.used[c] = true;
         }
         crate::framestats::add_folds(&mut self.folds, &o.folds);
@@ -533,15 +557,22 @@ impl Pipe {
 
     /// The UI's mapping for the frames to come (None: the fast path does not apply).
     pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize) {
+        self.set_view_zoom(m, w, h, None);
+    }
+
+    /// `set_view` with the zoom picture's model and size (`Ui::zoom_draw_model`) while the zoom is on.
+    pub fn set_view_zoom(&self, m: Option<&Model>, w: usize, h: usize, zoom: Option<(&Model, usize, usize)>) {
         let mut v = lock(&self.view);
         let Some(m) = m else {
             (v.view, v.key) = (None, None);
             return;
         };
-        let key = Key::of(m, w, h);
+        let mut key = Key::of(m, w, h);
+        key.zoom = zoom.map(|(z, zw, zh)| Box::new(Key::of(z, zw, zh)));
         if v.key.as_ref() != Some(&key) {
             v.gen += 1;
-            v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), w, h }));
+            let zoom = zoom.map(|(z, zw, zh)| (z.clone(), zw, zh));
+            v.view = Some(Arc::new(View { gen: v.gen, m: m.clone(), w, h, zoom }));
             v.key = Some(key);
         }
         v.stamp = m.hw_stamp;
@@ -667,7 +698,15 @@ impl Pipe {
     /// One set of maps a call, whatever the number of workers (they fold theirs into one, `publish`): the frame loop
     /// adds the maps of the channels on, or with `Clear` swaps them in and adds nothing (issue #186). Without a
     /// whole set it takes a parked one: the frames of a drawer that has no more batches come with a later screen.
-    pub fn merge(&self, ph: &mut Phosphor, renew: &mut Renew, edges: &mut [u64; 4], off: &mut (f64, f64)) -> Merged {
+    /// `phz`: the zoom picture while the zoom is on (the view of `set_view_zoom`), renewed as `ph`, with the zoom maps.
+    pub fn merge(
+        &self,
+        ph: &mut Phosphor,
+        phz: Option<&mut Phosphor>,
+        renew: &mut Renew,
+        edges: &mut [u64; 4],
+        off: &mut (f64, f64),
+    ) -> Merged {
         let gen = lock(&self.view).view.as_ref().map(|v| v.gen);
         let mut got = Merged::default();
         let full = {
@@ -679,15 +718,26 @@ impl Pipe {
             }
         };
         let Some(mut a) = full else { return got };
+        // the zoom maps go where they fit: drawn with the zoom on, the same size (a set without them has (1, 1))
+        let mut phz = phz.filter(|z| (a.phz.w, a.phz.h) == (z.w, z.h));
         if Some(a.gen) == gen && (a.ph.w, a.ph.h) == (ph.w, ph.h) && a.frames > 0 {
             if *renew == Renew::Clear {
                 // the picture cleared and the maps added is the maps: the old picture goes back to be cleared
                 std::mem::swap(&mut ph.map, &mut a.ph.map);
+                if let Some(z) = phz.as_deref_mut() {
+                    std::mem::swap(&mut z.map, &mut a.phz.map);
+                }
                 a.used = [true; NCH];
             } else {
                 ph.renew(*renew);
+                if let Some(z) = phz.as_deref_mut() {
+                    z.renew(*renew);
+                }
                 for c in (0..NCH).filter(|&c| a.used[c]) {
                     got.px += add_map(&mut ph.map[c], &a.ph.map[c]);
+                    if let Some(z) = phz.as_deref_mut() {
+                        add_map(&mut z.map[c], &a.phz.map[c]);
+                    }
                 }
             }
             *renew = Renew::Keep;
@@ -710,11 +760,11 @@ impl Pipe {
 /// Empty maps for view `v`, reusing `spare` when it has the size.
 fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
     let mut a = match spare {
-        Some(mut a) if (a.ph.w, a.ph.h) == (v.w, v.h) => {
+        Some(mut a) if a.dims() == v.dims() => {
             a.reset(v.gen);
             a
         }
-        _ => Acc::new(v.gen, v.w, v.h),
+        _ => Acc::new(v.gen, v.dims()),
     };
     a.used = std::array::from_fn(|c| v.m.ch[c].on);
     a.folds = crate::framestats::folds_for(&v.m);
@@ -726,7 +776,7 @@ fn fresh_acc(spare: Option<Acc>, v: &View) -> Acc {
 fn take_set(mail: &Mutex<Mail>, id: usize, spare: &mut Option<Acc>, v: &View, counters: &Counters) -> Acc {
     let mut mb = Mail::lock(mail);
     match mb.parked[id].take() {
-        Some(a) if a.gen == v.gen && (a.ph.w, a.ph.h) == (v.w, v.h) => return a,
+        Some(a) if a.gen == v.gen && a.dims() == v.dims() => return a,
         Some(old) => {
             Counters::add(&counters.dropped, old.frames);
             mb.keep(old);
@@ -772,7 +822,8 @@ fn draw_range(b: &Batch, lease: &Lease, r: Range<usize>, v: &View, a: &mut Acc, 
     for i in r {
         let chunk = &bytes[i * b.fb..(i + 1) * b.fb];
         // without per-frame measurements a large frame is drawn from its read-out words where the board has a view of them
-        if a.folds.is_empty() && chunk.len() >= CODES_MIN_BYTES {
+        // (not with the zoom, which draws the decoded frame a second time)
+        if a.folds.is_empty() && v.zoom.is_none() && chunk.len() >= CODES_MIN_BYTES {
             let lay = b.codes.as_ref().and_then(|c| c(chunk, f)).filter(|l| l.stride <= CODES_MAX_STRIDE);
             let st = Stats { edges: &mut a.edges, off: &mut a.off };
             if let Some(t) = lay.and_then(|l| draw_frame_codes(&mut a.ph, &v.m, f, chunk, &l, Some(st))) {
@@ -784,6 +835,9 @@ fn draw_range(b: &Batch, lease: &Lease, r: Range<usize>, v: &View, a: &mut Acc, 
         (b.decode)(chunk, f);
         let st = Stats { edges: &mut a.edges, off: &mut a.off };
         a.triggered += draw_frame(&mut a.ph, &v.m, f, Some(st)) as u64;
+        if let Some((zm, ..)) = &v.zoom {
+            draw_frame(&mut a.phz, zm, f, None);
+        }
         if crate::framestats::fold_frame(f, &v.m, &mut a.folds) {
             Counters::add(&counters.measured, 1);
         }
@@ -805,7 +859,7 @@ fn publish(mail: &Mutex<Mail>, mut a: Acc, counters: &Counters) -> Option<Acc> {
                 mb.keep(x);
             }
             match mb.full.take() {
-                Some(o) if o.gen == a.gen && (o.ph.w, o.ph.h) == (a.ph.w, a.ph.h) => {
+                Some(o) if o.gen == a.gen && o.dims() == a.dims() => {
                     #[cfg(test)]
                     {
                         mb.folds += 1;

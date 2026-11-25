@@ -137,7 +137,7 @@ fn batch_picture_from_the_codes_equals_each_frame_drawn() {
         settle(&pipe);
         let mut got = Phosphor::new(w, h);
         let (mut clear, mut edges, mut off) = (Renew::Keep, [0u64; 4], (0.0, 0.0));
-        let n_got = pipe.merge(&mut got, &mut clear, &mut edges, &mut off);
+        let n_got = pipe.merge(&mut got, None, &mut clear, &mut edges, &mut off);
         let (want, trig, wedges, woff, _) = reference(&bytes, fb, &s, &p, &m, w, h);
         assert_eq!((n_got.frames, n_got.triggered, edges), (9, trig, wedges), "mask {}", mask);
         assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
@@ -310,7 +310,7 @@ fn merge_all(
 ) -> (Merged, Vec<u64>) {
     let (mut sum, mut px) = (Merged::default(), Vec::new());
     while pending(p) {
-        let d = p.merge(ph, clear, edges, off);
+        let d = p.merge(ph, None, clear, edges, off);
         (sum.frames, sum.triggered) = (sum.frames + d.frames, sum.triggered + d.triggered);
         crate::framestats::add_folds(&mut sum.folds, &d.folds);
         px.push(d.px);
@@ -403,7 +403,7 @@ fn batch_picture_equals_each_frame_drawn() {
         assert_eq!(c.read(), (0, 0, 0), "{}: nothing dropped", what);
         assert_eq!(c.measured.load(Ordering::Relaxed), folds.first().map_or(0, |x| x.1.n));
         // merged once; both buffers back in the pool
-        assert_eq!(pipe.merge(&mut got, &mut clear, &mut edges, &mut off), Merged::default());
+        assert_eq!(pipe.merge(&mut got, None, &mut clear, &mut edges, &mut off), Merged::default());
         let back: Vec<_> = std::iter::from_fn(|| pipe.take_buffer()).collect();
         assert_eq!(back.len(), 2);
         assert!(back.into_iter().all(|b| b.downcast::<Bytes>().is_ok()));
@@ -429,7 +429,7 @@ fn every_frame_is_merged_once_while_the_workers_fold() {
     let (mut frames, mut merges) = (0, 0);
     let done = std::sync::atomic::AtomicBool::new(false);
     let mut take = |ph: &mut Phosphor| {
-        let got = pipe.merge(ph, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
+        let got = pipe.merge(ph, None, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
         assert!(got.px <= (w * h) as u64, "{} pixels added", got.px);
         frames += got.frames;
         merges += (got.frames > 0) as u64;
@@ -477,7 +477,7 @@ fn the_helper_alone_draws_the_same_picture() {
         }
         drop(b);
         let mut got = Phosphor::new(w, h);
-        let n = pipe.merge(&mut got, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
+        let n = pipe.merge(&mut got, None, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
         let (want, trig, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
         assert_eq!((k, n.frames, n.triggered), (20, 20, trig), "{} s/div", tdiv);
         assert!((0..NCH).all(|c| got.map[c] == want.map[c]), "{} s/div", tdiv);
@@ -502,7 +502,7 @@ fn frames_before_first_are_left_out() {
     }
     drop(b);
     let mut got = Phosphor::new(w, h);
-    let n = pipe.merge(&mut got, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
+    let n = pipe.merge(&mut got, None, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
     let (want, trig, ..) = reference(&bytes[fb..], fb, &s, &p, &m, w, h);
     assert_eq!((k, n.frames, n.triggered), (19, 19, trig));
     assert!((0..NCH).all(|c| got.map[c] == want.map[c]));
@@ -525,7 +525,7 @@ fn a_merge_ages_the_picture_once_before_adding() {
     let seed = got.map.clone();
     // nothing to merge: the picture is held, the decay still waits
     let mut renew = Renew::Decay(0.5);
-    assert_eq!(pipe.merge(&mut got, &mut renew, &mut [0; 4], &mut (0.0, 0.0)), Merged::default());
+    assert_eq!(pipe.merge(&mut got, None, &mut renew, &mut [0; 4], &mut (0.0, 0.0)), Merged::default());
     assert_eq!(renew, Renew::Decay(0.5));
     assert!(got.map == seed, "aged without a record");
     // a batch: aged by the factor, then its maps added
@@ -533,7 +533,7 @@ fn a_merge_ages_the_picture_once_before_adding() {
     let mut hp = Helper::default();
     while pipe.help(&mut hp) {}
     drop(b);
-    let n = pipe.merge(&mut got, &mut renew, &mut [0; 4], &mut (0.0, 0.0));
+    let n = pipe.merge(&mut got, None, &mut renew, &mut [0; 4], &mut (0.0, 0.0));
     assert_eq!((n.frames, renew), (20, Renew::Keep));
     let (frames, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
     let mut want = Phosphor::new(w, h);
@@ -555,7 +555,7 @@ fn stale_work_is_dropped_and_counted() {
     let c = fresh();
     let pipe = Pipe::start(2, false, c);
     let mut ph = Phosphor::new(w, h);
-    let merge = |ph: &mut Phosphor| pipe.merge(ph, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
+    let merge = |ph: &mut Phosphor| pipe.merge(ph, None, &mut Renew::Keep, &mut [0; 4], &mut (0.0, 0.0));
     assert!(!pipe.accepting());
     // settings stamp older than the view's: dropped
     m.hw_stamp = 3;
@@ -756,7 +756,7 @@ fn perf_guard_batch_step_at_10_us_per_div() {
                 feed_batch(pipe, &bytes, fb, &s, &p, m.hw_stamp, &mut hp);
                 let t0 = std::time::Instant::now();
                 let mut renew = clear;
-                let got = pipe.merge(&mut ph, &mut renew, &mut [0; 4], &mut (0.0, 0.0));
+                let got = pipe.merge(&mut ph, None, &mut renew, &mut [0; 4], &mut (0.0, 0.0));
                 times.push(t0.elapsed().as_secs_f64() * 1e3);
                 assert_eq!(got.frames, frames as u64 - 2);
                 px = got.px;
@@ -808,7 +808,7 @@ fn the_drawers_fold_once_a_screen() {
             settle(&pipe);
             pipe.help_done(&mut hp);
         }
-        frames += pipe.merge(&mut ph, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).frames;
+        frames += pipe.merge(&mut ph, None, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).frames;
     }
     let folds = pipe.mail.lock().unwrap().folds;
     frames += merge_all(&pipe, &mut ph, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).0.frames;
@@ -917,7 +917,7 @@ fn perf_guard_batch_at_a_fixed_rate() {
                 let mut ph = Phosphor::new(w, h);
                 while !done.load(Ordering::Acquire) {
                     std::thread::sleep(Duration::from_micros(34_000));
-                    let got = pipe.merge(&mut ph, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).frames;
+                    let got = pipe.merge(&mut ph, None, &mut Renew::Clear, &mut [0; 4], &mut (0.0, 0.0)).frames;
                     merged += got;
                     per.push(got);
                 }
@@ -966,4 +966,40 @@ fn keep_out_holds_while_its_guard_lives() {
         panic!("a failing case");
     });
     assert!(r.is_err() && !out(), "back after a panic");
+}
+
+// Break it catches: the workers drawing the zoom picture other than `draw_frame` with the zoom's model on every frame,
+// or the merge leaving its maps out (#582)
+#[test]
+fn the_workers_draw_the_zoom_picture_of_every_frame() {
+    let ((w, h), (zw, zh)) = ((970, 448), (970, 200));
+    let m = model(1e-7, false, false);
+    let mut zm = m.clone();
+    zm.tscale = tscales().iter().position(|&t| (t as f64 - 2e-8).abs() < 2e-11).unwrap();
+    let (bytes, fb, s, p) = batch(9, 5000, false);
+    let pipe = Pipe::start(2, false, fresh());
+    pipe.set_view_zoom(Some(&m), w, h, Some((&zm, zw, zh)));
+    pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 0, 9, 0, dec(&s, &p), None);
+    settle(&pipe);
+    let (mut got, mut gotz) = (Phosphor::new(w, h), Phosphor::new(zw, zh));
+    let (mut frames, mut renew) = (0, Renew::Keep);
+    while pending(&pipe) {
+        frames += pipe.merge(&mut got, Some(&mut gotz), &mut renew, &mut [0; 4], &mut (0.0, 0.0)).frames;
+    }
+    assert_eq!(frames, 9);
+    let want = reference(&bytes, fb, &s, &p, &m, w, h).0;
+    let wantz = reference(&bytes, fb, &s, &p, &zm, zw, zh).0;
+    assert!(wantz.map[0].iter().any(|&x| x > 0), "nothing in the zoom window");
+    assert!(got.map[0] == want.map[0], "the main picture differs");
+    assert!(gotz.map[0] == wantz.map[0], "the zoom picture differs");
+    // the zoom off: its maps are not drawn and not merged
+    pipe.set_view(Some(&m), w, h);
+    pipe.feed_codes(Box::new(Bytes(bytes)), fb, 0, 9, 0, dec(&s, &p), None);
+    settle(&pipe);
+    let (mut z2, mut frames) = (Phosphor::new(zw, zh), 0);
+    while pending(&pipe) {
+        frames += pipe.merge(&mut got, Some(&mut z2), &mut renew, &mut [0; 4], &mut (0.0, 0.0)).frames;
+    }
+    assert_eq!(frames, 9, "the main picture is merged");
+    assert!(z2.map[0].iter().all(|&x| x == 0), "zoom maps merged with the zoom off");
 }
