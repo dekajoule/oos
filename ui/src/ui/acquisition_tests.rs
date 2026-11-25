@@ -775,8 +775,12 @@ fn peak_and_high_res_draw_their_records_on_the_fast_path() {
         for seq in 1..=8 {
             let f = std::sync::Arc::new(frame(seq));
             assert!(crate::wave::drawn_as_record(&f, &ui.m), "{acq:?}");
-            let p = fast_plan(&ui.m, w, h, &f, [false; NCH]);
+            let p = fast_plan(&ui.m, w, h, &f, [true; NCH]);
             assert!(matches!(p.plan, crate::ui::acquire::FastPlan::Rec(_)), "{acq:?}: drawn from the samples");
+            // its measurements come from the record path, on neither fast path from the frame
+            assert!(p.fold.iter().all(Option::is_none), "{acq:?}: the frame loop folded the frame");
+            let mut folds: crate::framestats::Folds = vec![((Meas::Vpp, 0), Default::default())];
+            assert!(!crate::framestats::fold_frame(&f, &ui.m, &mut folds), "{acq:?}: the workers folded the frame");
             for c in 0..NCH {
                 fast_deposit(&ui.m, w, h, c, &mut on_loop.map[c], &f, &p.plan);
             }
