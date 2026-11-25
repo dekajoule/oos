@@ -800,6 +800,60 @@ fn peak_and_high_res_draw_their_records_on_the_fast_path() {
     }
 }
 
+/// The zoom takes the fast path (#582): a step draws the queued frames into the zoom picture too, with the zoom's time
+/// base, each the way `draw_frame` draws it with the zoom's model; a deskewed channel keeps the record path.
+#[test]
+fn the_zoom_picture_is_drawn_on_the_fast_path() {
+    use super::*;
+    // 1 us/div, 12.5 k points at 0.8 ns, a 2 MHz sine through 0 V rising at the trigger point; zoom 100 ns/div
+    let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
+    let frame = |seq: u64| {
+        let v: Vec<f32> = (0..n)
+            .map(|k| (2.0 * std::f64::consts::PI * 2e6 * (k as f64 - pre as f64 + 0.1 * seq as f64) * dt).sin() as f32)
+            .collect();
+        crate::board::Frame {
+            seq,
+            dt,
+            pre,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (1.25e9, n),
+            stamp: 0,
+            la: None,
+            fixed_ti: None,
+            hw_avg: false,
+            basic: Default::default(),
+        }
+    };
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    let at = |s: f32| tscales().iter().position(|&x| (x - s).abs() < s * 1e-3).unwrap();
+    (ui.m.tscale, ui.m.zscale, ui.m.zoom, ui.m.trig_level, ui.m.ch[0].offset) = (at(1e-6), at(1e-7), true, 0.0, 0.0);
+    // the first step lays the zoom picture out (`plot_layout`): its size from there
+    ui.step(0.05);
+    assert!(ui.fast_ok());
+    let zm = ui.zoom_draw_model();
+    assert_eq!((zm.time_per_div(), zm.delay, zm.zoom), (1e-7, ui.m.zdelay, false));
+    let mut want = crate::wave::Phosphor::new(ui.phz.w, ui.phz.h);
+    for seq in 1..=6 {
+        crate::drawpipe::draw_frame(&mut want, &zm, &frame(seq), None);
+    }
+    shared.lock().unwrap().queue.extend((1..=6).map(frame));
+    ui.step(0.05);
+    assert_eq!((ui.counts.wfm_total, ui.counts.records), (6, 1));
+    assert!(ui.phz.w > 1 && ui.phz.h > 1, "no zoom picture laid out");
+    assert!(ui.phz.map[0] == want.map[0], "the zoom picture is not the frames drawn with the zoom's model");
+    // the crossing at the centre of the zoom picture: its centre column is lit at the middle row
+    let (w, h) = (ui.phz.w, ui.phz.h);
+    let lit: Vec<usize> = (0..h).filter(|&r| ui.phz.map[0][r * w + w / 2] > 0).collect();
+    assert!(lit.iter().any(|&r| (r as i32 - h as i32 / 2).abs() <= 2), "{:?}", lit);
+    ui.m.deskew_ch[0] = 1e-9;
+    assert!(!ui.fast_ok(), "zoom with deskew");
+}
+
 /// One channel in bands of rows on several cores, lines and dots: the same map as the whole map at once.
 #[test]
 fn fast_path_bands_draw_as_the_whole_map() {
