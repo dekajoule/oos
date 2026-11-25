@@ -151,11 +151,12 @@ tools/device-bench.py --compare a.json b.json                          # two run
 tools/bench-builds.sh IP installed HEAD --runs 3                       # two builds, deployed one after the other
 ```
 
-A step back against the baseline is fewer than 95 % of its pictures a second or 85 % of its records shown, a step
-over 1.3 times its own plus 1 ms, or `*OPC?` over 1.5 times plus 2 ms. A step back found before a release is fixed
-or named in the release before it goes out. When the release run has none, its numbers become the new baseline in
-the release's pull request (`--runs 3`, the medians): the baseline only gets better. The first release run with the
-tool writes it: until then there is no baseline, and `--check` has nothing to compare with.
+A step back against the baseline is fewer than 95 % of its pictures a second or 85 % of its records shown, a step over
+1.3 times its own plus 1 ms, or `*OPC?` over 1.5 times plus 2 ms. A step back found before a release is fixed or named
+in the release before it goes out. `--check` also counts a view or value of the baseline that the run lacks (unless
+`--subset`), and refuses a run of another model (exit 2). When the release run has none, its numbers become the new
+baseline in the release's pull request (`--runs 3`, the medians): the baseline only gets better. The first release run
+with the tool writes it: until then there is no baseline, and `--check` has nothing to compare with.
 
 `tools/bench-builds.sh` builds each ref (a commit, branch or tag, or `installed`) in a worktree of its own, deploys it
 to RAM, measures it, restores the installed oos-ui and prints the table of the two: the comparison of two builds on

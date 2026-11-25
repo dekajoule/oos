@@ -217,8 +217,9 @@ def value(r, view, field):
 
 
 def compare(a, b, fields=("pics_s", "used_s", "step_ms", "opc_ms")):
-    """A markdown table of `a` against `b`, view by view: both values and their ratio."""
-    head = "| View | " + " | ".join(f"{f} {a['label']} / {b['label']} (ratio)" for f in fields) + " |"
+    """A markdown table of `a` against `b`, view by view: both values and the ratio b / a."""
+    la, lb = a["label"], b["label"]
+    head = "| View | " + " | ".join(f"{f} {la} / {lb} ({lb} ÷ {la})" for f in fields) + " |"
     rows = [head, "|" + "---|" * (len(fields) + 1)]
     for view in [v for v in a["views"] if v in b["views"]]:
         cells = []
@@ -230,15 +231,21 @@ def compare(a, b, fields=("pics_s", "used_s", "step_ms", "opc_ms")):
     return "\n".join(rows)
 
 
-def regressions(run, base):
-    """The steps back of `run` against `base`: one line each, by the limits of `LIMITS`."""
+def regressions(run, base, subset=False):
+    """The steps back of `run` against `base`: one line each, by the limits of `LIMITS`. A view or value of the
+    baseline the run lacks is one too, unless `subset` says the run measures a part of the views on purpose."""
     out = []
     for view in base["views"]:
         if view not in run["views"]:
+            if not subset:
+                out.append(f"{view}: not in the run")
             continue
         for field, worse, factor, add in LIMITS:
             b, r = value(base, view, field), value(run, view, field)
-            if b is None or r is None:
+            if b is None:
+                continue
+            if r is None:
+                out.append(f"{view}: no {field} in the run")
                 continue
             if worse == "lower" and r < b * factor - add:
                 out.append(f"{view}: {field} {r:.1f} below {b * factor - add:.1f} (baseline {b:.1f})")
@@ -261,6 +268,7 @@ def main(argv=None):
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"))
     ap.add_argument("--check", metavar="RUN")
     ap.add_argument("--baseline")
+    ap.add_argument("--subset", action="store_true", help="--check: the run measures a part of the views on purpose")
     ap.add_argument("--list", action="store_true")
     o = ap.parse_args(argv)
     if o.list:
@@ -278,7 +286,11 @@ def main(argv=None):
             ap.error("--host, --compare, --check or --list")
         run = bench(o)
     if o.baseline:
-        bad = regressions(run, json.loads(Path(o.baseline).read_text()))
+        base = json.loads(Path(o.baseline).read_text())
+        if run.get("model") != base.get("model"):
+            print(f"device-bench: the run is of a {run.get('model')}, the baseline of a {base.get('model')}")
+            return 2
+        bad = regressions(run, base, o.subset)
         for line in bad:
             print("STEP BACK", line)
         print(f"device-bench: {len(bad)} steps back against {o.baseline}")

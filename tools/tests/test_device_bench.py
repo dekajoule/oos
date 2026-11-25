@@ -57,6 +57,15 @@ class Bench(unittest.TestCase):
         b = run("main", **{"4ch-1us-peak": {"pics_s": 29.9, "used_s": 3642}})
         table = bench.compare(a, b, fields=("pics_s", "used_s"))
         self.assertIn("| 4ch-1us-peak | 13.2 / 29.9 (2.27x) | 632 / 3642 (5.76x) |", table)
+        self.assertIn("pics_s installed / main (main ÷ installed)", table, "the header names the ratio's direction")
+
+    def test_a_view_the_run_lacks_is_a_step_back_unless_it_is_a_subset(self):
+        base = run("base", v={"pics_s": 30.0}, w={"pics_s": 30.0})
+        part = run("part", v={"pics_s": 30.0})
+        self.assertEqual(bench.regressions(part, base), ["w: not in the run"])
+        self.assertEqual(bench.regressions(part, base, subset=True), [])
+        no_field = run("nf", v={"used_s": 3600}, w={"pics_s": 30.0})
+        self.assertEqual(bench.regressions(no_field, base), ["v: no pics_s in the run"])
 
     def test_a_step_back_is_found_and_noise_is_not(self):
         base = run("base", v={"pics_s": 30.0, "used_s": 3600, "step_ms": 5.0, "opc_ms": 1.0})
@@ -79,6 +88,10 @@ class Bench(unittest.TestCase):
             bad = call("bad")
             self.assertEqual(bad.returncode, 1)
             self.assertIn("STEP BACK v: pics_s", bad.stdout)
+            other = run("other", v={"pics_s": 30.0})
+            other["model"] = "DHO804"
+            Path(d, "other.json").write_text(json.dumps(other))
+            self.assertEqual(call("other").returncode, 2, "a run of another model is not checked against this one")
 
     def test_bench_builds_sets_label_and_file_itself(self):
         call = lambda *a: subprocess.run(["sh", str(ROOT / "tools/bench-builds.sh"), *a],  # noqa: E731
