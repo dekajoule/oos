@@ -5,8 +5,8 @@
 //! record's work comes in short bursts: the first frames after RUN, and each burst after a quiet spell, ran at the
 //! lowest steps. While the hardware acquisition runs, the big cores' `scaling_min_freq` is at least `CPU_RUN_KHZ` and
 //! the GPU's devfreq `min_freq` at least `GPU_RUN_HZ`; on STOP and when oos-ui ends, each minimum goes back to the
-//! value it had before. `perf.clocks = off` in system.conf (or OOS_CLOCKS=0) leaves them alone; on by default, not yet
-//! verified on hardware (ADR 0010). While the GPU helper runs the GPU's floor is `GPU_HELPER_HZ` (`gpu.rs`), with or
+//! value it had before. `perf.clocks = off` in system.conf (or OOS_CLOCKS=0) leaves them alone; on by default, verified
+//! on the unit (DHO924S, 2026-11-25; ADR 0010). While the GPU helper runs the GPU's floor is `GPU_HELPER_HZ` (`gpu.rs`), with or
 //! without the switch. Each floor is the lowest step of the device's table at or above it (the highest step where the
 //! table has none), never below the minimum already set. A minimum found at one of these floors without this run
 //! having set it was left by an oos-ui that ended while running (a crash): it is taken as the table's lowest step.
@@ -131,24 +131,31 @@ const OFF: crate::sysconf::Flag = crate::sysconf::Flag { key: "perf.clocks", env
 
 /// The floors of the scope (`/sys`) and what they are for now.
 #[cfg(target_os = "linux")]
-static STATE: std::sync::Mutex<(Option<Want>, Floors, bool)> =
-    std::sync::Mutex::new((None, Floors { saved: Vec::new() }, false));
+static STATE: std::sync::Mutex<(Option<Want>, Floors, bool, Option<std::time::Instant>)> =
+    std::sync::Mutex::new((None, Floors { saved: Vec::new() }, false, None));
 
-/// `change` on what the floors are for; writes the minimums of `/sys` at the first call and when that changed. Errors
-/// are said once. Not in the tests of oos-ui: they use `Floors` with a directory of their own.
+/// `change` on what the floors are for; writes the minimums of `/sys` at the first call and when that changed. A write
+/// that failed is tried again a second later (a floor left raised by a failed restore is put back once it can be); the
+/// errors are said once. Not in the tests of oos-ui: they use `Floors` with a directory of their own.
 fn update(change: impl FnOnce(&mut Want)) {
     #[cfg(target_os = "linux")]
     if !cfg!(any(test, feature = "testkit")) {
         let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
-        let (want, floors, said) = &mut *g;
+        let (want, floors, said, retry) = &mut *g;
         let mut new = want.unwrap_or_default();
         change(&mut new);
-        if *want != Some(new) {
-            *want = Some(new);
+        let due = retry.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+        if *want != Some(new) && due {
             let errors = floors.apply(Path::new("/sys"), new);
-            if !errors.is_empty() && !*said {
-                eprintln!("oos-ui: clock floor: {}", errors.join(", "));
-                *said = true;
+            if errors.is_empty() {
+                (*want, *retry) = (Some(new), None);
+            } else {
+                // `want` stays as it was, so the next call writes again
+                *retry = Some(std::time::Instant::now());
+                if !*said {
+                    eprintln!("oos-ui: clock floor: {}", errors.join(", "));
+                    *said = true;
+                }
             }
         }
     }

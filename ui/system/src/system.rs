@@ -142,6 +142,34 @@ pub fn lower_priority() {
 mod tests {
     use super::*;
 
+    /// The policy and real-time priority of the calling thread, from /proc (fields 41 and 40 of its stat).
+    #[cfg(target_os = "linux")]
+    fn policy_of_this_thread() -> (u32, u32) {
+        let stat = std::fs::read_to_string("/proc/thread-self/stat").unwrap();
+        let f: Vec<&str> = stat[stat.rfind(')').unwrap() + 2..].split_whitespace().collect();
+        (f[38].parse().unwrap(), f[37].parse().unwrap())
+    }
+
+    // Break it catches: the policy or priority not set as asked, the threads it starts left real-time, an error not
+    // passed on. An unprivileged host may refuse: then the thread stays as it was.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fifo_takes_the_thread_and_not_the_ones_it_starts() {
+        std::thread::spawn(|| match fifo_current_thread(1) {
+            Ok(()) => {
+                assert_eq!(policy_of_this_thread(), (libc::SCHED_FIFO as u32, 1));
+                let child = std::thread::spawn(policy_of_this_thread).join().unwrap();
+                assert_eq!(child, (libc::SCHED_OTHER as u32, 0), "SCHED_RESET_ON_FORK: started threads are normal");
+            }
+            Err(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::PermissionDenied, "{e}");
+                assert_eq!(policy_of_this_thread(), (libc::SCHED_OTHER as u32, 0));
+            }
+        })
+        .join()
+        .unwrap();
+    }
+
     #[test]
     fn realtime_seconds_and_fraction_keep_the_conversion() {
         for (unix, seconds, nanos) in [

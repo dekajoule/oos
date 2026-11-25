@@ -105,7 +105,8 @@ const FIFO_OFF: crate::sysconf::Flag = crate::sysconf::Flag { key: "perf.fifo", 
 
 /// The calling thread (the acquisition thread, `board::dho::hw`) at `SCHED_FIFO` priority 1, unless `perf.fifo = off`:
 /// no normal thread on its core delays a read-out any more; the threads it starts run at normal priority. Where the
-/// kernel refuses, it stays at normal priority, said once. On by default, not yet verified on hardware (ADR 0010).
+/// kernel refuses, it stays at normal priority, said once. On by default, verified on the unit (DHO924S, 2026-11-25;
+/// ADR 0010).
 pub fn realtime() {
     #[cfg(target_os = "linux")]
     if !FIFO_OFF.get() {
