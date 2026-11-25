@@ -1478,3 +1478,19 @@ fn the_frame_loop_counts_a_frame_on_the_other_slope_and_does_not_draw_it() {
     assert!(!p.triggered);
     assert!(matches!(p.plan, FastPlan::Raw { drawn: false, class: Some(_), .. }), "counted, not drawn");
 }
+
+// Break it catches: the budget of the 30 Hz timer kept on the flip clock (a step over its 30.8 ms period waits for the
+// next vblank: 23 instead of 32.5 pictures a second at 10 us/div, unit 2026-11-25), or a budget past the period.
+#[test]
+fn the_fast_budget_follows_the_period_of_the_frame_clock() {
+    let b = |period: f32, other: f32, show: f32| crate::ui::Ui::fast_budget_of(period, other, show);
+    assert_eq!(b(33.333, 0.0, 0.0), 28.0, "the timer, nothing else in the step: as before");
+    assert_eq!(b(33.333, 2.0, 6.0), 23.0, "the timer: 31 ms less the rest, as before");
+    assert!((b(30.8, 2.0, 6.0) - 20.467).abs() < 1e-3, "flip clock: 2.53 ms less than on the timer");
+    assert!(b(30.8, 0.0, 0.0) <= 30.8 - 5.3 + 1e-3);
+    assert_eq!(b(30.8, 20.0, 10.0), 5.0, "never below 5 ms");
+    // the period: three vblanks of the panel on the flip clock, the timer's otherwise
+    assert_eq!(crate::pacing::period_us_of(Some(97.4)), 30_800);
+    assert_eq!(crate::pacing::period_us_of(None), 33_333);
+    assert_eq!(crate::pacing::period_us_of(Some(0.0)), 33_333, "no refresh: the timer");
+}

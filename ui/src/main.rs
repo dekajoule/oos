@@ -880,8 +880,41 @@ impl Device {
         self.remote_services();
         self.mdns_names();
         self.serve_lan();
+        if self.flip_clock() {
+            self.show_finished_frame();
+        }
         if self.frame_due() {
             self.frame();
+        }
+    }
+
+    /// On the flip clock: the GPU helper's last frame, once it is done, collected and flipped from the loop, not at the
+    /// start of the next frame: the loop waits for it with the remote services' sockets (`inputs`), so a command is
+    /// answered meanwhile, and the next step finds nothing to wait for. Waited for inside the step, a frame of 10 to
+    /// 16 ms on the GPU held every remote command at 100 us/div to 1 ms/div (*OPC? 13 instead of 1.3 ms, unit
+    /// 2026-11-26).
+    fn show_finished_frame(&mut self) {
+        let Some(g) = self.gpu.as_mut().filter(|g| self.gpu_pending.is_some() && g.answered()) else { return };
+        let Some((tp, bp, th)) = self.gpu_pending.take() else { return };
+        let back = tp.reads();
+        let r = (|| -> Result<(), String> {
+            g.collect(tp, Some(&mut self.cv))?;
+            if back {
+                self.live.picture_read_back(&self.cv);
+            }
+            self.disp.flip(bp);
+            if let Some((t2, b2)) = th {
+                g.collect(t2, None)?;
+                if let Some(h) = self.hdmi.as_mut() {
+                    h.flip_scaled(b2);
+                }
+            }
+            Ok(())
+        })();
+        if let Err(e) = r {
+            (self.gpu, self.gpu_failed, self.hdmi_gpu, self.gpu_pending) = (None, true, None, None);
+            eprintln!("oos-ui: GPU frame: {}", e);
+            self.ui.toast("GPU failed: drawing on the CPU");
         }
     }
 
@@ -894,7 +927,9 @@ impl Device {
     /// asked for first.
     fn frame_due(&mut self) -> bool {
         let now = std::time::Instant::now();
-        if !self.flip_clock() {
+        let flip = self.flip_clock();
+        pacing::set_period(flip.then(|| self.disp.refresh_hz()));
+        if !flip {
             return pacing::timer_due(now, self.last);
         }
         self.disp.read_events(0);
@@ -903,17 +938,16 @@ impl Device {
         }
         self.disp.ask_vblank(self.pacer.next(), now);
         let fallbacks = self.pacer.fallbacks;
-        let busy = self.disp.flip_pending() || self.helper_busy();
+        // only the panel's flip holds a step: the GPU helper's last frame is waited for inside the step, after this
+        // frame's layers are drawn (`frame`), so the two overlap as on the timer; held for the helper too, a step at
+        // 10 us/div (19 ms) and its frame on the GPU (10 to 16 ms) no longer fitted into three vblanks (30.8 ms) and
+        // the screen fell to 23 pictures a second (unit 2026-11-25)
+        let busy = self.disp.flip_pending();
         let due = self.pacer.due(now, self.last, busy);
         if self.pacer.fallbacks != fallbacks && self.pacer.fallbacks.is_power_of_two() {
             eprintln!("oos-ui: no vblank event for 50 ms: the frames on the timer ({} times)", self.pacer.fallbacks);
         }
         due
-    }
-
-    /// The GPU helper still draws the last frame.
-    fn helper_busy(&self) -> bool {
-        self.gpu_pending.is_some() && self.gpu.as_ref().is_some_and(|g| !g.answered())
     }
 
     /// The start-up file, every 250 ms while the screen is up.
@@ -939,9 +973,9 @@ impl Device {
         let now = std::time::Instant::now();
         let mut wake = Vec::new();
         let wait = if self.flip_clock() {
-            // the vblank's and the flip's events, and the helper's answer to a held frame, end the wait too
+            // the vblank's and the flip's events end the wait too, and the helper's answer to the last frame
             wake.push(self.disp.fd());
-            if self.pacer.held() && self.helper_busy() {
+            if self.gpu_pending.is_some() {
                 wake.extend(self.gpu.as_ref().map(|g| g.fd()));
             }
             self.pacer.wait(now, self.last)

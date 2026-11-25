@@ -709,7 +709,7 @@ mod imp {
             crate::input::wait(&mut p, 0) > 0
         }
 
-        /// The helper's socket, readable once it answered (the frame loop's wait for a held frame).
+        /// The helper's socket, readable once it answered (the frame loop's wait for the last frame).
         pub fn fd(&self) -> i32 {
             self.sock.as_raw_fd()
         }
