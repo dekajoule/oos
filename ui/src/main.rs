@@ -33,6 +33,7 @@ mod hid;
 mod input;
 mod layout;
 mod measures;
+mod pacing;
 #[cfg(test)]
 mod perfguard;
 mod platform;
@@ -730,6 +731,9 @@ struct Device {
     fps_n: i32,
     fps_t: std::time::Instant,
     last: std::time::Instant,
+    /// `pacing.clock` in system.conf, and the flip clock's state (`pacing`)
+    clock: pacing::Clock,
+    pacer: pacing::Pacer,
     cv: Canvas,
     setup_t: std::time::Instant,
     setup_last: String,
@@ -809,6 +813,14 @@ impl Device {
         let gpu_pending: Option<GpuPending> = None;
         // the first read at once (a complete start-up shows no screen at all)
         let start_up_t = Instant::now().checked_sub(std::time::Duration::from_millis(300)).unwrap_or_else(Instant::now);
+        let clock = pacing::Clock::of(sysconf::value(&sysconf::fork_text(), "pacing.clock"));
+        let pacer = pacing::Pacer::new(pacing::DIVISOR);
+        eprintln!(
+            "oos-ui: frame clock {:?} (panel {:.1} Hz, a step every {} vblanks)",
+            clock,
+            disp.refresh_hz(),
+            pacing::DIVISOR
+        );
         Device {
             start_up_t,
             gpu_pending,
@@ -849,6 +861,8 @@ impl Device {
             fps_n,
             fps_t,
             last,
+            clock,
+            pacer,
             cv,
             setup_t,
             setup_last,
@@ -866,10 +880,40 @@ impl Device {
         self.remote_services();
         self.mdns_names();
         self.serve_lan();
-        if self.last.elapsed().as_secs_f64() < 1.0 / 30.0 {
-            return;
+        if self.frame_due() {
+            self.frame();
         }
-        self.frame();
+    }
+
+    /// The frame clock on the panel's vblank: `pacing.clock = flip` and no monitor on HDMI (a refresh of its own).
+    fn flip_clock(&self) -> bool {
+        self.clock == pacing::Clock::Flip && self.hdmi.is_none()
+    }
+
+    /// Whether the next frame starts now (`pacing`); on the flip clock the vblank events are read and the next one is
+    /// asked for first.
+    fn frame_due(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if !self.flip_clock() {
+            return pacing::timer_due(now, self.last);
+        }
+        self.disp.read_events(0);
+        if let Some(seq) = self.disp.take_vblank() {
+            self.pacer.vblank(seq, now);
+        }
+        self.disp.ask_vblank(self.pacer.next(), now);
+        let fallbacks = self.pacer.fallbacks;
+        let busy = self.disp.flip_pending() || self.helper_busy();
+        let due = self.pacer.due(now, self.last, busy);
+        if self.pacer.fallbacks != fallbacks && self.pacer.fallbacks.is_power_of_two() {
+            eprintln!("oos-ui: no vblank event for 50 ms: the frames on the timer ({} times)", self.pacer.fallbacks);
+        }
+        due
+    }
+
+    /// The GPU helper still draws the last frame.
+    fn helper_busy(&self) -> bool {
+        self.gpu_pending.is_some() && self.gpu.as_ref().is_some_and(|g| !g.answered())
     }
 
     /// The start-up file, every 250 ms while the screen is up.
@@ -892,9 +936,19 @@ impl Device {
     /// The inputs (waits up to the next frame, or until a remote command comes: `serve_lan` then answers it in this
     /// pass, not after the frame).
     fn inputs(&mut self) {
-        let elapsed = self.last.elapsed().as_secs_f64();
-        let wait_ms = ((1.0 / 30.0 - elapsed) * 1000.0).max(0.0) as i32;
+        let now = std::time::Instant::now();
         let mut wake = Vec::new();
+        let wait = if self.flip_clock() {
+            // the vblank's and the flip's events, and the helper's answer to a held frame, end the wait too
+            wake.push(self.disp.fd());
+            if self.pacer.held() && self.helper_busy() {
+                wake.extend(self.gpu.as_ref().map(|g| g.fd()));
+            }
+            self.pacer.wait(now, self.last)
+        } else {
+            pacing::timer_wait(now, self.last)
+        };
+        let wait_ms = wait.as_millis() as i32;
         self.scpi.wake_fds(&mut wake);
         self.vxi.wake_fds(&mut wake);
         self.hislip.wake_fds(&mut wake);
