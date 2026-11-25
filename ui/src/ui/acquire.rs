@@ -950,11 +950,15 @@ impl Ui {
 
     /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
     /// as a full record (averaging, a software mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
+    /// Peak detect and High res frames are drawn from their screen records there (`wave::drawn_as_record`), on the
+    /// deposit workers, instead of one by one in the frame loop (#582); not with a deskewed channel, whose record the
+    /// record path shifts (`deskew_channel_view`).
     pub(super) fn fast_ok(&self) -> bool {
         let m = &self.m;
+        let deskewed = (0..NCH).any(|c| m.ch[c].on && m.deskew_ch[c] != 0.0);
         matches!(self.src, Source::Hw { .. })
             && m.trig_type == TrigType::Edge
-            && m.acq == AcqMode::Normal
+            && (m.acq == AcqMode::Normal || (matches!(m.acq, AcqMode::Peak | AcqMode::HiRes) && !deskewed))
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && (!m.mask_on || self.mask_hw_active())
@@ -1127,12 +1131,15 @@ pub fn fast_plan(
     let window = tdiv * HDIV as f64;
     let t_first = m.delay as f64 - window / 2.0;
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
+    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::wave::drawn_as_record(f, m) {
         // the record's 3600 points: fewer thin out the picture of a fast signal (at 8 samples a period, two points a
         // column lit a fifth fewer pixels than 3600, and those a sixth fewer than a nearly continuous curve)
         let rec = crate::wave::to_record(f, m, 3600, window, t_first);
-        // the statistics on the screen record, as the measurements of a sparse record
-        let fold = std::array::from_fn(|c| (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(&rec.ch[c])));
+        // the statistics on the screen record, as the measurements of a sparse record; none of a frame drawn as its
+        // record, as on the workers (`framestats::fold_frame`): its measurements come from the record path
+        let counts = !crate::wave::drawn_as_record(f, m);
+        let fold =
+            std::array::from_fn(|c| (counts && fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(&rec.ch[c])));
         let triggered = rec.triggered;
         return FastFrame { plan: FastPlan::Rec(rec), triggered, fold };
     }

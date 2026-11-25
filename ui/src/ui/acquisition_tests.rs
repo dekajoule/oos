@@ -725,6 +725,81 @@ fn fast_path_on_several_cores_draws_as_one_by_one() {
     }
 }
 
+/// Peak detect and High res take the fast path (#582): their frames are drawn from their screen records, the same
+/// picture in the frame loop and on the deposit workers, and a step draws the queued frames there instead of one by one.
+#[test]
+fn peak_and_high_res_draw_their_records_on_the_fast_path() {
+    use super::*;
+    // 1 us/div; High res at the full rate (12.5 k points at 0.8 ns), Peak below it (min and max in turn at 4 ns, four channels)
+    for &(acq, n, dt) in &[(AcqMode::HiRes, 12_500usize, 0.8e-9), (AcqMode::Peak, 2_500, 4e-9)] {
+        let pre = n / 2;
+        let frame = |seq: u64| {
+            let ch: [Vec<f32>; NCH] = std::array::from_fn(|c| {
+                (0..n)
+                    .map(|k| {
+                        let t = (k as f64 - pre as f64 + 0.1 * seq as f64) * dt;
+                        let noise = if k % 2 == 0 { 0.05 } else { -0.05 };
+                        ((2.0 * std::f64::consts::PI * 2e6 * (c + 1) as f64 * t).sin() + noise) as f32
+                    })
+                    .collect()
+            });
+            crate::board::Frame {
+                seq,
+                dt,
+                pre,
+                ch,
+                roll: false,
+                envelope: false,
+                scan: false,
+                partial: false,
+                acq: (1.0 / dt, n),
+                stamp: 0,
+                la: None,
+                fixed_ti: None,
+                hw_avg: false,
+                basic: Default::default(),
+            }
+        };
+        let shared: crate::board::HwShared = Default::default();
+        let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+        ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+        ui.m.trig_level = 0.0;
+        ui.m.acq = acq;
+        for c in 0..NCH {
+            ui.m.ch[c].on = true;
+            ui.m.ch[c].offset = 0.0;
+        }
+        assert!(ui.fast_ok(), "{acq:?}");
+        let (w, h) = (ui.ph.w, ui.ph.h);
+        let (mut on_loop, mut on_workers) = (crate::wave::Phosphor::new(w, h), crate::wave::Phosphor::new(w, h));
+        for seq in 1..=8 {
+            let f = std::sync::Arc::new(frame(seq));
+            assert!(crate::wave::drawn_as_record(&f, &ui.m), "{acq:?}");
+            let p = fast_plan(&ui.m, w, h, &f, [true; NCH]);
+            assert!(matches!(p.plan, crate::ui::acquire::FastPlan::Rec(_)), "{acq:?}: drawn from the samples");
+            // its measurements come from the record path, on neither fast path from the frame
+            assert!(p.fold.iter().all(Option::is_none), "{acq:?}: the frame loop folded the frame");
+            let mut folds: crate::framestats::Folds = vec![((Meas::Vpp, 0), Default::default())];
+            assert!(!crate::framestats::fold_frame(&f, &ui.m, &mut folds), "{acq:?}: the workers folded the frame");
+            for c in 0..NCH {
+                fast_deposit(&ui.m, w, h, c, &mut on_loop.map[c], &f, &p.plan);
+            }
+            crate::drawpipe::draw_frame(&mut on_workers, &ui.m, &f, None);
+        }
+        for c in 0..NCH {
+            assert!(on_loop.map[c].iter().any(|&x| x > 0), "{acq:?} CH{}: nothing drawn", c + 1);
+            assert!(on_loop.map[c] == on_workers.map[c], "{acq:?} CH{}: the frame loop and the workers differ", c + 1);
+        }
+        // a step: 9 queued frames, 8 by the fast path, the newest as the record
+        shared.lock().unwrap().queue.extend((1..=9).map(frame));
+        ui.step(0.05);
+        assert_eq!((ui.counts.wfm_total, ui.counts.records), (9, 1), "{acq:?}");
+        // a deskewed channel stays on the record path, which shifts its record
+        ui.m.deskew_ch[1] = 1e-9;
+        assert!(!ui.fast_ok(), "{acq:?} with deskew");
+    }
+}
+
 /// One channel in bands of rows on several cores, lines and dots: the same map as the whole map at once.
 #[test]
 fn fast_path_bands_draw_as_the_whole_map() {
