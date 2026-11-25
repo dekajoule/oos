@@ -313,6 +313,34 @@ A-D only use 0x1000, 0x4004, 0x4008, 0x400c, 0x4010-0x4018, 0x4068, 0x406c, 0x40
 - So one batch costs ~10 ms plus the time the triggers need: about 800 records/s with the probe-comp signal instead
   of ~30 with single frames. `frames` is capped by `max_frames` = 7 340 032 / segment size.
 
+## Write spacing of the batch sequences
+
+Verified on the unit (DHO924S, 2026-11-25: device-test of acquisition, deep record and register sequences, 21 pass; 1 to
+4 channels at 5 to 200 ns/div). OOS waits `Bar1::gap_us` (10 us, a sleep that lasts longer on the unit) after every BAR1
+write; the read-out verified in "Second frame under OOS" (`adc-spu-init.md`) ran that way. The sequences of the batch
+loop run without it and wait once after each group of writes instead, before the next register read, before the C2H read
+and at the end of the sequence (`bus::Grouped`, `seq::acquire_batch_on`):
+
+| sequence | writes | waits before | waits now |
+|---|---|---|---|
+| batch: arm (table A) and type-4 read-out of its frames | 29 + 46 | 75 | 2 (before the done poll, before the read-out's peek) |
+| prearm (the arm alone) | 29 | 29 | 1 |
+| disarm (the stop sequence) | 17 | 17 | 1 |
+| raw read of the newest frame again | 46 | 46 | 1 |
+| LA read | 39 | 39 | 2 (before the stream read, after the restore) |
+
+Nothing in this page asks for a wait between two writes of these sequences: the pulses (0x1000 bit0, the TX reset, the
+0x4080 info clear, the 0x4004 set_stop triples) are a set and a clear of a register, and the waits it names are polls
+of 0x4034 and 0x4080, which stay. The order and the values of the writes are the same (host test
+`batch_sequences_settle_once_after_each_group_of_their_writes`, register sequences of `tools/compare-base.sh`). The
+configuration, the start, the AFE, ADC and PLL buses, the calibration, roll and scan, segmented records and the
+generator keep the wait after every write. The host model (`sim`) still counts 10 us for every write.
+
+To check on the unit: the batches of `oos-fpgad run --frames 30 --execute` give the same frames as before, and the time
+between its log lines `read-out: ...` and the peek after it (`0x4034 = ..., 0x4080 = ...`) is the read-out's writes,
+46 waits before; at a fast time base with many triggers the hardware frames a second (the change of `hw frames` in
+`:SYSTem:STATe?` over a few seconds) are compared with the build before.
+
 ## Frames 0 and 1 of a batch (issue #5)
 
 Verified on the unit (DHO924S, 2026-11-16): the built-in generator gives a 1 kHz square of 2 Vpp on CH1, at 10 us/div
