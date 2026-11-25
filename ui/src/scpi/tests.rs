@@ -902,8 +902,10 @@ fn the_frame_loop_waits_on_the_listener_and_each_client() {
     let (mut s, mut ui, cv) = session();
     let _c = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
     let mut fds = Vec::new();
-    // no deadline: a slow computer takes longer to accept, it does not fail the test (ADR 0020)
+    // the limit only catches a hang: a loaded computer may take long to accept, and that is no fault (ADR 0020)
+    let start = std::time::Instant::now();
     while fds.len() < 2 {
+        assert!(start.elapsed() < Duration::from_secs(300), "the client was never accepted");
         s.poll(&mut ui, &cv);
         fds.clear();
         s.wake_fds(&mut fds);

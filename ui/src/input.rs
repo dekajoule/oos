@@ -466,8 +466,8 @@ mod tests {
         let mut fds = [libc::pollfd { fd: s.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
         assert_eq!(super::wait(&mut fds, 0), 0, "nothing came yet");
         c.write_all(b"*IDN?\n").unwrap();
-        // no deadline: the wait ends when the bytes come (ADR 0020)
-        assert_eq!(super::wait(&mut fds, -1), 1);
+        // the limit only catches a hang; the wait ends when the bytes come, however loaded the computer (ADR 0020)
+        assert_eq!(super::wait(&mut fds, 300_000), 1, "the bytes never ended the wait");
         assert!(fds[0].revents & libc::POLLIN != 0);
     }
 
