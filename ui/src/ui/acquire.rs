@@ -105,12 +105,13 @@ pub(super) struct Seen {
 }
 
 /// The view a running picture was drawn at: time per division, delay, zoom on, zoom scale and zoom delay, and for each
-/// channel whether it is on, its volts per division, offset, zero correction and inversion. A change of any of them
-/// while the scope waits for a trigger draws the held record again (`redraw_held`).
+/// channel whether it is on, its volts per division and offset. A change of any of them while the scope waits for a
+/// trigger draws the held record again (`redraw_held`). Inversion and zero correction are not here: they are applied
+/// when a record is taken, so drawing the held record again would show it as it was.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct HeldView {
     h: (f32, f32, bool, usize, f32),
-    v: [(bool, f32, f32, f32, bool); NCH],
+    v: [(bool, f32, f32); NCH],
 }
 
 impl HeldView {
@@ -119,14 +120,14 @@ impl HeldView {
             h: (m.time_per_div(), m.delay, m.zoom, m.zscale, m.zdelay),
             v: std::array::from_fn(|c| {
                 let ch = &m.ch[c];
-                (ch.on, ch.volts_per_div(), ch.offset, ch.bias, ch.invert)
+                (ch.on, ch.volts_per_div(), ch.offset)
             }),
         }
     }
 
     /// Before the first picture: the first look is no change.
     fn none() -> Self {
-        HeldView { h: (f32::NAN, 0.0, false, 0, 0.0), v: [(false, 0.0, 0.0, 0.0, false); NCH] }
+        HeldView { h: (f32::NAN, 0.0, false, 0, 0.0), v: [(false, 0.0, 0.0); NCH] }
     }
 }
 
