@@ -483,11 +483,13 @@ impl Display {
         true
     }
 
-    /// Asks for an event at vblank `at` (None: the next one), unless one is asked for and not older than
-    /// `pacing::FALLBACK`. A CRTC that refuses stops the asking: the frame clock stays on its timer.
+    /// Asks for an event at vblank `at` (None: the next one), unless one is asked for and not answered yet: one request
+    /// at a time, also while the frame clock is on its timer (a CRTC without vblanks for a while would otherwise
+    /// collect requests and answer them in a burst). A vblank `at` that has passed is answered at once by the kernel
+    /// (`drm_crtc_queue_sequence` without `NEXT_ON_MISS`), so a late event does not stop the asking; turning the CRTC
+    /// off answers the request too. A CRTC that refuses stops the asking: the frame clock stays on its timer.
     pub fn ask_vblank(&mut self, at: Option<u64>, now: std::time::Instant) {
-        let asked = self.vblank_asked.is_some_and(|t| now.saturating_duration_since(t) < crate::pacing::FALLBACK);
-        if !self.vblank_ok || asked {
+        if !self.vblank_ok || self.vblank_asked.is_some() {
             return;
         }
         let (flags, sequence) = at.map_or((SEQUENCE_RELATIVE, 1), |s| (0, s));
