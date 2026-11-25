@@ -48,7 +48,7 @@ pub fn draw_frame(ph: &mut Phosphor, m: &Model, f: &Frame, stats: Option<Stats>)
     let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
     // min/max pairs of the live compression (compress.rs) take the dense path with a pair deposit
     let pairs = crate::compress::live(f) && x_per_sample <= 0.5;
-    if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan) {
+    if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::wave::drawn_as_record(f, m)) {
         if let Some(t) = crate::sparse::draw(ph, m, f, 24) {
             return t;
         }
@@ -218,8 +218,8 @@ thread_local! {
 /// `draw_frame` straight from the read-out `bytes` of a frame (`lay`, meta data in `f`, whose channel vectors stay
 /// empty): the same picture and statistics without the f32 copy of every channel. The trigger source is decoded only
 /// around the hardware trigger point (the near search, `trignear::edge_near_window`), all of it only when the wide
-/// search is needed. None where this path does not apply (sparse, pairs, roll or scan, dots, a coupling that needs the
-/// frame mean): then decode and call `draw_frame`.
+/// search is needed. None where this path does not apply (sparse, pairs, roll or scan, dots, a frame drawn as its
+/// record, a coupling that needs the frame mean): then decode and call `draw_frame`.
 pub fn draw_frame_codes(
     ph: &mut Phosphor,
     m: &Model,
@@ -236,6 +236,7 @@ pub fn draw_frame_codes(
         || f.roll
         || f.scan
         || m.dots
+        || crate::wave::drawn_as_record(f, m)
         || !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject)
     {
         return None;
