@@ -108,6 +108,7 @@ pub fn spawn(app_mask: u32, program_afe: bool, cal_dir: String, start_up: Option
     let out = shared.clone();
     std::thread::spawn(move || {
         crate::placement::place(crate::placement::Role::Hw);
+        crate::placement::realtime();
         // every wait and every time of the loop on one clock (ADR 0053): the system's here, a host run's in a test
         let mut clock = oos_hal::dho::boot::SysClock::default();
         let status = |s: String| report(&out, s);

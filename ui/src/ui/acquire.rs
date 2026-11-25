@@ -365,6 +365,10 @@ impl Ui {
         // the protocol watch and XY read every record: no live compression for them (compress.rs)
         self.src.hw_needs_raw(self.needs_raw());
         self.seen.running = running;
+        // the clock floors while the hardware runs (`clockfloor`, `perf.clocks`)
+        if self.src.is_hw() {
+            crate::clockfloor::running(running);
+        }
         if hw_seg {
             self.seg_poll(running);
         }
