@@ -606,6 +606,37 @@ fn frame1_without_its_edge_is_found() {
     assert!(!frame1_off_trigger(&frame(410), &Settings { trig_src: 9, ..s.clone() }));
 }
 
+// Unit 2026-11-25 (#578): a 250 Hz sine at 1 ms/div crosses the level about 200 samples before the trigger point,
+// because the comparator fires only when the signal is past the level by its hysteresis. The check found no edge within
+// 32 samples, and both frames of every two-frame batch were left out: half a record a second in the picture instead of
+// some 20. Breaks it catches: a slow edge left out, and a frame of issue #5 kept because its step is far enough away.
+#[test]
+fn a_slow_edge_before_the_trigger_point_is_at_it() {
+    let s = Settings { level: 0.0, ..Settings::default() };
+    let period = 20_000.0f32;
+    let sine = |cross: usize| {
+        let mut f = Frame { pre: 5000, ..Frame::default() };
+        f.ch[0] =
+            (0..20_000).map(|i| 0.5 * (std::f32::consts::TAU * (i as f32 - cross as f32) / period).sin()).collect();
+        f
+    };
+    // the crossing 200 samples before the trigger point, the signal still near the level there
+    assert_eq!(edge_check(&sine(4800), &s), Edge::At);
+    // a crossing after the trigger point within the band counts too (a level set a little below the hardware's)
+    assert_eq!(edge_check(&sine(5150), &s), Edge::At);
+    // a crossing so long before that the signal is far past the level at the trigger point: off
+    assert_eq!(edge_check(&sine(1500), &s), Edge::Off);
+    // issue #5: a full step 90 samples early is still off, and so is one 300 samples early
+    let step = |edge: usize| {
+        let mut f = Frame { pre: 5000, ..Frame::default() };
+        f.ch[0] = (0..20_000).map(|i| if i >= edge { 1.0 } else { -1.0 }).collect();
+        f
+    };
+    assert_eq!(edge_check(&step(4910), &s), Edge::Off);
+    assert_eq!(edge_check(&step(4700), &s), Edge::Off);
+    assert_eq!(edge_check(&step(5006), &s), Edge::At);
+}
+
 // Issue #5 on the unit (2026-11-19, 1 kpts, 10 us/div, batches of 26 to 32): frame 1 with its edge at the trigger point
 // but older memory before it drew a full-swing step at -38 us. Breaks it catches: frame 1 of a long batch kept when its
 // edge is in place, frame 1 of a small batch (slow time bases, #220) left out unseen, and either with the rule off.
