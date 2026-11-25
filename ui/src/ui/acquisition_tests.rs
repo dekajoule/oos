@@ -637,9 +637,11 @@ fn fast_path_draws_every_queued_frame() {
     let (w, h) = (ui.ph.w, ui.ph.h);
     let lit: Vec<usize> = (0..h).filter(|&r| ui.ph.map[0][r * w + w / 2] > 0).collect();
     assert!(lit.iter().any(|&r| (r as i32 - h as i32 / 2).abs() <= 2), "{:?}", lit);
-    // averaging needs every record: back to the record path
+    // the software average folds the frames on the fast path (#582); the FPGA's average needs the record path
     ui.m.acq = AcqMode::Average;
-    assert!(!ui.fast_ok());
+    assert!(ui.fast_ok());
+    (ui.m.avg_hw, ui.m.avg_count) = (true, 16);
+    assert!(board().avg_hw(&ui.m) && !ui.fast_ok(), "the FPGA's average");
 }
 
 /// The fast path on several cores draws the same maps as one frame after the other, dense and sparse, four
@@ -718,10 +720,10 @@ fn fast_path_on_several_cores_draws_as_one_by_one() {
         assert!(shared.lock().unwrap().queue.is_empty());
         // the thread is told how many of a batch to decode; the record path wants them all
         assert_eq!(shared.lock().unwrap().take, take);
-        ui.m.acq = AcqMode::Average;
+        ui.m.trig_type = TrigType::Pulse;
         ui.step(0.05);
         assert_eq!(shared.lock().unwrap().take, 0);
-        ui.m.acq = AcqMode::Normal;
+        ui.m.trig_type = TrigType::Edge;
     }
 }
 
@@ -852,6 +854,67 @@ fn the_zoom_picture_is_drawn_on_the_fast_path() {
     assert!(lit.iter().any(|&r| (r as i32 - h as i32 / 2).abs() <= 2), "{:?}", lit);
     ui.m.deskew_ch[0] = 1e-9;
     assert!(!ui.fast_ok(), "zoom with deskew");
+}
+
+/// The software Average on the fast path (#582): the queued frames are folded into the running average, oldest first,
+/// as the record path blends each record, and the picture is the one averaged trace of the newest record.
+#[test]
+fn average_folds_the_queued_frames_and_draws_one_trace() {
+    use super::*;
+    // 1 us/div, 12.5 k points at 0.8 ns, a 200 kHz sine through 0 V rising at the trigger point, each frame 0.1 V higher
+    let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
+    let frame = |seq: u64| {
+        let v: Vec<f32> = (0..n)
+            .map(|k| {
+                ((2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() + 0.1 * seq as f64)
+                    as f32
+            })
+            .collect();
+        crate::board::Frame {
+            seq,
+            dt,
+            pre,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (1.25e9, n),
+            stamp: 0,
+            la: None,
+            fixed_ti: None,
+            hw_avg: false,
+            basic: Default::default(),
+        }
+    };
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+    (ui.m.trig_level, ui.m.ch[0].offset, ui.m.acq, ui.m.avg_count) = (0.0, 0.0, AcqMode::Average, 4);
+    assert!(ui.fast_ok());
+    // the first record starts the average; then four frames for the fast path and the newest as the record
+    shared.lock().unwrap().queue.push_back(frame(1));
+    ui.step(0.05);
+    shared.lock().unwrap().queue.extend((2..=6).map(frame));
+    ui.step(0.05);
+    assert_eq!((ui.counts.wfm_total, ui.counts.records), (6, 2));
+    let a = 1.0 / 4.0f32;
+    let mut want = crate::wave::hw_record(&ui.m, frame(1)).ch[0].clone();
+    for seq in 2..=6 {
+        let x = crate::wave::hw_record(&ui.m, frame(seq)).ch[0].clone();
+        for (p, x) in want.iter_mut().zip(x) {
+            *p = if p.is_finite() { *p + (x - *p) * a } else { x };
+        }
+    }
+    let got = &ui.last[0].as_ref().unwrap().ch[0];
+    assert!(got.iter().zip(&want).all(|(g, w)| (g - w).abs() < 1e-5 || !w.is_finite()), "not the running average");
+    // one trace: the picture is the newest record drawn alone, the steps of the average are not in it
+    let rec = ui.last[0].clone().unwrap();
+    let mut one = crate::wave::Phosphor::new(ui.ph.w, ui.ph.h);
+    one.draw_ex(0, &ui.m, (ui.m.time_per_div(), ui.m.delay), rec.t0, rec.dt, &rec.ch[0], 24, None, rec.pairs);
+    assert!(ui.ph.map[0] == one.map[0], "the picture holds more than the averaged trace");
+    // and it is graded as one trace: the folded frames count as acquired, not in the grading (`picture_ref`)
+    assert_eq!(ui.grade.frames, 1);
 }
 
 /// One channel in bands of rows on several cores, lines and dots: the same map as the whole map at once.
