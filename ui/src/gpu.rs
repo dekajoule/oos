@@ -703,6 +703,17 @@ mod imp {
             Ok(at)
         }
 
+        /// The helper's answer to the oldest frame in work is there: `collect` takes it without waiting.
+        pub fn answered(&self) -> bool {
+            let mut p = [libc::pollfd { fd: self.sock.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
+            crate::input::wait(&mut p, 0) > 0
+        }
+
+        /// The helper's socket, readable once it answered (the frame loop's wait for a held frame).
+        pub fn fd(&self) -> i32 {
+            self.sock.as_raw_fd()
+        }
+
         /// Waits for a frame `submit` sent; with `back` its picture (asked for when it was sent) comes into it.
         pub fn collect(&mut self, t: Ticket, back: Option<&mut Canvas>) -> Result<(), String> {
             let w0 = std::time::Instant::now();
