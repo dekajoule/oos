@@ -359,6 +359,15 @@ impl<P: crate::Program> Server<P> {
         );
     }
 
+    /// The sockets whose input `poll_async` waits for: the portmapper, the listeners and every connection that still
+    /// reads (one at the end of its input stays readable and would end every wait of the frame loop).
+    pub fn wake_fds(&self, out: &mut Vec<std::os::fd::RawFd>) {
+        use std::os::fd::AsRawFd;
+        out.extend(self.pm_udp.iter().map(|u| u.as_raw_fd()));
+        out.extend(self.pm_tcp.iter().chain(&self.core_tcp).map(|l| l.as_raw_fd()));
+        out.extend(self.conns.iter().filter(|c| !c.closing).map(|c| c.s.as_raw_fd()));
+    }
+
     pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut P) -> Option<Vec<u8>>) {
         if let Some(u) = &self.pm_udp {
             let mut b = [0u8; 1500];

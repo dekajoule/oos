@@ -889,11 +889,16 @@ impl Device {
         }
     }
 
-    /// The inputs (waits up to the next frame).
+    /// The inputs (waits up to the next frame, or until a remote command comes: `serve_lan` then answers it in this
+    /// pass, not after the frame).
     fn inputs(&mut self) {
         let elapsed = self.last.elapsed().as_secs_f64();
         let wait_ms = ((1.0 / 30.0 - elapsed) * 1000.0).max(0.0) as i32;
-        for line_or_ev in self.inp.poll(wait_ms) {
+        let mut wake = Vec::new();
+        self.scpi.wake_fds(&mut wake);
+        self.vxi.wake_fds(&mut wake);
+        self.hislip.wake_fds(&mut wake);
+        for line_or_ev in self.inp.poll(wait_ms, &wake) {
             match line_or_ev {
                 input::In::Ev(ev) => self.ui.handle(ev),
                 input::In::Hid(e) => {
