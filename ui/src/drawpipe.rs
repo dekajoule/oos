@@ -115,6 +115,9 @@ fn dense(
         }
         s.edges[k] += 1;
     }
+    if t.wrong {
+        return false;
+    }
     for c in 0..NCH {
         if m.ch[c].on && present[c] {
             deposit(c, &mut ph.map[c], &screen_map(m, w, h, c, x_per_sample, t.ti));
@@ -131,6 +134,10 @@ pub struct Trigger {
     /// the other slope, 2 one elsewhere (with its distance in samples), 3 none; None with an LA line as the source
     pub class: Option<(usize, f64)>,
     pub triggered: bool,
+    /// the hardware fired on the other slope: no edge of the set direction within half a screen, but one of the other
+    /// direction (in Auto: at the trigger point) — a slow, noisy signal, #581. The frame is not drawn: at its trigger point it
+    /// would show the mirrored slope.
+    pub wrong: bool,
 }
 
 /// The trigger of the dense frame `f`, smoothed to `col` samples. `refine` (level, hysteresis, rising, either, half a
@@ -150,21 +157,28 @@ pub fn refine_edge(
     let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
     let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
     let half = (tdiv * HDIV as f64 / 2.0 / f.dt) as usize;
-    let (edge, class) = if on_la {
-        (None, None)
+    let near = |t: f64| (t - f.pre as f64).abs() <= (col + 16) as f64;
+    let (edge, class, wrong) = if on_la {
+        (None, None, false)
     } else {
         let (e, any) = refine(EdgeSeek::new(crate::wave::sw_trig_level(m, f), hyst, rising, either, half, col));
         let class = match (e, any) {
             (None, _) => (3, 0.0),
-            (Some(t), _) if (t - f.pre as f64).abs() <= (col + 16) as f64 => (0, 0.0),
+            (Some(t), _) if near(t) => (0, 0.0),
             (Some(_), Some(n)) if !either && n.rising != rising => (1, 0.0),
             (Some(t), _) => (2, (t - f.pre as f64).abs()),
         };
-        (e, Some(class))
+        // Normal and Single: every frame was triggered, so with no edge of the set direction within half a screen an
+        // edge of the other direction there is the one it fired on (on a slow slope the comparator fires hundreds of
+        // samples from the level crossing, #580); Auto: only one at the trigger point, as a frame of the timeout has
+        // no edge of its own
+        let triggered_frame = m.trig_mode != TrigMode::Auto;
+        let wrong = e.is_none() && !either && any.is_some_and(|n| n.rising != rising && (triggered_frame || near(n.t)));
+        (e, Some(class), wrong)
     };
     // a filtered trigger path (coupling): the hardware point stands where the samples show no crossing
     let triggered = edge.is_some() || on_la || m.trig_coupling() != TrigCoup::Dc;
-    Trigger { ti: edge.unwrap_or(f.pre as f64), class, triggered }
+    Trigger { ti: edge.unwrap_or(f.pre as f64), class, triggered: triggered && !wrong, wrong }
 }
 
 /// Where channel `c` of a dense frame lands on a `w` x `h` map, `x_per_sample` columns a sample, the trigger at sample

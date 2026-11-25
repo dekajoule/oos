@@ -1024,3 +1024,48 @@ fn the_grant_is_what_the_workers_draw_in_a_picture() {
     c.note(3, 2, 2 * 33_000_000);
     assert_eq!(c.grant(3, 4, 1000), 4);
 }
+
+// Break it catches (#581): a frame the hardware triggered on the other slope of a slow, noisy sine (no edge of the set
+// direction within half a screen) drawn at its trigger point, mirrored; or a frame of the set slope, or one without
+// any edge (Auto, no signal), left out.
+#[test]
+fn a_frame_triggered_on_the_other_slope_is_not_drawn() {
+    let (w, h) = (970, 448);
+    let m = model(5e-4, false, false);
+    // a 50 Hz sine at 1 MSa/s: 20,000 samples a period, half a screen is 2,500; the trigger point at sample 10,000
+    let frame = |s: f64| Frame {
+        pre: 10_000,
+        dt: 1e-6,
+        ch: [
+            (0..20_000)
+                .map(|i| (s * 0.9 * ((i as f64 - 10_000.0) / 20_000.0 * std::f64::consts::TAU).sin()) as f32)
+                .collect(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ],
+        ..Frame::default()
+    };
+    let lit = |f: &Frame| {
+        let mut ph = Phosphor::new(w, h);
+        let t = draw_frame(&mut ph, &m, f, None);
+        (t, ph.map[0].iter().filter(|&&x| x > 0).count())
+    };
+    let (t, n) = lit(&frame(-1.0));
+    assert!(!t && n == 0, "the falling slope at the trigger point was drawn ({n} pixels)");
+    let (t, n) = lit(&frame(1.0));
+    assert!(t && n > 0, "the rising slope at the trigger point was left out");
+    let (_, n) = lit(&frame(0.0));
+    assert!(n > 0, "a frame without an edge (Auto) was left out");
+    // on a slow slope the comparator fires hundreds of samples from the crossing (#580): the falling crossing 500
+    // samples after the trigger point. Normal: every frame was triggered, so it fired on that slope; Auto: a frame of
+    // the timeout may look the same and stays
+    let late = Frame { pre: 9_500, ..frame(-1.0) };
+    let mut normal = m.clone();
+    normal.trig_mode = TrigMode::Normal;
+    let mut ph = Phosphor::new(w, h);
+    assert!(!draw_frame(&mut ph, &normal, &late, None) && ph.map[0].iter().all(|&x| x == 0), "Normal: drawn");
+    let mut ph = Phosphor::new(w, h);
+    draw_frame(&mut ph, &m, &late, None);
+    assert!(m.trig_mode == TrigMode::Auto && ph.map[0].iter().any(|&x| x > 0), "Auto: left out");
+}

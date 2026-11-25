@@ -1177,6 +1177,21 @@ pub fn fast_plan(
     // the full search of `fastdraw::edge_smooth` (the workers take `trignear::edge_smooth_near`)
     let t = crate::drawpipe::refine_edge(m, f, col, |s| crate::fastdraw::edge_smooth(src, f.pre, s, |_| true));
     let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
+    // triggered on the other slope (#581): nothing drawn, as on the workers (`drawpipe::dense`)
+    if t.wrong {
+        let rec = crate::wave::Record {
+            t0: 0.0,
+            dt: f.dt,
+            ch: Default::default(),
+            triggered: false,
+            partial: false,
+            raw: None,
+            la: None,
+            pairs: false,
+            peak: false,
+        };
+        return FastFrame { plan: FastPlan::Rec(rec), triggered: false, fold: [None; NCH] };
+    }
     let ti = t.ti;
     let used = |c: usize| m.ch[c].on && !f.ch[c].is_empty();
     let spans = std::array::from_fn(|c| {
