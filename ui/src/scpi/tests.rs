@@ -894,3 +894,24 @@ fn a_client_that_reads_nothing_does_not_hold_the_frame_loop() {
         assert_eq!(l.iter().filter(|&&c| c == b';').count(), 19 - k % 2, "reply {} has its own answers", k);
     }
 }
+
+/// The frame loop waits on these sockets besides its inputs (`input::Inputs::poll`): a command that comes ends the wait,
+/// so it is answered at once, not after the next frame.
+#[test]
+fn the_frame_loop_waits_on_the_listener_and_each_client() {
+    let (mut s, mut ui, cv) = session();
+    let _c = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
+    let mut fds = Vec::new();
+    // no deadline: a slow computer takes longer to accept, it does not fail the test (ADR 0020)
+    while fds.len() < 2 {
+        s.poll(&mut ui, &cv);
+        fds.clear();
+        s.wake_fds(&mut fds);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(fds.len(), 2, "the listener and the client");
+    s.set_open(None);
+    fds.clear();
+    s.wake_fds(&mut fds);
+    assert!(fds.is_empty(), "SCPI off: nothing to wait on");
+}

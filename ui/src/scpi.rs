@@ -400,6 +400,14 @@ impl Scpi {
         }
     }
 
+    /// The sockets whose input `poll` waits for (`input::Inputs::poll`): the listener and every client that still
+    /// reads. A client at the end of its input is left out: its socket stays readable and would end every wait.
+    pub fn wake_fds(&self, out: &mut Vec<std::os::fd::RawFd>) {
+        use std::os::fd::AsRawFd;
+        out.extend(self.l.iter().map(|l| l.as_raw_fd()));
+        out.extend(self.clients.iter().filter(|c| !c.closing).map(|c| c.s.as_raw_fd()));
+    }
+
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
         if let Some(l) = &self.l {
             let (clients, limits) = (&mut self.clients, self.send_limits);
