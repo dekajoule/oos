@@ -298,6 +298,13 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   dropped` only, and acquired - used - dropped grew with them. Drops for want of a buffer (the workers behind the
   acquisition) are counted in the pipeline's counters only; at short time bases they are the limit of batch mode: 4
   A53 draw about 3 k frames/s at 10 us/div (estimate above), fewer than the acquisition delivers.
+  Admission (ADR 0081, verified on the unit 2026-11-25; from fumingcaps' fork, release v0.2.1): the workers measure their time per frame (a moving average per
+  batch and mapping, folds included) and grant the frames they draw in 33 ms; a batch planned with more than 4 frames
+  arms at most that many (at least 5), and before it arms the thread waits, drawing with the workers, while they hold
+  the buffers it needs (at most 200 ms, then as before). Unit 2026-11-25 before it, 1 channel at 5 ns/div: about
+  53,000 frames/s delivered, 6,400 in the picture, the four workers 96 % busy. With it `dropped` loses the batches
+  without a buffer (expected near 0) and `acquired` (frames read) falls towards `used`; to measure on the unit:
+  acquired / used / dropped a second and screens a second at 5 ns, 100 ns, 10 us and 1 ms/div, 1 and 4 channels.
   Unit (verified on the unit, 2026-11-18) with the parking: 28.7-29.4 screens a second at 10 us/div; frames a second
   in the picture against the build before the shared mailbox: 1 channel +4-8 %, 2 channels equal, 4 channels -9 to
   -14 % at 1 and 10 us/div. There the batches are fewer than the screens, so every drawer of a batch hands its maps on
