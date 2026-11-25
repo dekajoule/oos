@@ -347,6 +347,15 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
   - Other trigger types keep their frame 1, since they cannot be checked this way.
   - The log line `frame 1 of a batch without its edge at the trigger point, left out` counts these (logged at 1, 2,
     4, 8, ... frames).
+  - A slow edge crosses the level far from `pre`: the comparator does not fire exactly at the level. Verified on the
+    unit (DHO924S, 2026-11-25, the generator's sine of 2 Vpp on CH1, 0.5 V/div, edge rising at 0 V): a 50 Hz sine at
+    1 ms/div was at about −50 mV at the trigger point (a tenth of a division) and crossed the level 100 to 800 samples
+    after it, at 6.25 MSa/s. With the 32-sample window every batch of two at 0.5 and 1 ms/div was left out: 0.2
+    records a second of 33 taken (50 Hz), 0.4 of 35 (250 Hz), while a square of 250 Hz kept all 35. A crossing up to
+    16,384 samples away therefore counts too when the signal stays within 1.5 times the hysteresis of the level from
+    the trigger point to it (`hw::plan::edge_check`); the frames of issue #5 have a full step there. With that, at
+    1 ms/div 33 to 34 of 35 records a second reached the picture at 250 Hz and 17 to 31 of 30 to 33 at 50 Hz (two
+    runs each, Auto and Normal); the square and noise stayed as they were.
   - On the unit, every frame found was frame 1, and each was left out:
     - standard path (the frames path, removed since: ADR 0059): 22 in 270,000 frames;
     - batch path: 85 in 300,000 frames, none of them reaching a deposit worker.
