@@ -233,7 +233,11 @@ pub fn resample(
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     let dt = window / n.max(1) as f64;
     // several samples per point and no averaging: the points become min/max pairs (the peak-detect branch below)
-    let pairs = dt / f.dt >= 2.0 && m.acq != AcqMode::HiRes;
+    // a Peak detect frame below the full rate holds minimum and maximum in turn (`frame_peak`): pairs at any number of
+    // samples a point, or the points would interpolate between a minimum and a maximum (and miss a spike between
+    // two points)
+    let peak = frame_peak(f, m);
+    let pairs = (dt / f.dt >= 2.0 || peak) && m.acq != AcqMode::HiRes;
     let mut ch: [Vec<f32>; NCH] = Default::default();
     for c in 0..NCH {
         let v = &f.ch[c];
@@ -266,6 +270,8 @@ pub fn resample(
             // output points wide); 2j gets its minimum, 2j+1 its maximum, so noise and one-sample spikes stay
             // visible like on the stock display. One pass per pair.
             let mut out = vec![f32::NAN; n];
+            // a Peak frame's span holds at least one minimum and one maximum, also with fewer samples than points
+            let per = if peak { per.max(1.0) } else { per };
             for j in 0..n.div_ceil(2) {
                 let xm = ti + (t_first + (2 * j) as f64 * dt + 0.5 * dt) / f.dt;
                 if xm < -per || xm >= v.len() as f64 + per {
@@ -314,7 +320,7 @@ pub fn resample(
     });
     // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
     let la = f.la.as_ref().map(|l| crate::logic::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
-    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs, peak: frame_peak(f, m) }
+    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw, la, pairs, peak }
 }
 
 #[cfg(test)]
@@ -470,6 +476,38 @@ mod peak_detect {
         assert_eq!((raw.i0, raw.i1), (0, 100_000));
         let mx = r.ch[0].iter().copied().filter(|x| x.is_finite() && *x < 2.5).fold(0.0f32, f32::max);
         assert!((mx - 2.0).abs() < 1e-6, "glitch lost: max of the low part {}", mx);
+    }
+}
+
+#[cfg(test)]
+mod peak_below_the_full_rate {
+    use super::*;
+
+    // Break it catches: a Peak detect frame below the full rate with fewer than two samples a point (#599: 1 us/div at
+    // 625 MSa/s, 1.7) whose record interpolates between its minima and maxima: a one-sample spike between two points
+    // came out lower, and a point between a minimum and a maximum showed neither.
+    #[test]
+    fn a_peak_frame_keeps_its_pairs_at_fewer_than_two_samples_a_point() {
+        let mut m = Model { acq: AcqMode::Peak, trig_level: 0.0, ..Model::default() };
+        m.tscale = tscales().iter().position(|&x| (x as f64 - 1e-6).abs() < 1e-9).unwrap();
+        m.ch[0].on = true;
+        let (n, dt) = (8000usize, 1.6e-9);
+        assert!(frame_peak(&Frame { dt, ..Frame::default() }, &m), "625 MSa/s is below the full rate of one channel");
+        // minimum and maximum in turn around a slow sine, the maxima half a division above the minima
+        let mut v: Vec<f32> = (0..n).map(|k| (k as f32 / 900.0).sin() + if k % 2 == 1 { 0.5 } else { 0.0 }).collect();
+        let spike = 4001; // a maximum
+        v[spike] = 3.0;
+        let f = Arc::new(Frame { seq: 1, dt, pre: n / 2, ch: [v.clone(), vec![], vec![], vec![]], ..Frame::default() });
+        let window = m.time_per_div() as f64 * HDIV as f64;
+        let r = to_record(&f, &m, 3600, window, -window / 2.0);
+        assert!(window / 3600.0 / dt < 2.0 && r.pairs, "pairs at {:.2} samples a point", window / 3600.0 / dt);
+        let pts = &r.ch[0];
+        let mx = pts.iter().copied().filter(|x| x.is_finite()).fold(f32::MIN, f32::max);
+        assert_eq!(mx, 3.0, "the spike is a pair's maximum");
+        // each pair: its minimum one of the minima, its maximum one of the maxima, minimum below maximum
+        for p in pts.chunks(2).filter(|p| p.iter().all(|x| x.is_finite())) {
+            assert!(p[0] < p[1], "{p:?}");
+        }
     }
 }
 
