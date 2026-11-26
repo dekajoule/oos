@@ -87,6 +87,7 @@ pub(crate) use scpi_operations::{OperationState, OperationToken, Operations};
 mod backlight;
 mod bus_candidate;
 mod capture_memory;
+mod capture_rate;
 mod features;
 mod graphics;
 #[cfg(test)]

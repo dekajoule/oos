@@ -80,6 +80,8 @@ pub struct Counts {
     pub wfm_rate: f32,
     /// every waveform acquired since the start (Clear resets it)
     pub wfm_total: u64,
+    /// the waveform rate under the run state in the top bar (capture_rate.rs)
+    pub capture: super::capture_rate::CaptureRate,
 }
 
 /// What the step saw last (ADR 0062).
@@ -226,6 +228,7 @@ impl Ui {
     /// One frame: the polls, the run state, the records of this step, their measurements and the trace brightness.
     pub fn step(&mut self, dt_wall: f64) {
         self.step_polls(dt_wall);
+        self.sample_capture_rate();
         self.step_guards();
         let (hw_seg, final_done) = self.step_run_state();
         let persist = PERSIST[self.m.persist].1;
