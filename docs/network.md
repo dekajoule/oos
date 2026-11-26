@@ -156,10 +156,12 @@ System > Network > Remote services has a switch for each service, next to where 
 | SCPI | 5555 (TCP) | the SCPI commands |
 | VXI-11 | 111 (portmapper, TCP and UDP) and 9009 | SCPI through VISA (LXI instruments) |
 | SSH | 22 | a root shell with the scope's own password or a trusted key (section 7); **SSH settings** next to it |
+| USB network | the rear USB port | a network link to the computer on the cable: the services above at the scope's address on it ([usb-device.md](usb-device.md)); **USB address** next to it |
 
 Every route of the web remote, with what it answers and its mark, is in [http.md](http.md).
 
-Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on. A service
+Web remote, SCPI and VXI-11 are on by default, SSH is off unless the image or the user switches it on, and USB
+network is off until it has run on more units (ADR 0010). A service
 switched off closes its port at once, with the connections on it. Switching off the web remote also takes away the
 update page: an update then comes from a USB stick. SSH is the only shell on the network: `rcS` starts it at power-on
 (`/bin/oos-ssh`, which reads `remote.ssh` from `/oos/system.conf`), and oos-ui starts or stops it when its switch
@@ -269,6 +271,7 @@ ssh.password = on
 remote.mdns = on              # mDNS and DNS-SD (4.1)
 net.name = dho924s-123456     # the name on the network, written at the first start
 graphics = gpu                # System > Graphics: gpu or cpu (gpu/README.md)
+usb.net = off                 # the rear USB port as a network link (usb-device.md); off by default
 ```
 
 ## 6. Firewall, remote access and the MAC address
