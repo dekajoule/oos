@@ -34,6 +34,7 @@ mod eyepage;
 pub(crate) mod facts;
 #[cfg(test)]
 mod fix_tests;
+mod greeting;
 mod hwmask;
 mod hwzone;
 mod init;
@@ -807,6 +808,7 @@ pub struct Ui {
     pub hdmi: windows::Hdmi,
     /// the start-up screen and the last start-up's result for About (startup.rs)
     start_up: startup::StartUp,
+    greeting: greeting::Greeting,
     /// signed updates (update.rs): running oos-update job, watcher notice
     upd: update::UpdateUi,
     wlan: wlan::WlanUi,
