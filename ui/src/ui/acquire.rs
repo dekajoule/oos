@@ -562,11 +562,16 @@ impl Ui {
     /// screen, not each step of the average one over the other. The deposit workers take no batches: the average needs
     /// the frames in order.
     fn step_average_frames(&mut self, take: &mut StepTake, frames: Vec<crate::board::Frame>, t0: std::time::Instant) {
-        if let Some(p) = crate::drawpipe::pipe() {
-            p.set_view(None, 0, 0);
-        }
-        let n = frames.len();
-        if n > 0 && self.fold_average(frames, fast_helpers()) > 0 {
+        // the deposit workers fold the other frames of the batches in runs (`drawpipe::average`)
+        let runs = match crate::drawpipe::pipe() {
+            Some(p) => {
+                p.set_view(Some(&self.m), self.ph.w, self.ph.h);
+                p.take_average()
+            }
+            None => Vec::new(),
+        };
+        let n = frames.len() + runs.iter().map(|r| r.frames).sum::<usize>();
+        if n > 0 && self.fold_average(frames, runs, fast_helpers()) > 0 {
             self.m.status = TrigStatus::Triggered;
         }
         (take.got, take.folded) = (take.got + n, take.folded + n);
@@ -581,7 +586,12 @@ impl Ui {
     /// `frames` folded, oldest first, into the running average the newest record is blended with (`last`), as
     /// `condition_record` blends each record; their screen records (`wave::hw_record`) made on `helpers` threads
     /// besides this one. Nothing to fold into before the first record. Returns the frames that counted as triggered.
-    pub(super) fn fold_average(&mut self, frames: Vec<crate::board::Frame>, helpers: usize) -> usize {
+    pub(super) fn fold_average(
+        &mut self,
+        frames: Vec<crate::board::Frame>,
+        runs: Vec<crate::drawpipe::average::Run>,
+        helpers: usize,
+    ) -> usize {
         let m = &self.m;
         // a frame the FPGA averaged already (queued before a switch to the software average) is not averaged again,
         // as in `condition_record`
@@ -591,14 +601,32 @@ impl Ui {
         // each frame's screen record as `wave::hw_record` makes it, from the frame itself (no copy of it)
         let recs = crate::fastdraw::par_map(helpers, &frames, |f| crate::wave::to_record(f, m, 3600, window, t_first));
         let a = 1.0 / m.avg_count.max(1) as f32;
+        let triggered = recs.iter().filter(|r| r.triggered).count() + runs.iter().map(|r| r.triggered).sum::<usize>();
         // after a Clear or before the first record the oldest queued record starts the average, and the others
-        // are blended into it, oldest first, as on the record path
-        let mut fold = recs.iter();
+        // and the workers' runs are blended into it in the frames' order, as on the record path
+        let mut fold = recs.iter().zip(&frames).map(|(r, f)| (f.seq, r)).peekable();
+        // a new average starts from the oldest queued record; the workers' runs of frames before it are older than
+        // the average (a Clear, a new view) and are left out
+        let mut from = 0;
         if self.last[0].is_none() {
-            self.last[0] = fold.next().cloned();
+            if let Some((s, r)) = fold.next() {
+                (self.last[0], from) = (Some(r.clone()), s + 1);
+            }
         }
         let Some(avg) = self.last[0].as_mut() else { return 0 };
-        for rec in fold {
+        let mut runs = runs.iter().filter(|r| r.seq >= from).peekable();
+        loop {
+            let run_first = match (runs.peek(), fold.peek()) {
+                (Some(r), Some((s, _))) => r.seq < *s,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            if run_first {
+                runs.next().expect("a run").apply(&mut avg.ch);
+                continue;
+            }
+            let (_, rec) = fold.next().expect("a record");
             for c in 0..NCH {
                 if rec.ch[c].len() == avg.ch[c].len() {
                     for (p, &x) in avg.ch[c].iter_mut().zip(&rec.ch[c]) {
@@ -607,7 +635,7 @@ impl Ui {
                 }
             }
         }
-        recs.iter().filter(|r| r.triggered).count()
+        triggered
     }
 
     /// Up to `k` records from the source, each through the zone and protocol triggers before it is kept.
