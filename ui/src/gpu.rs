@@ -169,6 +169,30 @@ fn differ(a: &[u8], b: &[u8]) -> bool {
     words != 0 || ra != rb
 }
 
+/// A row holds only zeros: eight bytes at a time, as `differ`.
+fn zero(a: &[u8]) -> bool {
+    let (c, r) = a.as_chunks::<8>();
+    c.iter().fold(0u64, |d, p| d | u64::from_ne_bytes(*p)) == 0 && r.iter().all(|&b| b == 0)
+}
+
+/// The rows `first .. last + 1` of `rows` from the first to the last with `lit(row)`; (0, 0) when none has: the
+/// rows between are not looked at.
+fn lit_rows(rows: usize, lit: impl Fn(usize) -> bool) -> (usize, usize) {
+    match (0..rows).find(|&r| lit(r)) {
+        Some(a) => (a, (a..rows).rev().find(|&r| lit(r)).map_or(a + 1, |b| b + 1)),
+        None => (0, 0),
+    }
+}
+
+/// The smallest span of rows holding both (an empty span, a == b, holds nothing).
+fn span_union(a: (usize, usize), b: (usize, usize)) -> (usize, usize) {
+    match (a.0 < a.1, b.0 < b.1) {
+        (false, _) => b,
+        (_, false) => a,
+        _ => (a.0.min(b.0), a.1.max(b.1)),
+    }
+}
+
 fn bytes<T>(v: &T) -> &[u8] {
     // SAFETY: plain #[repr(C)] structs of integers, read as their bytes
     unsafe { std::slice::from_raw_parts(v as *const T as *const u8, std::mem::size_of::<T>()) }
@@ -245,6 +269,9 @@ mod imp {
         /// the blocks of the last frame in each half of the arena (the panel's, the monitor's): while a frame has
         /// the same blocks, only the rows that changed are copied and uploaded
         blocks: [Vec<(usize, usize)>; 2],
+        /// per block of `blocks`: the rows that can hold anything but zeros in the arena's copy (phosphor maps; all
+        /// rows of the others)
+        hulls: [Vec<(usize, usize)>; 2],
         /// the first of the monitor's targets: the panel's are below it (`monitor_targets_from`)
         monitor_from: usize,
         /// the fonts in the helper's glyph atlas (their alpha bytes, the byte of the atlas they start at) and its
@@ -358,12 +385,15 @@ mod imp {
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| format!("{}: {}", helper, e))?;
+            // it inherits the frame loop's two fast cores: onto all of them
+            crate::placement::to_all_cores(child.id() as libc::pid_t);
             let mut g = Gpu {
                 child,
                 sock: ours,
                 arena: arena as *mut u8,
                 targets: [None; 8],
                 blocks: [Vec::new(), Vec::new()],
+                hulls: [Vec::new(), Vec::new()],
                 monitor_from: 2,
                 atlas: Vec::new(),
                 atlas_rows: 0,
@@ -611,12 +641,17 @@ mod imp {
                 prev.len() >= blocks.len() && prev[..blocks.len()] == blocks[..]
             };
             let prev = std::mem::take(&mut self.blocks[half]);
+            let prev_hulls = std::mem::take(&mut self.hulls[half]);
+            let mut hulls = Vec::new();
             // a block of `rows` rows of `row` bytes: the rows that differ from the arena's copy are copied; the band
-            // of changed rows comes back (all of them for a new block)
+            // of changed rows comes back (all of them for a new block). With `zeros` (a phosphor map, mostly empty
+            // rows) only the rows that hold anything but zeros in the source or in the arena's copy are compared:
+            // outside both every row is zero in both (on the unit at 4 channels most of a map)
             let mut put = |src: *const u8,
                            row: usize,
                            rows: usize,
-                           blocks: &mut Vec<(usize, usize)>|
+                           blocks: &mut Vec<(usize, usize)>,
+                           zeros: bool|
              -> Result<(u32, i32, i32), String> {
                 at = (at + 63) & !63;
                 let len = row * rows;
@@ -625,17 +660,27 @@ mod imp {
                 }
                 blocks.push((at, len));
                 let known = same(blocks, &prev);
+                // SAFETY: the block lies inside the mapping (checked above) and no other reference to it exists while
+                // it is copied; the source has `rows` rows of `row` readable bytes and is not part of the arena
+                let (dst, src) = unsafe {
+                    (std::slice::from_raw_parts_mut(base.add(at), len), std::slice::from_raw_parts(src, len))
+                };
+                let (lo, hi) = match (zeros, prev_hulls.get(blocks.len() - 1)) {
+                    (true, Some(&old)) if known => {
+                        let now = lit_rows(rows, |r| !zero(&src[r * row..(r + 1) * row]));
+                        hulls.push(now);
+                        span_union(old, now)
+                    }
+                    _ => {
+                        hulls.push((0, rows));
+                        (0, rows)
+                    }
+                };
                 let (mut y0, mut y1) = (rows as i32, 0);
-                for r in 0..rows {
-                    // SAFETY: inside the mapping; the source has `rows` rows of `row` readable bytes
-                    let (a, b) = unsafe {
-                        (
-                            std::slice::from_raw_parts(base.add(at + r * row), row),
-                            std::slice::from_raw_parts(src.add(r * row), row),
-                        )
-                    };
+                for r in lo..hi {
+                    let (a, b) = (&mut dst[r * row..(r + 1) * row], &src[r * row..(r + 1) * row]);
                     if !known || differ(a, b) {
-                        unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), base.add(at + r * row), row) };
+                        a.copy_from_slice(b);
                         y0 = y0.min(r as i32);
                         y1 = r as i32 + 1;
                     }
@@ -645,16 +690,17 @@ mod imp {
                 Ok((o, y0, y1.max(y0)))
             };
             for (qi, q) in quads.iter().enumerate() {
-                let mut layer = |c: Option<&Canvas>,
-                                 blocks: &mut Vec<(usize, usize)>|
-                 -> Result<(u32, i32, i32), String> {
-                    match c {
-                        Some(c) if c.rec.is_some() => Ok((0, 0, 0)),
-                        Some(c) if !q.reuse => put(c.px.as_ptr() as *const u8, c.w as usize * 4, c.h as usize, blocks),
-                        Some(_) => Ok((0, 0, 0)),
-                        None => Ok((NONE, 0, 0)),
-                    }
-                };
+                let mut layer =
+                    |c: Option<&Canvas>, blocks: &mut Vec<(usize, usize)>| -> Result<(u32, i32, i32), String> {
+                        match c {
+                            Some(c) if c.rec.is_some() => Ok((0, 0, 0)),
+                            Some(c) if !q.reuse => {
+                                put(c.px.as_ptr() as *const u8, c.w as usize * 4, c.h as usize, blocks, false)
+                            }
+                            Some(_) => Ok((0, 0, 0)),
+                            None => Ok((NONE, 0, 0)),
+                        }
+                    };
                 let (uo, uy0, uy1) = layer(q.under, &mut blocks)?;
                 let (oo, oy0, oy1) = layer(q.over, &mut blocks)?;
                 let first = f.n_jobs;
@@ -680,7 +726,7 @@ mod imp {
                     };
                     for c in 0..NCH {
                         if job.show[c] && !q.reuse {
-                            let (o, y0, y1) = put(ph.map[c].as_ptr() as *const u8, ph.w * 2, ph.h, &mut blocks)?;
+                            let (o, y0, y1) = put(ph.map[c].as_ptr() as *const u8, ph.w * 2, ph.h, &mut blocks, true)?;
                             (j.map_off[c], j.map_y0[c], j.map_y1[c]) = (o, y0, y1);
                         } else if job.show[c] {
                             j.map_off[c] = 0;
@@ -688,9 +734,9 @@ mod imp {
                     }
                     if !q.reuse {
                         j.lut_off = if job.graded {
-                            put(job.colours.as_ptr() as *const u8, job.colours.len() * 4, 1, &mut blocks)?.0
+                            put(job.colours.as_ptr() as *const u8, job.colours.len() * 4, 1, &mut blocks, false)?.0
                         } else {
-                            put(job.alpha.as_ptr(), job.alpha.len(), 1, &mut blocks)?.0
+                            put(job.alpha.as_ptr(), job.alpha.len(), 1, &mut blocks, false)?.0
                         };
                     }
                     f.j[f.n_jobs as usize] = j;
@@ -700,6 +746,7 @@ mod imp {
                 f.n_quads += 1;
             }
             self.blocks[half] = blocks;
+            self.hulls[half] = hulls;
             Ok(at)
         }
 
@@ -781,6 +828,21 @@ impl Gpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Break it catches: a span of lit rows that misses the first or the last lit row, or a union that drops one side
+    // (rows outside both would then not be copied while they changed).
+    #[test]
+    fn lit_rows_and_their_union_cover_every_lit_row() {
+        let lit = [false, false, true, false, false, true, false];
+        assert_eq!(lit_rows(lit.len(), |r| lit[r]), (2, 6));
+        assert_eq!(lit_rows(4, |_| false), (0, 0));
+        assert_eq!(lit_rows(3, |r| r == 2), (2, 3));
+        assert_eq!(span_union((2, 6), (0, 0)), (2, 6));
+        assert_eq!(span_union((0, 0), (1, 3)), (1, 3));
+        assert_eq!(span_union((5, 9), (1, 3)), (1, 9));
+        assert!(zero(&[0u8; 19]) && !zero(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+        assert!(!zero(&[0, 0, 0, 7, 0, 0, 0, 0, 0]));
+    }
 
     #[test]
     fn rows_that_differ_anywhere_are_found() {
