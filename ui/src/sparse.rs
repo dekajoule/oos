@@ -43,10 +43,11 @@ pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp
     let t_first = m.delay as f64 - window / 2.0;
     let n = POINTS;
     let dt = window / n as f64;
-    // the interpolated branch of `to_record` only: peak detect, high res and min/max pairs go there, and look for
+    // the interpolated branch of `to_record` only: high res, a Peak frame below the full rate (its samples are minimum
+    // and maximum in turn, `wave::frame_peak`) and min/max pairs go there, and look for
     // their trigger there themselves (before the search here, each such frame was searched twice)
     let per = dt / f.dt;
-    if f.envelope || per >= 2.0 || m.acq == AcqMode::HiRes {
+    if f.envelope || per >= 2.0 || crate::wave::drawn_as_record(f, m) {
         return None;
     }
     let ti = trigger(f, m, n, window, t_first)?;
@@ -254,6 +255,28 @@ mod tests {
             oos_dsp::sim::add_noise(v, 0.03, seed + c as u64);
         }
         Frame { seq: 1, dt, pre: len / 2, ch, ..Default::default() }
+    }
+
+    /// From the review of #598: a Peak detect frame below the full rate holds minimum and maximum in turn; drawn here
+    /// they would be interpolated as plain samples. It goes to the record path (None), a Peak frame at the full rate
+    /// (plain samples) stays here.
+    #[test]
+    fn a_peak_frame_below_the_full_rate_takes_the_record_path() {
+        let (w, h) = (970, 448);
+        let mut m = model(1e-6, 1);
+        m.acq = AcqMode::Peak;
+        // one channel at 625 MSa/s (below its full 1.25 GSa/s) at 1 us/div: under two samples a screen point
+        let f = frame(5000, 2, 3e6, 1);
+        assert!(crate::wave::drawn_as_record(&f, &m) && f.dt / (1e-5 / POINTS as f64) > 0.5);
+        assert_eq!(draw_with(&mut Phosphor::new(w, h), &m, &f, 24, Interp::Exact), None);
+        // at the full rate a Peak frame holds plain samples: drawn here as in Normal
+        let (mut normal, f1) = (model(1e-8, 1), frame(1408, 1, 1e7, 2));
+        let mut peak = normal.clone();
+        (normal.acq, peak.acq) = (AcqMode::Normal, AcqMode::Peak);
+        assert!(!crate::wave::drawn_as_record(&f1, &peak));
+        let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
+        let got = draw_with(&mut a, &peak, &f1, 24, Interp::Exact);
+        assert!(got == draw_with(&mut b, &normal, &f1, 24, Interp::Exact) && a.map[0] == b.map[0]);
     }
 
     fn model(tdiv: f64, chans: usize) -> Model {
