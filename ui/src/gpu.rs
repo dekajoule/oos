@@ -169,6 +169,37 @@ fn differ(a: &[u8], b: &[u8]) -> bool {
     words != 0 || ra != rb
 }
 
+/// One block of rows of `row` bytes from `src` into the arena's copy `dst`: the rows that differ are copied (every row
+/// when the block is new, `known` false). With `zeros` (a phosphor map) and the span `old` of rows that can hold
+/// anything but zeros in the copy, only the rows from the first to the last that hold anything in `src` or in the
+/// copy are looked at: outside both every row is zero in both. Returns the band of changed rows (y0, y1) and the
+/// span of the copy now (all rows where it is not followed).
+fn copy_block(
+    dst: &mut [u8],
+    src: &[u8],
+    row: usize,
+    (known, zeros, old): (bool, bool, Option<(usize, usize)>),
+) -> ((i32, i32), (usize, usize)) {
+    let rows = src.len() / row.max(1);
+    let ((lo, hi), now) = match old {
+        Some(old) if known && zeros => {
+            let now = lit_rows(rows, |r| !zero(&src[r * row..(r + 1) * row]));
+            (span_union(old, now), now)
+        }
+        _ => ((0, rows), (0, rows)),
+    };
+    let (mut y0, mut y1) = (rows as i32, 0);
+    for r in lo..hi {
+        let (a, b) = (&mut dst[r * row..(r + 1) * row], &src[r * row..(r + 1) * row]);
+        if !known || differ(a, b) {
+            a.copy_from_slice(b);
+            y0 = y0.min(r as i32);
+            y1 = r as i32 + 1;
+        }
+    }
+    ((y0, y1.max(y0)), now)
+}
+
 /// A row holds only zeros: eight bytes at a time, as `differ`.
 fn zero(a: &[u8]) -> bool {
     let (c, r) = a.as_chunks::<8>();
@@ -665,29 +696,12 @@ mod imp {
                 let (dst, src) = unsafe {
                     (std::slice::from_raw_parts_mut(base.add(at), len), std::slice::from_raw_parts(src, len))
                 };
-                let (lo, hi) = match (zeros, prev_hulls.get(blocks.len() - 1)) {
-                    (true, Some(&old)) if known => {
-                        let now = lit_rows(rows, |r| !zero(&src[r * row..(r + 1) * row]));
-                        hulls.push(now);
-                        span_union(old, now)
-                    }
-                    _ => {
-                        hulls.push((0, rows));
-                        (0, rows)
-                    }
-                };
-                let (mut y0, mut y1) = (rows as i32, 0);
-                for r in lo..hi {
-                    let (a, b) = (&mut dst[r * row..(r + 1) * row], &src[r * row..(r + 1) * row]);
-                    if !known || differ(a, b) {
-                        a.copy_from_slice(b);
-                        y0 = y0.min(r as i32);
-                        y1 = r as i32 + 1;
-                    }
-                }
+                let old = prev_hulls.get(blocks.len() - 1).copied();
+                let ((y0, y1), now) = copy_block(dst, src, row, (known, zeros, old));
+                hulls.push(now);
                 let o = at as u32;
                 at += len;
-                Ok((o, y0, y1.max(y0)))
+                Ok((o, y0, y1))
             };
             for (qi, q) in quads.iter().enumerate() {
                 let mut layer =
@@ -842,6 +856,39 @@ mod tests {
         assert_eq!(span_union((5, 9), (1, 3)), (1, 9));
         assert!(zero(&[0u8; 19]) && !zero(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
         assert!(!zero(&[0, 0, 0, 7, 0, 0, 0, 0, 0]));
+    }
+
+    // Break it catches: a copy that looks only at the rows lit now (the old row of a trace that moved stays in the
+    // arena) or only at the old ones, a wrong band of changed rows, or a span of the copy that is not the map's.
+    #[test]
+    fn a_trace_that_moves_is_copied_from_its_old_rows_to_its_new_ones() {
+        let (row, rows) = (16, 10);
+        let lit = |r: usize| {
+            let mut m = vec![0u8; row * rows];
+            m[r * row + 5] = 9;
+            m
+        };
+        let mut arena = vec![0xAAu8; row * rows];
+        // a new block: every row copied, the span all rows
+        let (band, span) = copy_block(&mut arena, &lit(3), row, (false, true, None));
+        assert_eq!((band, span), ((0, 10), (0, 10)));
+        assert_eq!(arena, lit(3));
+        // the same map again: its span found, nothing changed
+        let (band, span) = copy_block(&mut arena, &lit(3), row, (true, true, Some(span)));
+        assert_eq!((band, span), ((10, 10), (3, 4)));
+        // the trace moves from row 3 to row 7: both rows change, the old one cleared
+        let (band, span) = copy_block(&mut arena, &lit(7), row, (true, true, Some(span)));
+        assert_eq!((band, span), ((3, 8), (7, 8)));
+        assert_eq!(arena, lit(7));
+        // and is gone: its row cleared, the span empty
+        let (band, span) = copy_block(&mut arena, &vec![0u8; row * rows], row, (true, true, Some(span)));
+        assert_eq!((band, span), ((7, 8), (0, 0)));
+        assert!(arena.iter().all(|&b| b == 0));
+        // a layer (no zeros span): every row compared
+        let mut layer = vec![1u8; row * rows];
+        let mut src = layer.clone();
+        src[9 * row] = 2;
+        assert_eq!(copy_block(&mut layer, &src, row, (true, false, Some((0, 0)))), ((9, 10), (0, 10)));
     }
 
     #[test]
