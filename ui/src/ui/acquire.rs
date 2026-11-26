@@ -605,11 +605,16 @@ impl Ui {
         // after a Clear or before the first record the oldest queued record starts the average, and the others
         // and the workers' runs are blended into it in the frames' order, as on the record path
         let mut fold = recs.iter().zip(&frames).map(|(r, f)| (f.seq, r)).peekable();
+        // a new average starts from the oldest queued record; the workers' runs of frames before it are older than
+        // the average (a Clear, a new view) and are left out
+        let mut from = 0;
         if self.last[0].is_none() {
-            self.last[0] = fold.next().map(|(_, r)| r.clone());
+            if let Some((s, r)) = fold.next() {
+                (self.last[0], from) = (Some(r.clone()), s + 1);
+            }
         }
         let Some(avg) = self.last[0].as_mut() else { return 0 };
-        let mut runs = runs.iter().peekable();
+        let mut runs = runs.iter().filter(|r| r.seq >= from).peekable();
         loop {
             let run_first = match (runs.peek(), fold.peek()) {
                 (Some(r), Some((s, _))) => r.seq < *s,

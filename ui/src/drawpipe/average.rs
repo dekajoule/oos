@@ -6,8 +6,10 @@
 //! samples p becomes `g * p + b` (g = (1 - a)^n, b the run folded from 0), where p is not finite `g * x1 + b` (the run
 //! folded from its first sample x1), and after a sample that is not finite the run folded from its restart (it no
 //! longer depends on p). So the frames of a batch are folded in runs on several cores, in f32 as the record path
-//! folds, and the frame loop applies the runs to the average in the frames' order: the same average up to the
-//! rounding. The idea comes from fumingcaps' fork (release v0.2.1), which folds the Average in ordered runs.
+//! folds, and the frame loop applies the runs to the average in the frames' order as they arrive: the same average up
+//! to the rounding. A run that a worker finishes after the frame loop applied a later one comes with the next step,
+//! after it: those frames take the weights of a few places later (with an average of 16 and more, a few per cent of a
+//! weight that is itself a few per cent). The idea comes from fumingcaps' fork (release v0.2.1), which folds the Average in ordered runs.
 
 use crate::model::NCH;
 
@@ -17,6 +19,8 @@ use crate::model::NCH;
 /// folded from its restart, as the record path folds).
 pub struct Run {
     pub seq: u64,
+    /// the view it was folded under (`drawpipe::View::gen`)
+    pub gen: u64,
     pub frames: usize,
     pub triggered: usize,
     a: f32,
@@ -28,10 +32,10 @@ pub struct Run {
 
 impl Run {
     /// An empty run from frame `seq` on, for an average of `count`.
-    pub fn new(seq: u64, count: u32) -> Run {
+    pub fn new(seq: u64, count: u32, gen: u64) -> Run {
         let a = 1.0 / count.max(1) as f32;
         let (first, b) = (Default::default(), Default::default());
-        Run { seq, frames: 0, triggered: 0, a, n: [0; NCH], clean: [true; NCH], first, b }
+        Run { seq, gen, frames: 0, triggered: 0, a, n: [0; NCH], clean: [true; NCH], first, b }
     }
 
     /// The next frame's screen record (`ch`, its points per channel) folded in; a channel of another number of points
@@ -164,7 +168,7 @@ mod tests {
                     fold(&mut want, f, a);
                 }
                 for chunk in frames.chunks(4) {
-                    let mut run = Run::new(0, count);
+                    let mut run = Run::new(0, count, 0);
                     for f in chunk {
                         run.push(f, true);
                     }

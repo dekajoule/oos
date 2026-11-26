@@ -1096,7 +1096,7 @@ fn a_frame_folded_into_an_average_run_is_its_screen_record_folded() {
         }
         (m.trig_level, m.acq, m.avg_count) = (0.0, AcqMode::Average, 16);
         let window = m.time_per_div() as f64 * HDIV as f64;
-        let (mut fused, mut recs) = (super::average::Run::new(0, 16), super::average::Run::new(0, 16));
+        let (mut fused, mut recs) = (super::average::Run::new(0, 16, 0), super::average::Run::new(0, 16, 0));
         let mut f = Frame::default();
         for chunk in bytes.chunks_exact(fb) {
             crate::board::dho::hw::decode_into(chunk, &s, &p, 0, &mut f);

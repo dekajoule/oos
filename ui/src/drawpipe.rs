@@ -407,6 +407,8 @@ struct Key {
     delay: f32,
     trig: (usize, Option<u8>, TrigType, Slope, f32, TrigCoup, bool, bool),
     acq: AcqMode,
+    /// the software Average's count: the workers fold their runs with it (`average::Run`)
+    avg_count: Option<u32>,
     dots: bool,
     size: (usize, usize),
     /// the zoom picture's own key
@@ -430,6 +432,7 @@ impl Key {
                 m.trig_on_la(),
             ),
             acq: m.acq,
+            avg_count: (m.acq == AcqMode::Average).then_some(m.avg_count),
             dots: m.dots,
             size: (w, h),
             zoom: None,
@@ -778,9 +781,14 @@ impl Pipe {
         }
     }
 
-    /// The software Average's runs the drawers folded since the last call, oldest frames first.
+    /// The software Average's runs the drawers folded since the last call under the current view, oldest frames
+    /// first; those of an earlier view (another time base, channel, trigger or count) are dropped and counted.
     pub fn take_average(&self) -> Vec<average::Run> {
+        let gen = lock(&self.view).view.as_ref().map(|v| v.gen);
         let mut runs = std::mem::take(&mut Mail::lock(&self.mail).avg);
+        let old: u64 = runs.iter().filter(|r| Some(r.gen) != gen).map(|r| r.frames as u64).sum();
+        Counters::add(&self.counters.dropped, old);
+        runs.retain(|r| Some(r.gen) == gen);
         runs.sort_by_key(|r| r.seq);
         runs
     }
@@ -949,7 +957,7 @@ fn draw_range(b: &Batch, lease: &Lease, r: Range<usize>, v: &View, a: &mut Acc, 
 /// folded as they are worked out, with `wave::resample`'s expressions, without the record.
 fn average_range(b: &Batch, lease: &Lease, r: Range<usize>, v: &View, f: &mut Frame) -> Option<average::Run> {
     let bytes = lease.raw.as_ref().map(|x| x.bytes())?;
-    let mut run = average::Run::new(b.seq0 + r.start as u64, v.m.avg_count);
+    let mut run = average::Run::new(b.seq0 + r.start as u64, v.m.avg_count, v.gen);
     for i in r {
         (b.decode)(&bytes[i * b.fb..(i + 1) * b.fb], f);
         average_frame(&mut run, f, &v.m);
