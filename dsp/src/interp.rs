@@ -214,7 +214,8 @@ pub fn lanczos8_fixed(v: &[f32], x0: f64, step: f64, n: usize, out: &mut Vec<f32
     // the inner points: all 2A neighbours there (A - 1 <= x < len - A); positions within range of i64, forward
     let fits = p0.abs() < 1e18 && dp > 0.0 && dp * (n as f64) < 1e18 && v.len() >= 2 * A;
     let lo = ((A - 1) as i64) << POS_BITS;
-    let hi = ((v.len() - A) as i64) << POS_BITS;
+    // (a record shorter than the kernel takes `lanczos8` below: `fits`)
+    let hi = (v.len().saturating_sub(A) as i64) << POS_BITS;
     let k0 = if !fits || p0 as i64 >= lo { 0 } else { ((lo - p0 as i64) as u64).div_ceil(dp as u64) as usize };
     let k1 = if fits && hi > p0 as i64 { (((hi - p0 as i64) as u64).div_ceil(dp as u64) as usize).min(n) } else { 0 };
     if !fits || k0 >= k1 {
@@ -300,6 +301,16 @@ mod tests {
         want.extend((0..3600).map(|k| lanczos8(&holed, 100.0 + k as f64 * 0.0371).unwrap_or(f32::NAN)));
         let bad = g.iter().zip(&want).position(|(a, b)| !((a - b).abs() < 1e-5 || a.is_nan() && b.is_nan()));
         assert!(bad.is_none(), "{bad:?} {:?}", bad.map(|k| (g[k], want[k])));
+        // records shorter than the kernel: `lanczos8`'s points
+        for len in 1..2 * A {
+            let short: Vec<f32> = (0..len).map(|k| (k as f32 * 0.9).sin()).collect();
+            g.clear();
+            lanczos8_fixed(&short, -0.5, 0.01, 900, &mut g);
+            for (k, &y) in g.iter().enumerate() {
+                let want = lanczos8(&short, -0.5 + k as f64 * 0.01).unwrap_or(f32::NAN);
+                assert!(y.to_bits() == want.to_bits() || y.is_nan() && want.is_nan(), "len {len} k {k}");
+            }
+        }
         // a constant stays exactly constant (the taps of each phase sum to one)
         let flat = vec![0.731f32; 64];
         g.clear();
