@@ -1557,3 +1557,54 @@ fn the_fast_budget_follows_the_period_of_the_frame_clock() {
     assert_eq!(crate::pacing::period_us_of(None), 33_333);
     assert_eq!(crate::pacing::period_us_of(Some(0.0)), 33_333, "no refresh: the timer");
 }
+
+// From the review of #602: after a Clear (no running average yet) the oldest queued frame starts the average and the
+// others are folded into it, not dropped; a frame the FPGA averaged already is not averaged a second time.
+#[test]
+fn average_starts_from_the_oldest_queued_frame_and_skips_fpga_averages() {
+    use super::*;
+    let (n, dt, pre) = (12_500usize, 0.8e-9, 6250usize);
+    let frame = |seq: u64| {
+        let v: Vec<f32> = (0..n)
+            .map(|k| {
+                ((2.0 * std::f64::consts::PI * 200e3 * (k as f64 - pre as f64 + 0.3) * dt).sin() + 0.1 * seq as f64)
+                    as f32
+            })
+            .collect();
+        crate::board::Frame {
+            seq,
+            dt,
+            pre,
+            ch: [v, Vec::new(), Vec::new(), Vec::new()],
+            roll: false,
+            envelope: false,
+            scan: false,
+            partial: false,
+            acq: (1.25e9, n),
+            stamp: 0,
+            la: None,
+            fixed_ti: None,
+            hw_avg: seq == 3,
+            basic: Default::default(),
+        }
+    };
+    let shared: crate::board::HwShared = Default::default();
+    let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 });
+    ui.m.tscale = tscales().iter().position(|&x| (x - 1e-6).abs() < 1e-9).unwrap();
+    (ui.m.trig_level, ui.m.ch[0].offset, ui.m.acq, ui.m.avg_count) = (0.0, 0.0, AcqMode::Average, 4);
+    assert!(ui.fast_ok() && ui.last[0].is_none());
+    // frames 1 to 4 for the fast path (3 averaged by the FPGA), the newest, 5, as the record
+    shared.lock().unwrap().queue.extend((1..=5).map(frame));
+    ui.step(0.05);
+    let a = 1.0 / 4.0f32;
+    let mut want = crate::wave::hw_record(&ui.m, frame(1)).ch[0].clone();
+    for seq in [2, 4, 5] {
+        let x = crate::wave::hw_record(&ui.m, frame(seq)).ch[0].clone();
+        for (p, x) in want.iter_mut().zip(x) {
+            *p = if p.is_finite() { *p + (x - *p) * a } else { x };
+        }
+    }
+    let got = &ui.last[0].as_ref().expect("an average").ch[0];
+    let worst = got.iter().zip(&want).map(|(g, w)| (g - w).abs()).fold(0.0f32, f32::max);
+    assert!(worst < 1e-5, "the average differs by {worst}");
+}

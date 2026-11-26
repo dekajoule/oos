@@ -583,10 +583,19 @@ impl Ui {
     /// besides this one. Nothing to fold into before the first record. Returns the frames that counted as triggered.
     pub(super) fn fold_average(&mut self, frames: Vec<crate::board::Frame>, helpers: usize) -> usize {
         let m = &self.m;
+        // a frame the FPGA averaged already (queued before a switch to the software average) is not averaged again,
+        // as in `condition_record`
+        let frames: Vec<_> = frames.into_iter().filter(|f| !f.hw_avg).collect();
         let recs = crate::fastdraw::par_map(helpers, &frames, |f| crate::wave::hw_record(m, f.clone()));
         let a = 1.0 / m.avg_count.max(1) as f32;
+        // after a Clear or before the first record the oldest queued record starts the average, and the others
+        // are blended into it, oldest first, as on the record path
+        let mut fold = recs.iter();
+        if self.last[0].is_none() {
+            self.last[0] = fold.next().cloned();
+        }
         let Some(avg) = self.last[0].as_mut() else { return 0 };
-        for rec in &recs {
+        for rec in fold {
             for c in 0..NCH {
                 if rec.ch[c].len() == avg.ch[c].len() {
                     for (p, &x) in avg.ch[c].iter_mut().zip(&rec.ch[c]) {
