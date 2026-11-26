@@ -38,9 +38,9 @@ Added:
 - A tap on a value in the measurement strip opens the list of selected measurements with that one in focus, to remove
   it or change its settings ([Measurements](wiki/Measurements-and-Analysers.md#the-strip)).
 - The rear USB port can be a network link to one computer: **System > Network > Remote services > USB network** (off
-  by default, not yet verified on hardware). Windows, macOS and Linux see a network adapter, the scope is at
-  192.168.235.1 and every remote service and SSH work over the cable
-  ([Remote control](wiki/Remote-Control.md#usb-cable), #235).
+  by default; tried on one scope with a Mac and Windows 11, not yet with Linux). The computer sees a network adapter,
+  the scope is at 192.168.235.1 and every remote service and SSH work over the cable
+  ([Remote control](wiki/Remote-Control.md#usb-cable), #235) (unit).
 - While the scope runs, the run state box at the top left shows the waveforms a second that reach the screen and the
   share of the time they capture, for example `14.8k wfm/s 0.7%` ([First Steps](wiki/First-Steps.md)). The idea
   comes from fumingcaps' fork.
