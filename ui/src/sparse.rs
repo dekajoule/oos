@@ -21,14 +21,8 @@ use std::cell::RefCell;
 /// Points of the screen record, as in `Source::acquire` and the fast path (`drawpipe::draw_frame`).
 pub const POINTS: usize = 3600;
 
-/// What the kept places of `PLACES` were worked out for: `t_first`, `dt` and `f.dt` as bits, and the number of points.
-type PlacesKey = (u64, u64, u64, usize);
-
 thread_local! {
     static BUF: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
-    /// `(t_first + k * dt) / f.dt` for k < n, and what it was worked out for (`t_first`, `dt`, `f.dt`, n as bits): the
-    /// points' places in samples before the trigger is added, the same for every frame of a view
-    static PLACES: RefCell<(PlacesKey, Vec<f64>)> = const { RefCell::new(((0, 0, 0, 0), Vec::new())) };
 }
 
 /// Draws a sparse frame into `ph` like `to_record` + `draw_ex` with weight `wgt`: Some(triggered), or None when the
@@ -52,20 +46,13 @@ pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp
     }
     let ti = trigger(f, m, n, window, t_first)?;
     let sparse = f.dt > 2.0 * dt;
-    PLACES.with(|pl| {
-        let mut pl = pl.borrow_mut();
-        let key = (t_first.to_bits(), dt.to_bits(), f.dt.to_bits(), n);
-        if pl.0 != key || pl.1.len() != n {
-            pl.1.clear();
-            pl.1.extend((0..n).map(|k| (t_first + k as f64 * dt) / f.dt));
-            pl.0 = key;
-        }
-        draw_points(ph, m, f, wgt, mode, (ti, t_first, dt, n, sparse), &pl.1);
+    crate::wave::places(t_first, dt, f.dt, n, |u| {
+        draw_points(ph, m, f, wgt, mode, (ti, t_first, dt, n, sparse), u);
     });
     Some(true)
 }
 
-/// The points of `draw_with` from their places `u` in samples (`PLACES`): the point k at `ti + u[k]`, the same value as
+/// The points of `draw_with` from their places `u` in samples (`wave::places`): the point k at `ti + u[k]`, the same value as
 /// `ti + (t_first + k * dt) / f.dt` worked out for each frame.
 fn draw_points(
     ph: &mut Phosphor,

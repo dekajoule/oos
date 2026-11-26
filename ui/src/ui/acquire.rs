@@ -585,8 +585,11 @@ impl Ui {
         let m = &self.m;
         // a frame the FPGA averaged already (queued before a switch to the software average) is not averaged again,
         // as in `condition_record`
-        let frames: Vec<_> = frames.into_iter().filter(|f| !f.hw_avg).collect();
-        let recs = crate::fastdraw::par_map(helpers, &frames, |f| crate::wave::hw_record(m, f.clone()));
+        let frames: Vec<_> = frames.into_iter().filter(|f| !f.hw_avg).map(std::sync::Arc::new).collect();
+        let window = m.time_per_div() as f64 * HDIV as f64;
+        let t_first = m.delay as f64 - window / 2.0;
+        // each frame's screen record as `wave::hw_record` makes it, from the frame itself (no copy of it)
+        let recs = crate::fastdraw::par_map(helpers, &frames, |f| crate::wave::to_record(f, m, 3600, window, t_first));
         let a = 1.0 / m.avg_count.max(1) as f32;
         // after a Clear or before the first record the oldest queued record starts the average, and the others
         // are blended into it, oldest first, as on the record path
