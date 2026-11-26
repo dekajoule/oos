@@ -1215,7 +1215,8 @@ fn trace_points(
             let cx0 = x0.floor() as i32;
             let cx1 = x1.floor() as i32;
             if cx1 >= c_lo && cx0 < c_hi {
-                let inv = 1.0 / (x1 - x0);
+                // the reciprocal of the width only where the segment spans columns
+                let inv = if cx0 == cx1 { 0.0 } else { 1.0 / (x1 - x0) };
                 for cx in cx0.max(c_lo)..=cx1.min(c_hi - 1) {
                     let (ya, yb) = if cx0 == cx1 {
                         (y0, y1)
