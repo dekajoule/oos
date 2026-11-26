@@ -20,8 +20,9 @@ Consequence: displayed wfm/s is capped at about 95 x UI frame rate (about 3k to 
 deliver. `fpga.md` puts the PCIe ceiling near 80k frames/s at 1 ch for 0x11f0-point frames; stock reaches about 190k
 at its fastest setting. The host software is the bottleneck, as `fpga.md` already concludes.
 
-All threads of oos-ui inherit the A72 affinity (`pin_to_big_cores` in `main.rs` before the source starts): UI loop,
-hw thread and GPU helper share cpu4/cpu5. Web encoder and `MeasWorker` sit on the A53s. The xdma completion thread
+All threads of oos-ui inherit the A72 affinity (`pin_to_big_cores` in `main.rs` before the source starts): UI loop
+and hw thread share cpu4/cpu5. The GPU helper is moved to every core when it starts (`placement::to_all_cores`,
+since 2026-11-26, unless `perf.place = on`: on the A72 only it waited behind both). Web encoder and `MeasWorker` sit on the A53s. The xdma completion thread
 (`poll_mode=1`) is unpinned and busy-polls for the whole DMA time.
 
 ## Host measurements
@@ -85,7 +86,7 @@ register writes (posted writes, microseconds per configure; do it only as cleanu
    screenshots match `to_record` at 5, 20, 100, 200 ns/div.
 5. Code exists (B10). Unit checks: `/proc/interrupts` counts on IRQ 241 with `poll_mode=0`; ten minutes without
    time-outs; prearm with a settings change mid-wait; long read with data check at MPS 256.
-6. cpu4: UI loop + GPU helper. cpu5: hw thread. Deposit workers, `MeasWorker`, web: A53. `oos-fpga-up` writes the
+6. With `perf.place = on`: cpu4: UI loop + GPU helper. cpu5: hw thread (without it the helper goes to every core). Deposit workers, `MeasWorker`, web: A53. `oos-fpga-up` writes the
    xdma IRQ to an A53 (`/proc/irq/241/smp_affinity`). No SCHED_FIFO until the hw thread is shown never to spin.
 7. 0x1170 compression to 2-4 points per screen column when frames exceed the screen width. Needs envelope support in
    the fast path (today `f.envelope` falls back to `to_record`) and a raw newest frame for measurements. Open
