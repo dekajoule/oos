@@ -864,11 +864,24 @@ impl Ui {
         (self.fast.take as usize).clamp(4, crate::board::QUEUE_MAX)
     }
 
-    /// Time of a screen the fast path may spend (ms): what a frame of the 30 a second (33 ms) leaves after the rest of
-    /// the step, drawing and showing the screen, less 2 ms of slack; 5 to 28 ms.
+    /// Time of a screen the fast path may spend (ms): what a step of the frame clock leaves (`pacing::period_ms`: 33.3 ms
+    /// on the timer, 30.8 ms on the flip clock of a 97.4 Hz panel) after the rest of the step, drawing and showing the
+    /// screen, less about 2.3 ms of slack; from 5 ms to the period less about 5.3 ms. A step that ran over its period waited for
+    /// the next vblank on the flip clock, a whole step lost (unit 2026-11-25: 23 instead of 32.5 pictures a second at
+    /// 1 channel 10 us/div with the budget of the timer).
     pub(super) fn fast_budget(&self) -> f32 {
-        let rest = (self.times.step - self.fast.t).max(0.0) + self.times.render + self.times.present;
-        (31.0 - rest).clamp(5.0, 28.0)
+        Self::fast_budget_of(
+            crate::pacing::period_ms(),
+            self.times.step - self.fast.t,
+            self.times.render + self.times.present,
+        )
+    }
+
+    /// `fast_budget` for a period of `period` ms, the rest of the step `other` and drawing and showing `show` (ms).
+    pub(super) fn fast_budget_of(period: f32, other: f32, show: f32) -> f32 {
+        // the timer's numbers (31 ms, at most 28), less what the period is shorter
+        let short = (crate::pacing::period_ms_of(None) - period).max(0.0);
+        (31.0 - short - other.max(0.0) - show).clamp(5.0, (28.0 - short).max(5.0))
     }
 
     /// The channels of `rec` into the main picture and, with zoom, into the zoom picture; every point adds `w`.
