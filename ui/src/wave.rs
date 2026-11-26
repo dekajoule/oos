@@ -1039,8 +1039,9 @@ impl Phosphor {
         }
     }
 
-    /// Draws a record channel into the map: every segment between two samples adds `w` to the pixels it covers,
-    /// so the brightness follows the dwell time of the trace like on an analog/digital-phosphor screen. Display
+    /// Draws a record channel into the map: the segments between two samples add `w` to the pixels they cover, the
+    /// connected segments in one column once (one span a column, as the dense path puts it), so the brightness follows
+    /// how often the trace passes like on an analog/digital-phosphor screen. Display
     /// options: dots (`Model::dots`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
     /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
     /// between its extremes; two dots would drop the edges of a slow time base.
