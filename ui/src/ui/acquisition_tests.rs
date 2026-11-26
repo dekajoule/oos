@@ -1454,9 +1454,13 @@ fn timed_persistence_with(zoom: bool) {
 fn the_frame_loop_counts_a_frame_on_the_other_slope_and_does_not_draw_it() {
     use crate::model::*;
     use crate::ui::acquire::{fast_plan, FastPlan};
-    let mut m = Model::default();
-    m.tscale = tscales().iter().position(|&t| (t as f64 - 5e-4).abs() < 1e-7).unwrap();
-    (m.trig_level, m.dots, m.trig_mode) = (0.0, false, TrigMode::Normal);
+    let m = Model {
+        tscale: tscales().iter().position(|&t| (t as f64 - 5e-4).abs() < 1e-7).unwrap(),
+        trig_level: 0.0,
+        dots: false,
+        trig_mode: TrigMode::Normal,
+        ..Default::default()
+    };
     let f = std::sync::Arc::new(crate::board::Frame {
         pre: 10_000,
         dt: 1e-6,
