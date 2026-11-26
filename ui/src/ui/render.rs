@@ -157,6 +157,7 @@ impl Ui {
         self.draw_menu(cv);
         self.draw_meas_cfg(cv);
         self.draw_toast(cv);
+        self.draw_greeting(cv);
         self.draw_overlay(cv);
         self.workspace_draw(cv);
         self.draw_pointer(cv);
