@@ -177,6 +177,31 @@ pub fn drawn_as_record(f: &Frame, m: &Model) -> bool {
     m.acq == AcqMode::HiRes || frame_peak(f, m)
 }
 
+/// What the kept places of `places` were worked out for: `t_first`, `dt` and the sample interval as bits, and the
+/// number of points.
+type PlacesKey = (u64, u64, u64, usize);
+
+thread_local! {
+    /// `(t_first + k * dt) / sample_dt` for k < n, and what it was worked out for
+    static PLACES: std::cell::RefCell<(PlacesKey, Vec<f64>)> = const { std::cell::RefCell::new(((0, 0, 0, 0), Vec::new())) };
+}
+
+/// `f(u)` with `u[k] = (t_first + k * dt) / sample_dt` for k < n: the places in samples of the points of a screen
+/// record before the trigger point is added, the same for every frame of a view, so worked out once a view and kept
+/// per thread. `ti + u[k]` is the same value, bit for bit, as `ti + (t_first + k * dt) / sample_dt`.
+pub fn places<R>(t_first: f64, dt: f64, sample_dt: f64, n: usize, f: impl FnOnce(&[f64]) -> R) -> R {
+    PLACES.with(|pl| {
+        let mut pl = pl.borrow_mut();
+        let key = (t_first.to_bits(), dt.to_bits(), sample_dt.to_bits(), n);
+        if pl.0 != key || pl.1.len() != n {
+            pl.1.clear();
+            pl.1.extend((0..n).map(|k| (t_first + k as f64 * dt) / sample_dt));
+            pl.0 = key;
+        }
+        f(&pl.1)
+    })
+}
+
 /// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,
 /// then the screen window (`n` points over `window` s from `t_first` relative to the trigger) by linear interpolation.
 pub fn to_record(f: &Arc<Frame>, m: &Model, n: usize, window: f64, t_first: f64) -> crate::wave::Record {
@@ -267,17 +292,14 @@ pub fn resample(
         // "Auto" interpolation; otherwise linear
         if sparse {
             let mut out = Vec::with_capacity(n);
-            oos_dsp::interp::lanczos8_grid(v, ti + t_first / f.dt, dt / f.dt, n, &mut out);
+            oos_dsp::interp::lanczos8_fixed(v, ti + t_first / f.dt, dt / f.dt, n, &mut out);
             ch[c] = out;
             continue;
         }
-        ch[c] = (0..n)
-            .map(|k| {
-                let x = ti + (t_first + k as f64 * dt) / f.dt;
-                let y = if sparse { oos_dsp::interp::lanczos8(v, x) } else { oos_dsp::interp::linear(v, x) };
-                y.unwrap_or(f32::NAN)
-            })
-            .collect();
+        // the point k at `ti + (t_first + k * dt) / f.dt` samples, the places kept per view (a division a point less)
+        ch[c] = places(t_first, dt, f.dt, n, |u| {
+            u.iter().map(|&u| oos_dsp::interp::linear(v, ti + u).unwrap_or(f32::NAN)).collect()
+        });
     }
     // the frame's samples inside the screen window
     let i0 = ((ti + t_first / f.dt).floor().max(0.0) as usize).min(len);

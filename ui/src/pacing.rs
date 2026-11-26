@@ -5,8 +5,9 @@
 //! `pacing.clock = flip` in system.conf, the default (verified on the unit, DHO924S 2026-11-25): a step is due at every
 //! `DIVISOR`th vblank of the panel, which the DRM file reports as a sequence event (`drm::Display::ask_vblank`). The
 //! panel's refresh comes from its mode (about 97.4 Hz on the DHO900 by the fork's measurement, assumed here: 32.5
-//! pictures a second, and no beat against the panel). When the panel's last flip or the GPU helper's frame is still in
-//! work at that vblank, the step is held and starts as soon as both are free. Without a vblank event for `FALLBACK`
+//! pictures a second, and no beat against the panel). When the panel's last flip is still in work at that vblank, the
+//! step is held and starts as soon as it is done; the GPU helper's last frame is waited for inside the step, after the
+//! new frame's layers (main.rs `frame`), so the two overlap. Without a vblank event for `FALLBACK`
 //! (the start, a CRTC that refuses them) the timer runs until events come again. `pacing.clock = timer`, a monitor on
 //! HDMI (a refresh of its own) and every build without the panel: the timer alone, a step `TIMER` after the last one
 //! began, 30 pictures a second at most.
@@ -19,6 +20,34 @@ pub const TIMER: Duration = Duration::from_nanos(1_000_000_000 / 30);
 pub const FALLBACK: Duration = Duration::from_millis(50);
 /// Vblanks per step on the flip clock.
 pub const DIVISOR: u64 = 3;
+
+/// The period of a step now (µs): `TIMER` on the timer, `DIVISOR` vblanks on the flip clock (`set_period`). What the
+/// screen's work may take in a step follows from it (`Ui::fast_budget`).
+static PERIOD_US: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(33_333);
+
+/// The period of a step: on the flip clock `DIVISOR` vblanks of a panel of `refresh_hz`, else (None, or a refresh that
+/// is not one) the timer's.
+pub fn set_period(refresh_hz: Option<f64>) {
+    PERIOD_US.store(period_us_of(refresh_hz), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `set_period`'s period (µs).
+pub fn period_us_of(refresh_hz: Option<f64>) -> u32 {
+    match refresh_hz.filter(|&hz| (20.0..=240.0).contains(&hz)) {
+        Some(hz) => (DIVISOR as f64 * 1e6 / hz) as u32,
+        None => TIMER.as_micros() as u32,
+    }
+}
+
+/// The period of a step now (ms).
+pub fn period_ms() -> f32 {
+    PERIOD_US.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0
+}
+
+/// `period_ms` for a refresh (`set_period`).
+pub fn period_ms_of(refresh_hz: Option<f64>) -> f32 {
+    period_us_of(refresh_hz) as f32 / 1000.0
+}
 
 /// The clock `pacing.clock` chooses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,7 +113,8 @@ impl Pacer {
         self.anchor.map(|a| a + self.divisor)
     }
 
-    /// A step is held: due, and the panel or the helper was busy.
+    /// A step is held: due, and the panel's flip was in work.
+    #[cfg(test)]
     pub fn held(&self) -> bool {
         self.held
     }
@@ -94,8 +124,7 @@ impl Pacer {
         self.seen.is_none_or(|t| now.saturating_duration_since(t) >= FALLBACK)
     }
 
-    /// Whether a step starts at `now`; `last`: when the last one began, `busy`: the panel's flip or the helper's frame
-    /// still in work. On the timer the step itself waits for them, as it always did.
+    /// Whether a step starts at `now`; `last`: when the last one began, `busy`: the panel's flip still in work. On the timer the step itself waits for them, as it always did.
     pub fn due(&mut self, now: Instant, last: Instant, busy: bool) -> bool {
         let timer = self.on_timer(now);
         self.fallbacks += (timer && !self.timer && self.seen.is_some()) as u32;
@@ -109,8 +138,8 @@ impl Pacer {
         go
     }
 
-    /// How long the loop may wait for inputs before it looks again; a vblank event, the flip's event or the helper's
-    /// answer ends the wait earlier (main.rs adds their descriptors).
+    /// How long the loop may wait for inputs before it looks again; a vblank event or the flip's event ends the wait
+    /// earlier (main.rs adds the display's descriptor).
     pub fn wait(&self, now: Instant, last: Instant) -> Duration {
         match self.seen.filter(|_| !self.on_timer(now)) {
             Some(t) => (t + FALLBACK).saturating_duration_since(now),

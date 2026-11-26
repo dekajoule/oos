@@ -17,7 +17,7 @@ mod record;
 
 pub use levels::*;
 pub use record::resample as resample_record;
-pub use record::{drawn_as_record, edge_near, sw_trig_level, to_record, trig_mean, trigger_point};
+pub use record::{drawn_as_record, edge_near, places, sw_trig_level, to_record, trig_mean, trigger_point};
 
 pub use oos_hal::Rng;
 
@@ -1090,6 +1090,14 @@ pub fn draw_trace(band: &mut [u16], pw: usize, ph: usize, r_lo: usize, t: &Trace
     let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
     let wi = pw as i32;
     trace_columns(pw, ph, t, (0, wi), |cx, r0, r1, w| {
+        if r0 == r1 {
+            // a dot, or a flat piece of a line: one pixel
+            if (b0..b1).contains(&r0) {
+                let idx = ((r0 - b0) * wi + cx) as usize;
+                band[idx] = band[idx].saturating_add(w);
+            }
+            return;
+        }
         for r in r0.max(b0)..=r1.min(b1 - 1) {
             let idx = ((r - b0) * wi + cx) as usize;
             band[idx] = band[idx].saturating_add(w);
@@ -1127,7 +1135,8 @@ pub fn trace_columns(pw: usize, ph: usize, t: &Trace, cols: (i32, i32), mut put:
     let ppd_y = ht / VDIV;
     let cy = ht / 2.0;
     let x_of = |k: usize| -> f32 { (((rec_t0 + k as f64 * dt - vdelay) / tdiv) * ppd_x + wd as f64 / 2.0) as f32 };
-    let y_of = |val: f32| -> f32 { cy - (val + ch.offset) / vpd * ppd_y };
+    let k_y = ppd_y / vpd;
+    let y_of = |val: f32| -> f32 { cy - (val + ch.offset) * k_y };
     let hi = ph as i32;
     let (c_lo, c_hi) = (cols.0.max(0), cols.1.min(pw as i32));
     let w0 = w;
@@ -1206,12 +1215,14 @@ fn trace_points(
             let cx0 = x0.floor() as i32;
             let cx1 = x1.floor() as i32;
             if cx1 >= c_lo && cx0 < c_hi {
+                // the reciprocal of the width only where the segment spans columns
+                let inv = if cx0 == cx1 { 0.0 } else { 1.0 / (x1 - x0) };
                 for cx in cx0.max(c_lo)..=cx1.min(c_hi - 1) {
                     let (ya, yb) = if cx0 == cx1 {
                         (y0, y1)
                     } else {
-                        let ta = ((cx as f32 - x0) / (x1 - x0)).clamp(0.0, 1.0);
-                        let tb = ((cx as f32 + 1.0 - x0) / (x1 - x0)).clamp(0.0, 1.0);
+                        let ta = ((cx as f32 - x0) * inv).clamp(0.0, 1.0);
+                        let tb = ((cx as f32 + 1.0 - x0) * inv).clamp(0.0, 1.0);
                         (y0 + (y1 - y0) * ta, y0 + (y1 - y0) * tb)
                     };
                     let (lo, hi_) = if ya < yb { (ya, yb) } else { (yb, ya) };

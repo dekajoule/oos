@@ -604,6 +604,8 @@ fn stale_work_is_dropped_and_counted() {
 fn perf_guard_deposit_worker_per_frame() {
     let (w, h) = (970, 448);
     for (tdiv, memsel, meas) in [
+        (5e-9, 128u32, false),
+        (5e-8, 704, false),
         (1e-7, 1408u32, false),
         (1e-6, 12_512, false),
         (1e-6, 12_512, true),
