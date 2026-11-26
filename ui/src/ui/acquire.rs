@@ -1068,6 +1068,7 @@ impl Ui {
         let rows: [(usize, usize); NCH] = std::array::from_fn(|c| {
             placed.iter().fold((usize::MAX, 0), |(a, b), p| {
                 let (x, y) = match &p.plan {
+                    FastPlan::Raw { drawn: false, .. } => (usize::MAX, 0),
                     FastPlan::Raw { spans, .. } => spans[c].as_ref().map_or((0, h), crate::fastdraw::span_rows),
                     // a screen record: its points' rows (a segment between two points stays between them)
                     FastPlan::Rec(rec) => rec_rows(m, h, c, &rec.ch[c]),
@@ -1115,8 +1116,8 @@ pub enum FastPlan {
     Rec(crate::wave::Record),
     /// dense views: the raw samples with the trigger at sample `ti`; `class`: the `FastPath::edges` index (None: the
     /// source is an LA line), `off`: how far the edge was from the hardware point (class 2); per channel the columns'
-    /// spans (None: dots, drawn sample by sample)
-    Raw { ti: f64, class: Option<usize>, off: f64, spans: [Option<crate::fastdraw::Spans>; NCH] },
+    /// spans (None: dots, drawn sample by sample); `drawn` false: triggered on the other slope (#581), counted, not drawn
+    Raw { ti: f64, class: Option<usize>, off: f64, spans: [Option<crate::fastdraw::Spans>; NCH], drawn: bool },
 }
 
 /// One frame placed by `fast_plan`: how to draw it, whether it counts as triggered (false if its trigger edge was not
@@ -1177,6 +1178,13 @@ pub fn fast_plan(
     // the full search of `fastdraw::edge_smooth` (the workers take `trignear::edge_smooth_near`)
     let t = crate::drawpipe::refine_edge(m, f, col, |s| crate::fastdraw::edge_smooth(src, f.pre, s, |_| true));
     let (class, off) = t.class.map_or((None, 0.0), |(k, d)| (Some(k), d));
+    // triggered on the other slope (#581): nothing drawn, as on the workers (`drawpipe::dense`); its edge class is
+    // counted all the same
+    if t.wrong {
+        let spans = std::array::from_fn(|_| None);
+        let plan = FastPlan::Raw { ti: t.ti, class, off, spans, drawn: false };
+        return FastFrame { plan, triggered: false, fold: [None; NCH] };
+    }
     let ti = t.ti;
     let used = |c: usize| m.ch[c].on && !f.ch[c].is_empty();
     let spans = std::array::from_fn(|c| {
@@ -1191,7 +1199,7 @@ pub fn fast_plan(
             crate::fastdraw::Fold::of(&v[i0..i1.max(i0)])
         })
     });
-    FastFrame { plan: FastPlan::Raw { ti, class, off, spans }, triggered: t.triggered, fold }
+    FastFrame { plan: FastPlan::Raw { ti, class, off, spans, drawn: true }, triggered: t.triggered, fold }
 }
 
 /// The rows (first, last + 1) the points `v` of channel `c` of a screen record fall on, within a map `h` high.
@@ -1234,6 +1242,7 @@ pub fn fast_deposit_t(
                 });
             }
         }
+        FastPlan::Raw { drawn: false, .. } => {}
         FastPlan::Raw { ti, spans, .. } => match &spans[c] {
             Some(s) => crate::fastdraw::add_spans_t(band, h, c_lo, s, 24),
             None if !f.ch[c].is_empty() => {
@@ -1257,6 +1266,7 @@ pub fn fast_deposit(m: &Model, w: usize, h: usize, c: usize, map: &mut [u16], f:
                 crate::wave::draw_trace(map, w, h, 0, &crate::wave::Trace::record(c, m, rec));
             }
         }
+        FastPlan::Raw { drawn: false, .. } => {}
         FastPlan::Raw { ti, spans, .. } => match &spans[c] {
             Some(s) => crate::fastdraw::add_spans(map, w, 0, s, 24),
             None if !f.ch[c].is_empty() => {

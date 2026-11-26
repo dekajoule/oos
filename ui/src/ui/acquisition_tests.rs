@@ -1447,3 +1447,34 @@ fn timed_persistence_with(zoom: bool) {
         picture = want;
     }
 }
+
+// Break it catches (#581, from the review of #597): the frame loop drawing a frame the hardware triggered on the other
+// slope, or leaving it out of the edge statistics (`:SYSTem:STATe?` edges) where the workers count it.
+#[test]
+fn the_frame_loop_counts_a_frame_on_the_other_slope_and_does_not_draw_it() {
+    use crate::model::*;
+    use crate::ui::acquire::{fast_plan, FastPlan};
+    let m = Model {
+        tscale: tscales().iter().position(|&t| (t as f64 - 5e-4).abs() < 1e-7).unwrap(),
+        trig_level: 0.0,
+        dots: false,
+        trig_mode: TrigMode::Normal,
+        ..Default::default()
+    };
+    let f = std::sync::Arc::new(crate::board::Frame {
+        pre: 10_000,
+        dt: 1e-6,
+        ch: [
+            (0..20_000)
+                .map(|i| (-0.9 * ((i as f64 - 10_000.0) / 20_000.0 * std::f64::consts::TAU).sin()) as f32)
+                .collect(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ],
+        ..Default::default()
+    });
+    let p = fast_plan(&m, 970, 448, &f, [false; NCH]);
+    assert!(!p.triggered);
+    assert!(matches!(p.plan, FastPlan::Raw { drawn: false, class: Some(_), .. }), "counted, not drawn");
+}
