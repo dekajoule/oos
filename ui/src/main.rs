@@ -927,15 +927,16 @@ impl Device {
     /// asked for first.
     fn frame_due(&mut self) -> bool {
         let now = std::time::Instant::now();
-        let flip = self.flip_clock();
-        pacing::set_period(flip.then(|| self.disp.refresh_hz()));
-        if !flip {
+        if !self.flip_clock() {
+            pacing::set_period(None);
             return pacing::timer_due(now, self.last);
         }
         self.disp.read_events(0);
         if let Some(seq) = self.disp.take_vblank() {
             self.pacer.vblank(seq, now);
         }
+        // the panel's period while its vblanks come, the timer's while the pacer has fallen back to it
+        pacing::set_period((!self.pacer.on_timer(now)).then(|| self.disp.refresh_hz()));
         self.disp.ask_vblank(self.pacer.next(), now);
         let fallbacks = self.pacer.fallbacks;
         // only the panel's flip holds a step: the GPU helper's last frame is waited for inside the step, after this
