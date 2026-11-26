@@ -1196,6 +1196,11 @@ impl Ui {
             }
         }
     }
+    /// Something modal opens over the screen: no context menu stays over it, and no hold under it opens one.
+    pub(super) fn workspace_close_popup(&mut self) {
+        self.workspace.popup = None;
+        self.workspace.gesture = None;
+    }
     /// A second finger on the plot: the first one's hold is a pinch, not a long press.
     pub(super) fn workspace_cancel_hold(&mut self) {
         if self.workspace.gesture.is_some_and(|gesture| gesture.panel == Panel::Plot && !gesture.held) {

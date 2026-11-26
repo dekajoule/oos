@@ -114,6 +114,8 @@ impl Ui {
         }
         if let Some(o) = Occasion::of(day).filter(|o| !self.greeting_seen(*o)) {
             self.greeting.open = Some((o, self.now));
+            // nothing of the workspace stays over the card or waits for a hold under it
+            self.workspace_close_popup();
         }
     }
 
@@ -370,6 +372,25 @@ mod tests {
         u.greeting_tick();
         assert!(u.greeting.open.is_none());
         assert!(!u.greeting_input(&tap()), "input goes to the screen again");
+    }
+
+    #[test]
+    fn no_context_menu_stays_over_the_card() {
+        let mut u = ui();
+        let g = u.plot.grid;
+        let (x, y) = (g.x + g.w / 2, g.y + g.h / 2);
+        u.now = 10.0;
+        u.workspace_touch(Phase::Down, x, y);
+        u.now = 12.0;
+        u.workspace_hold_tick();
+        assert!(u.workspace.popup.is_some());
+        u.greeting_decide(&day(2026, 12, 25));
+        assert!(u.greeting.open.is_some());
+        assert!(u.workspace.popup.is_none());
+        // the finger still down opens no new one under the card
+        u.now = 14.0;
+        u.workspace_hold_tick();
+        assert!(u.workspace.popup.is_none());
     }
 
     #[test]
