@@ -212,6 +212,9 @@ const POLLED_ELSEWHERE: [(&str, &str); 7] = [
 /// once done) and the newest raw deep record.
 struct StepTake {
     got: usize,
+    /// of `got`, the frames folded into the Average and not drawn (`step_average_frames`): they count as acquired, not
+    /// in the picture's grading
+    folded: usize,
     ta: f32,
     td: f32,
     renew: Renew,
@@ -442,6 +445,7 @@ impl Ui {
         // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
         let mut take = StepTake {
             got: 0,
+            folded: 0,
             ta: 0.0,
             td: 0.0,
             renew,
@@ -501,6 +505,10 @@ impl Ui {
     fn step_fast_frames(&mut self, take: &mut StepTake) {
         let t0 = std::time::Instant::now();
         let frames = self.src.drain_newest(self.fast_max());
+        if self.m.acq == AcqMode::Average {
+            self.step_average_frames(take, frames, t0);
+            return;
+        }
         let zoom = self.m.zoom.then(|| self.zoom_draw_model());
         if !frames.is_empty() {
             let renew = std::mem::replace(&mut take.renew, Renew::Keep);
@@ -546,6 +554,57 @@ impl Ui {
             self.mstat_fold(&d.folds);
             take.td += t1.elapsed().as_secs_f32() * 1000.0;
         }
+    }
+
+    /// The software Average on the fast path (#582): the queued frames are not drawn but folded into the running
+    /// average (`fold_average`), their screen records made on several cores; the newest frame comes as the record and
+    /// is blended and drawn as before (`condition_record`, `draw_channels`). The picture then shows one averaged trace a
+    /// screen, not each step of the average one over the other. The deposit workers take no batches: the average needs
+    /// the frames in order.
+    fn step_average_frames(&mut self, take: &mut StepTake, frames: Vec<crate::board::Frame>, t0: std::time::Instant) {
+        if let Some(p) = crate::drawpipe::pipe() {
+            p.set_view(None, 0, 0);
+        }
+        let n = frames.len();
+        if n > 0 && self.fold_average(frames, fast_helpers()) > 0 {
+            self.m.status = TrigStatus::Triggered;
+        }
+        (take.got, take.folded) = (take.got + n, take.folded + n);
+        let ms = t0.elapsed().as_secs_f32() * 1000.0;
+        take.td += ms;
+        self.fast.t += 0.05 * (ms - self.fast.t);
+        if n > 0 && ms > 0.0 {
+            self.fast.take = fast_take_next(self.fast.take, n, ms, self.fast_budget());
+        }
+    }
+
+    /// `frames` folded, oldest first, into the running average the newest record is blended with (`last`), as
+    /// `condition_record` blends each record; their screen records (`wave::hw_record`) made on `helpers` threads
+    /// besides this one. Nothing to fold into before the first record. Returns the frames that counted as triggered.
+    pub(super) fn fold_average(&mut self, frames: Vec<crate::board::Frame>, helpers: usize) -> usize {
+        let m = &self.m;
+        // a frame the FPGA averaged already (queued before a switch to the software average) is not averaged again,
+        // as in `condition_record`
+        let frames: Vec<_> = frames.into_iter().filter(|f| !f.hw_avg).collect();
+        let recs = crate::fastdraw::par_map(helpers, &frames, |f| crate::wave::hw_record(m, f.clone()));
+        let a = 1.0 / m.avg_count.max(1) as f32;
+        // after a Clear or before the first record the oldest queued record starts the average, and the others
+        // are blended into it, oldest first, as on the record path
+        let mut fold = recs.iter();
+        if self.last[0].is_none() {
+            self.last[0] = fold.next().cloned();
+        }
+        let Some(avg) = self.last[0].as_mut() else { return 0 };
+        for rec in fold {
+            for c in 0..NCH {
+                if rec.ch[c].len() == avg.ch[c].len() {
+                    for (p, &x) in avg.ch[c].iter_mut().zip(&rec.ch[c]) {
+                        *p = if p.is_finite() { *p + (x - *p) * a } else { x };
+                    }
+                }
+            }
+        }
+        recs.iter().filter(|r| r.triggered).count()
     }
 
     /// Up to `k` records from the source, each through the zone and protocol triggers before it is kept.
@@ -607,7 +666,9 @@ impl Ui {
         // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
         // against one span per column) and the grading of the picture follows how many of each it holds:
         // the trace flickered with the batch sizes (docs/fork/flicker.md)
-        let frame = rec.raw.as_ref().filter(|_| self.fast_ok()).map(|r| r.frame.clone());
+        // (in Average the record is the blended average, drawn as the record path draws it)
+        let from_frame = self.fast_ok() && self.m.acq != AcqMode::Average;
+        let frame = rec.raw.as_ref().filter(|_| from_frame).map(|r| r.frame.clone());
         if let Some(f) = frame {
             let stats = crate::drawpipe::Stats { edges: &mut self.fast.edges, off: &mut self.fast.off };
             crate::drawpipe::draw_frame(&mut self.ph, &self.m, &f, Some(stats));
@@ -701,8 +762,8 @@ impl Ui {
         // minimum persistence shows the frames of this step alone: their number grades the picture (`picture_ref`)
         if persist != 0.0 {
             self.grade.frames = 0;
-        } else if take.got > 0 {
-            self.grade.frames = take.got as u32;
+        } else if take.got > take.folded {
+            self.grade.frames = (take.got - take.folded) as u32;
         }
         if take.got > 0 {
             let iv = (self.now - self.seen.rec_t).min(2.0);
@@ -994,13 +1055,16 @@ impl Ui {
     /// Peak detect and High res frames are drawn from their screen records there (`wave::drawn_as_record`), on the
     /// deposit workers, instead of one by one in the frame loop (#582). With the zoom on, every frame is drawn into the
     /// zoom picture too (`zoom_draw_model`). Neither with a deskewed channel, whose record the record path shifts
-    /// (`deskew_channel_view`).
+    /// (`deskew_channel_view`). The software Average folds the frames into its average there and draws the newest
+    /// (`step_average_frames`); the FPGA's average stays on the record path.
     pub(super) fn fast_ok(&self) -> bool {
         let m = &self.m;
         let deskewed = (0..NCH).any(|c| m.ch[c].on && m.deskew_ch[c] != 0.0);
         matches!(self.src, Source::Hw { .. })
             && m.trig_type == TrigType::Edge
-            && (m.acq == AcqMode::Normal || (matches!(m.acq, AcqMode::Peak | AcqMode::HiRes) && !deskewed))
+            && (m.acq == AcqMode::Normal
+                || (matches!(m.acq, AcqMode::Peak | AcqMode::HiRes) && !deskewed)
+                || (m.acq == AcqMode::Average && !board().avg_hw(m)))
             && (!m.zoom || !deskewed)
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
