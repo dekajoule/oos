@@ -57,13 +57,18 @@ impl Ui {
 
     /// A step of the screen: the waveform rate counted on, or forgotten while the hardware does not run.
     pub(super) fn sample_capture_rate(&mut self) {
+        self.sample_capture_rate_at(Instant::now());
+    }
+
+    /// `sample_capture_rate` at the instant `at`.
+    fn sample_capture_rate_at(&mut self, at: Instant) {
         if !self.capture_running() {
             self.counts.capture = CaptureRate::default();
             return;
         }
         let (_, used, _) = crate::board::pipe::counters().read();
         let span = self.src.hw_rate_depth().map(|(rate, n)| n as f64 / rate);
-        self.counts.capture.observe(Instant::now(), used, span);
+        self.counts.capture.observe(at, used, span);
     }
 
     /// The caption under the run state, while there is one to show.
@@ -95,5 +100,37 @@ mod tests {
         c.observe(t0 + Duration::from_secs(5), 24_335, None);
         assert_eq!(c.label.as_deref(), Some("15.2k wfm/s --%"));
         assert_eq!(caption(123_456.0, Some(0.5)), "123k wfm/s 50%");
+    }
+
+    // Break it catches: a rate shown in STOP, in a session (offline or SIM) or with another source than the hardware,
+    // or a rate of an earlier run shown again before a new second of counts.
+    #[test]
+    fn the_rate_shows_only_while_the_hardware_runs() {
+        let t0 = Instant::now();
+        let mut u = Ui::new(Source::Hw { shared: Default::default(), seen: 0 });
+        (u.m.run, u.m.status) = (RunState::Run, TrigStatus::Triggered);
+        let counted = |u: &mut Ui, s: u64| u.sample_capture_rate_at(t0 + Duration::from_secs(s));
+        counted(&mut u, 0);
+        assert_eq!(u.capture_caption(), None, "less than a second counted");
+        counted(&mut u, 2);
+        assert!(u.capture_caption().is_some_and(|c| c.contains(" wfm/s ")), "running: {:?}", u.capture_caption());
+        u.m.run = RunState::Stop;
+        assert_eq!(u.capture_caption(), None, "STOP");
+        counted(&mut u, 3);
+        u.m.run = RunState::Run;
+        assert_eq!(u.capture_caption(), None, "the rate of the earlier run is forgotten");
+        counted(&mut u, 4);
+        counted(&mut u, 6);
+        assert!(u.capture_caption().is_some(), "counted again");
+        u.offline.on = true;
+        assert_eq!(u.capture_caption(), None, "a session");
+        u.offline.on = false;
+        u.m.status = TrigStatus::Stop;
+        assert_eq!(u.capture_caption(), None, "stopped");
+        let mut demo = Ui::new(Source::Demo { t: 0.0 });
+        (demo.m.run, demo.m.status) = (RunState::Run, TrigStatus::Triggered);
+        demo.sample_capture_rate_at(t0);
+        demo.sample_capture_rate_at(t0 + Duration::from_secs(2));
+        assert_eq!(demo.capture_caption(), None, "the demo source");
     }
 }
