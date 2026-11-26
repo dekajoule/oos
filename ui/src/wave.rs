@@ -1039,8 +1039,9 @@ impl Phosphor {
         }
     }
 
-    /// Draws a record channel into the map: every segment between two samples adds `w` to the pixels it covers,
-    /// so the brightness follows the dwell time of the trace like on an analog/digital-phosphor screen. Display
+    /// Draws a record channel into the map: the segments between two samples add `w` to the pixels they cover, the
+    /// connected segments in one column once (one span a column, as the dense path puts it), so the brightness follows
+    /// how often the trace passes like on an analog/digital-phosphor screen. Display
     /// options: dots (`Model::dots`, one pixel per sample) and per-sample brightness weights 0..1 (Z input).
     /// `pairs` (`Record::pairs`): with dots, each min/max pair is one vertical span, since it stands for every sample
     /// between its extremes; two dots would drop the edges of a slow time base.
@@ -1195,9 +1196,32 @@ fn trace_points(
 ) {
     let (m, v) = (t.m, t.v);
     let mut prev: Option<(f32, f32)> = None;
+    // the spans of the connected segments in one column, put once as one span (`pending`): with 3600 points on a screen
+    // 970 columns wide a column holds about four segments, and each added its weight, so a flat stretch came out four
+    // times as bright as a vertical edge, which one segment crosses. The rows are the same: neighbouring segments share
+    // their point, so their rounded spans touch, and the union is one span. A gap (a sample that is not a number) and
+    // another weight (the Z input) put the span first.
+    let mut pending: Option<(i32, i32, i32, u16)> = None;
+    fn span(
+        pending: &mut Option<(i32, i32, i32, u16)>,
+        s: (i32, i32, i32, u16),
+        put: &mut impl FnMut(i32, i32, i32, u16),
+    ) {
+        match *pending {
+            Some((c, a, b, w)) if c == s.0 && w == s.3 => *pending = Some((c, a.min(s.1), b.max(s.2), w)),
+            _ => {
+                if let Some((c, a, b, w)) = pending.replace(s) {
+                    put(c, a, b, w);
+                }
+            }
+        }
+    }
     for (k, &val) in v.iter().enumerate() {
         if !val.is_finite() {
             prev = None;
+            if let Some((c, a, b, pw)) = pending.take() {
+                put(c, a, b, pw);
+            }
             continue;
         }
         let w = wt(k);
@@ -1229,17 +1253,51 @@ fn trace_points(
                     let r0 = (lo.round() as i32).max(0);
                     let r1 = (hi_.round() as i32).min(hi - 1);
                     if r0 <= r1 {
-                        put(cx, r0, r1, w);
+                        span(&mut pending, (cx, r0, r1, w), put);
                     }
                 }
             }
         }
         prev = Some(p);
     }
+    if let Some((c, a, b, pw)) = pending {
+        put(c, a, b, pw);
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    /// One span a column (`trace_points`): a square of 3600 points is as bright on its vertical edge as on its flat
+    /// parts, every lit pixel once the weight, the edge column lit over the whole step.
+    #[test]
+    fn a_column_of_connected_segments_is_one_span() {
+        use crate::model::Model;
+        let (w, h) = (970usize, 448usize);
+        let m = Model { dots: false, ..Model::default() };
+        let v: Vec<f32> = (0..3600).map(|k| if k < 1800 { -1.0 } else { 1.0 }).collect();
+        let window = m.time_per_div() as f64 * 10.0;
+        let mut map = vec![0u16; w * h];
+        let t = super::Trace {
+            c: 0,
+            m: &m,
+            view: (m.time_per_div(), m.delay),
+            rec_t0: -window / 2.0,
+            dt: window / 3600.0,
+            v: &v,
+            w: 24,
+            z: None,
+            pairs: false,
+        };
+        super::draw_trace(&mut map, w, h, 0, &t);
+        let over: Vec<(usize, usize, u16)> =
+            (0..w * h).filter(|&i| map[i] > 24).map(|i| (i % w, i / w, map[i])).take(8).collect();
+        assert!(over.is_empty(), "a pixel got the weight more than once: {over:?}");
+        let lit = |x: usize| (0..h).filter(|&y| map[y * w + x] > 0).count();
+        assert_eq!(lit(200), 1, "a flat column: one row");
+        let edge = (0..w).map(lit).max().unwrap();
+        assert!(edge >= 2 * h / 10, "the step from -1 to +1 V lights {edge} rows of its column");
+    }
+
     /// The point columns kept per thread (`XS`) give the spans of a thread that never drew before, also after a record
     /// of another time grid, view or width changed them in between.
     #[test]

@@ -666,8 +666,8 @@ impl Ui {
         let t1 = std::time::Instant::now();
         let zw = self.z_weights(&rec);
         // the fast path draws the other frames of the picture from their samples (`draw_frame`): the
-        // newest one the same way, or it adds about 3.6 times their counts per pixel (3600 record points
-        // against one span per column) and the grading of the picture follows how many of each it holds:
+        // newest one the same way, or it adds other counts per pixel than they do (with dots 3600 record points
+        // against a frame's samples) and the grading of the picture follows how many of each it holds:
         // the trace flickered with the batch sizes (docs/fork/flicker.md)
         // (in Average the record is the blended average, drawn as the record path draws it)
         let from_frame = self.fast_ok() && self.m.acq != AcqMode::Average;
