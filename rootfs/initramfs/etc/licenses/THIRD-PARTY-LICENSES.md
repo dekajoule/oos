@@ -43,7 +43,7 @@ also holds the parts listed here. Each keeps its own licence.
 | libnl | 3.11.0 (Alpine `libnl3-static` 3.11.0-r0) | LGPL-2.1-or-later | linked into `wpa_supplicant` and `wpa_cli` | `LGPL-2.1.txt` | `libnl-3.11.0.tar.gz`, `libnl3-musl.patch` (Alpine's one patch) |
 | BlueZ (`bluetoothd`, `btmon`) | 5.82 | GPL-2.0-or-later; its libraries LGPL-2.1-or-later | `/bin`, static | `bluez`, `GPL-2.0.txt`, `LGPL-2.1.txt` | `bluez-5.82.tar.xz` |
 | D-Bus (`dbus-daemon`) | 1.16.2 | AFL-2.1 OR GPL-2.0-or-later | `/bin/dbus-daemon`, static | `dbus` | `dbus-1.16.2.tar.xz` |
-| expat | 2.10.0 (Alpine `expat-static` 2.10.0-r0) | MIT | linked into `dbus-daemon` | `expat` | `expat-2.10.0.tar.xz` |
+| expat | 2.11.0 (Alpine `expat-static` 2.11.0-r0) | MIT | linked into `dbus-daemon` | `expat` | `expat-2.11.0.tar.xz` |
 | GLib | 2.84.4 (Alpine `glib-static` 2.84.4-r0) | LGPL-2.1-or-later | linked into `bluetoothd` | `LGPL-2.1.txt` | `glib-2.84.4.tar.xz`, `tests-machine-id.patch`, `flaky-tests.patch` (Alpine's patches) |
 | PCRE2 | 10.46 (Alpine `pcre2-static` 10.46-r1) | BSD-3-Clause WITH PCRE2-exception | linked into `bluetoothd` (through GLib) | `pcre2` | `pcre2-10.46.tar.bz2` |
 | GNU gettext (`libintl`) | 0.24.1 (Alpine `gettext-static` 0.24.1-r0) | LGPL-2.1-or-later | linked into `bluetoothd` (through GLib) | `LGPL-2.1.txt` | `gettext-0.24.1.tar.xz`, `cwd.patch`, `skip-tests-musl.patch`, `skip-meaningless-pthread-rwlock-test.patch` (Alpine's patches) |
