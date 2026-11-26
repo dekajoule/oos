@@ -247,9 +247,17 @@ frames per batch, decode + draw 117 -> 12.9 us per frame. Unit procedure in comp
   frames with an edge trigger found on a channel (else `to_record` as before). Most of the cost is `lanczos8`
   (30 of 40 us per channel at 3600 points), not the clone (5 %). `sparse::lanczos8_many` sums eight points at a time,
   each in `lanczos8`'s order, so the points are the same bits. Host ratio 0.60-0.62 (40 -> 24 us per channel). The
-  plan's 4x needs a polyphase kernel over the screen window only, which changes pixels: not done, it needs a
-  screenshot comparison on the unit. Guards: pixel equality over 612 set-ups (450 answered by the new path), bitwise
-  kernel equality incl. record ends and NaN samples, ignored timing ratio <= 0.8.
+  plan's 4x needs a polyphase kernel over the screen window only, which changes pixels. Guards: pixel equality over
+  612 set-ups (450 answered by the new path), ignored timing ratio <= 0.8.
+  Since 2026-11-26 the points of sparse frames (the sparse path's and the screen record's alike) come from a
+  fixed-point kernel, as fumingcaps' fork computes them since its release v0.2.1 (`interp::lanczos8_fixed`): the
+  positions in steps of 2^-36 samples, the samples a frame's points read as 16-bit steps of their range, the 1024
+  phases of `lanczos8`'s kernel in steps of 2^-14 (each phase summing to exactly one), 16-bit products in 32-bit
+  sums, two points at a time and the points between the same two samples on the same 16 neighbours. Within about
+  1e-4 of the samples' range of `lanczos8` (the phase rounding of 1/1024 sample is the larger error of both), at
+  most one pixel from its picture over 53 set-ups (sines to 0.45 of the sample rate at full scale, a noisy square;
+  most pictures differ in a pixel somewhere). One A53 of the unit, 1 channel at 5 ns/div: 347 -> 148 us for the
+  3600 points of a frame. Record ends and frames with a sample that is not finite keep `lanczos8`.
 - 1, batch pipeline (`drawpipe.rs`), the only draw path of the hardware since 2026-11-18 (ADR 0059; the default since
   2026-11-16, ADR 0029). Until then `acq.pipeline` in system.conf, `OOS_PIPELINE`, Acquire > Draw path and
   `:SYSTem:PIPeline` chose between it and the frames path (every frame through the UI queue, the workers off), which the

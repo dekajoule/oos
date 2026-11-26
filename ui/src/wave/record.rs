@@ -267,7 +267,7 @@ pub fn resample(
         // "Auto" interpolation; otherwise linear
         if sparse {
             let mut out = Vec::with_capacity(n);
-            oos_dsp::interp::lanczos8_grid(v, ti + t_first / f.dt, dt / f.dt, n, &mut out);
+            oos_dsp::interp::lanczos8_fixed(v, ti + t_first / f.dt, dt / f.dt, n, &mut out);
             ch[c] = out;
             continue;
         }
