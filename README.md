@@ -196,7 +196,7 @@ Every feature in detail: [Features](https://github.com/dekajoule/oos/wiki/Featur
 | Bode with a free-running sweep | tests on the host only (synthetic sweeps); the scan path for sweeps above about 0.9 s is not yet tried on a unit |
 | Bode with a generator on USB (USBTMC), UNI-T UTG900 preset | tests on the host only (a simulated USBTMC device); no generator on USB tried yet |
 | USB storage stick, 10:1 probe | run on a DHO924S |
-| WLAN | driver, firmware and scan run on a DHO924S with an RTL8188EU stick; joining a network tested on simulated radios only |
+| WLAN | TP-Link Archer TX10UB Nano run on a DHO924S, TP-Link Archer T2U Nano on a DHO804 (2.4 and 5 GHz); an RTL8188EU stick joins but passed almost no data through a TP-Link Deco mesh on a DHO804 |
 | Overclocking (System > Overclock) | run on a DHO924S: every step boots, but above 1.25 GHz records at the full rate lose samples; the default stays 1.25 GHz |
 | Spectrum, eye and jitter, results and trend panes, measurement labels, Auto | run on a DHO924S with the generator and an RF source |
 | Protocol decoders | tested with simulated signals; only some with real signals |

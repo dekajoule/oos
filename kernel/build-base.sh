@@ -80,9 +80,14 @@ docker run --rm -e OUT_OWNER="$(id -u):$(id -g)" -v oos-kbuild:/w -v "$here:/k:r
 	patch -p1 -s -d "$X/rtw89" --no-backup-if-mismatch < /k/modules/rtw89-linux-6.12.patch
 	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/rtw89" -j"$JOBS" modules > "$W/rtw89.log" 2>&1 || { tail -n 20 "$W/rtw89.log"; exit 1; }
 	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/rtw89" INSTALL_MOD_PATH="$W/modroot" INSTALL_MOD_STRIP=1 modules_install >/dev/null
+	# rtw88 of the same kernel for the RTL8821AU/RTL8811AU (USB WLAN), with its patch for the mac80211 of 6.12
+	cp -r /k/modules/rtw88 "$X/rtw88"
+	patch -p1 -s -d "$X/rtw88" --no-backup-if-mismatch < /k/modules/rtw88-linux-6.12.patch
+	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/rtw88" -j"$JOBS" modules > "$W/rtw88.log" 2>&1 || { tail -n 20 "$W/rtw88.log"; exit 1; }
+	make -C "$O" ARCH=arm64 CROSS_COMPILE=$CROSS M="$X/rtw88" INSTALL_MOD_PATH="$W/modroot" INSTALL_MOD_STRIP=1 modules_install >/dev/null
 	grep -qx "CONFIG_PCIE_ROCKCHIP_HOST=m" "$O/.config"
 	R=$(cat "$O/include/config/kernel.release"); M="$W/modroot/lib/modules/$R"
-	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko updates/rtw89_8851bu.ko; do [ -f "$M/$m" ]; done
+	for m in kernel/drivers/pci/controller/pcierockchiphost.ko updates/xdma.ko updates/rtw89_8851bu.ko updates/rtw88_8821au.ko; do [ -f "$M/$m" ]; done
 	cp "$O/arch/arm64/boot/Image" /out/Image
 	# the board and its opt-in variants (rk3399-rigol-dho900-uhs.dtb: boot card in UHS-I)
 	for d in /k/dts/*.dts; do cp "$O/arch/arm64/boot/dts/rockchip/$(basename "$d" .dts).dtb" /out; done
