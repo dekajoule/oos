@@ -1380,10 +1380,15 @@ impl Device {
             if t != self.setup_last {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
-                    // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot)
+                    // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot), synced
+                    // before the rename: a power cut leaves the old set-up or the new one
                     if sysconf::data_partition() {
-                        let _ = std::fs::write("/oos/oos-ui.setup.new", &t)
-                            .and_then(|_| std::fs::rename("/oos/oos-ui.setup.new", "/oos/oos-ui.setup"));
+                        let opts = oos_hal::fsutil::Opts::default();
+                        let _ = oos_hal::fsutil::write_atomic(
+                            std::path::Path::new("/oos/oos-ui.setup"),
+                            t.as_bytes(),
+                            &opts,
+                        );
                     }
                     self.setup_last = t;
                 }

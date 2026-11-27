@@ -1048,7 +1048,7 @@ impl Ui {
             }
             Item::StoreSaveSetup => {
                 let p = self.setup_path();
-                let r = crate::store::write(
+                let r = crate::store::write_durable(
                     &p,
                     format!("{}{}", crate::store::setup_text(&self.m), self.ref_setup_text()).as_bytes(),
                 );

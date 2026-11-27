@@ -1034,7 +1034,7 @@ impl Ui {
         let Some(r) = &self.mask_sw.reference else { return self.toast("No mask yet: Create mask first") };
         let t = crate::store::mask_text(self.m.mask_src, self.m.mask_x, self.m.mask_y, self.m.mask_inv, r);
         let slot = self.mask_path();
-        if let Err(e) = crate::store::write(&slot, t.as_bytes()) {
+        if let Err(e) = crate::store::write_durable(&slot, t.as_bytes()) {
             return self.toast(&format!("Save failed: {}", e));
         }
         let p = crate::store::next_name(&self.save_dir(), "mask", "txt");
