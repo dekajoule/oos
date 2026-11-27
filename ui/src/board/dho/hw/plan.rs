@@ -78,6 +78,26 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
     b
 }
 
+/// Longest wait for further frames of a batch after its first one (`seq::acquire_batch_on`): the ring fills while
+/// the loop draws frames of the last batch.
+#[cfg(any(target_os = "linux", test))]
+pub(super) const FILL_MS: u64 = 25;
+
+/// The wait for further frames of a batch after its first one: `FILL_MS`, or none when one record lasts `FILL_MS` or
+/// longer, as no further frame can be complete within the wait. From 2 ms/div at 100 kpts (records of 40 ms and more)
+/// the wait was dead time of every record: 8.7 records a second at 5 ms/div and 13 at 2 ms/div, where the records
+/// themselves allow 12.5 and 25 (unit 2026-11-27, two channels, XY and YT alike). The fork yottabytesolutions/oos
+/// (fumingcaps, release v0.2.2) shortens this wait at slow time bases the same way.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn fill_wait_ms(p: &hz::Params) -> u64 {
+    let record_ms = p.memsel as f64 * 1e3 / p.rate.max(1) as f64;
+    if record_ms >= FILL_MS as f64 {
+        0
+    } else {
+        FILL_MS
+    }
+}
+
 /// Frames a batch arms with the deposit workers' grant (`pipe::Workers::grant`, ADR 0081): a batch planned with up to
 /// `FRAME0_CHECK_MAX_FRAMES` (slow time bases, SINGLE) as planned, a longer one at most `grant` but not that short, so
 /// the rules for frames 0 and 1 of a short batch stay with the slow time bases.

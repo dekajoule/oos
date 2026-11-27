@@ -7,7 +7,8 @@ fork at 0.1.11 + fork features, `upstream-audit.md` (P1). Host timings. Nothing 
 
 Data path per batch (`ui/src/board/dho/hw.rs`, `hal/src/dho/seq.rs`):
 
-1. hw thread: arm, poll 0x4080 every 500 us, let the ring fill up to 25 ms, play, one C2H read of up to 4 MB.
+1. hw thread: arm, poll 0x4080 every 500 us, let the ring fill up to 25 ms (not at all when one record lasts 25 ms
+   or longer: no further frame can be complete in the wait), play, one C2H read of up to 4 MB.
 2. hw thread: `decode` every frame of the batch to `Vec<f32>` per channel (up to `1000 / ratio` frames).
 3. hw thread: push into `Shared::queue`, then trim it to `QUEUE_MAX` = 96. At short time bases 1000 frames are
    decoded and about 900 are dropped unseen.

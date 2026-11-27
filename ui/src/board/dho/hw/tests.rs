@@ -1384,3 +1384,15 @@ fn a_batch_after_the_wait_finds_a_buffer_and_is_not_dropped() {
     assert_eq!(counters.read().2, 0);
     drop(fed);
 }
+
+#[test]
+fn a_record_as_long_as_the_fill_wait_is_read_without_it() {
+    // two channels, 100 kpts: 1 ms/div records 16 ms (a second frame can land in the wait), 2 and 5 ms/div 40 and
+    // 80 ms (none can: the wait would be dead time of every record)
+    let at = |tdiv_s: f64| super::plan::fill_wait_ms(&hz::prep(3, (tdiv_s * 1e15) as i128, 100_000, 0));
+    assert_eq!(at(1e-3), super::plan::FILL_MS);
+    assert_eq!(at(2e-3), 0);
+    assert_eq!(at(5e-3), 0);
+    // short records keep the wait: many frames a batch
+    assert_eq!(at(1e-6), super::plan::FILL_MS);
+}

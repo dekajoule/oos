@@ -520,7 +520,8 @@ impl<P: port::Port> Loop<P> {
         {
             b.frames = a.frames;
         }
-        // one batch: arm, let the ring fill for up to 25 ms after the first frame, one play, one read
+        // one batch: arm, let the ring fill for up to 25 ms after the first frame (none when a record is that long,
+        // `plan::fill_wait_ms`), one play, one read
         // armed ahead with these settings and since the last SINGLE press: only the wait is left
         let ahead = self.armed.as_ref().is_some_and(|(a, st)| *a == b && *st == stamp);
         if !ahead {
@@ -554,7 +555,7 @@ impl<P: port::Port> Loop<P> {
             &mut self.batch.dma,
             &mut self.clock,
             ahead,
-            25,
+            plan::fill_wait_ms(p),
             |_| {},
             changed,
             idle,
