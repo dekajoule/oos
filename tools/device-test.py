@@ -1987,7 +1987,8 @@ def logger_writes(s, o):
     s.w(":SYST:LOG ON")
     time.sleep(6)
     s.w(":SYST:LOG OFF")
-    t = s.shell("ls -t /tmp/oos/log-*.csv /oos/log-*.csv 2>/dev/null | head -1 | xargs wc -l")
+    # the logger writes to a USB stick when one is in (its OOS folder), else to /tmp/oos or /oos
+    t = s.shell("ls -t /mnt/usb/OOS/log-*.csv /tmp/oos/log-*.csv /oos/log-*.csv 2>/dev/null | head -1 | xargs wc -l")
     assert re.search(r"\b[4-9]\b", t), t
 
 
