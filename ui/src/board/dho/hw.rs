@@ -12,6 +12,8 @@ mod batch;
 #[cfg(any(target_os = "linux", test))]
 mod config;
 mod decode;
+#[cfg(any(target_os = "linux", test))]
+mod dmafault;
 #[cfg(test)]
 mod liverun;
 mod plan;
@@ -227,6 +229,8 @@ struct Loop<P: port::Port> {
     count_n: u64,
     /// the mask/zone unit's stall guard
     guard: UnitGuard,
+    /// C2H reads the FPGA did not finish, and the wait before the next arm (`dmafault.rs`)
+    dma: dmafault::DmaFault,
     /// the measure unit's side jobs: the DVM block, the levels, the debug slots (`units.rs`)
     units: UnitJobs,
 }
@@ -311,6 +315,7 @@ impl<P: port::Port> Loop<P> {
             counting: None,
             count_n: 0,
             guard: UnitGuard::default(),
+            dma: dmafault::DmaFault::default(),
             units: UnitJobs::default(),
         }
     }
@@ -467,6 +472,19 @@ impl<P: port::Port> Loop<P> {
         (g.cal_progress, g.cal_result, g.cal_cancel) = (None, Some(res), false);
     }
 
+    /// A batch whose C2H read timed out (`dmafault.rs`): counted, logged now and then, configured anew at the next pass.
+    fn dma_timed_out(&mut self, e: &str) {
+        use oos_hal::dho::boot::Clock;
+        if self.stop.last_batch.as_ref().is_some_and(|l| l.2 == 0) {
+            self.stop.last_batch = None;
+        }
+        let now = self.clock.now_us();
+        if let Some(line) = self.dma.timeout(now, e) {
+            report(&self.out, line);
+        }
+        self.config.current = None;
+    }
+
     /// A pass of normal acquisitions with the settings `s` configured as `p` (`sp`), as `req` asked for them, with
     /// `hold` and the final-frame request of STOP read at the top of the pass: in STOP nothing is armed; else, when
     /// SINGLE wants more, the average cleared when asked, one batch armed (or armed ahead), waited for and read.
@@ -479,6 +497,11 @@ impl<P: port::Port> Loop<P> {
         if hold {
             lock(&self.out).final_ack = final_req;
             self.clock.sleep_us(5000);
+            return;
+        }
+        // C2H reads timed out in a row: no arm until the wait is over, the loop serves requests meanwhile
+        if self.dma.waiting(self.clock.now_us()) {
+            self.clock.sleep_us(20_000);
             return;
         }
         if std::mem::take(&mut self.stop.paused) {
@@ -545,6 +568,9 @@ impl<P: port::Port> Loop<P> {
         // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
         // the frame count, so the read waits at most one frame longer
         let idle = || pipe.is_some_and(|x| x.help(&mut self.batch.helper));
+        if self.dma.stall_due() {
+            self.batch.dma.stall_next_read();
+        }
         let t_batch = self.clock.now_us();
         let got = seq::acquire_batch_on(
             &mut self.state,
@@ -566,6 +592,7 @@ impl<P: port::Port> Loop<P> {
         }
         match got {
             Ok(count) => {
+                self.dma.read_ok();
                 let held = batch::Held {
                     armed: &mut self.armed,
                     avg: &mut self.config.avg,
@@ -592,6 +619,9 @@ impl<P: port::Port> Loop<P> {
                     }
                 }
             }
+            // the FPGA did not deliver the play: counted, logged now and then, configured anew; the next arm
+            // starts with the stop sequence
+            Err(e) if e.starts_with(seq::DMA_TIMEOUT) => self.dma_timed_out(&e),
             Err(e) => {
                 if self.stop.last_batch.as_ref().is_some_and(|l| l.2 == 0) {
                     self.stop.last_batch = None;
