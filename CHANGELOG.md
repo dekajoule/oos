@@ -1,5 +1,48 @@
 # Changes
 
+## 0.2.3
+
+Released on 2026-11-27. Waveforms a second at slow time bases and reliability. From 2 ms/div on, the acquisition
+no longer waits for a record that cannot come, and the next record is armed while the last one is prepared for the
+screen: in XY with two channels on a DHO924S 12.1, 23.1 and 44 waveforms a second at 5, 2 and 1 ms/div (0.2.2: 8.6,
+13.1 and 34; fumingcaps' fork 0.2.2 measured on the same unit and set-up: 10.8, 16.2 and 32.5). A deep record stopped
+at a short time base keeps its whole length again (#47). The card and a USB stick are left clean at power off, restart
+and update, a stalled record transfer costs 1 s instead of 10 s, and Dots has an Auto choice. Several ideas come from
+fumingcaps' fork (0.2.2), named at each entry. On a DHO924S: `tools/device-test.py` 60 pass and the two known
+failures of 0.2.2 (an offset at 100 mV, the generator's middle at high amplitudes); `tools/device-bench.py` at all 22
+views at least as many waveforms a second as 0.2.2 (up to 2.7 times at 4 channels, Peak, 100 us/div); a power off, a
+restart and an update by kexec left the data partition clean. The problem known in 0.2.2 (`:WAVeform:MODE RAW` after a
+STOP at deep memory answering the screen's points) has the cause of #47 and was not seen since.
+
+Added:
+
+- Display > Dots has a third choice, Auto: lines, with the samples the scope really took marked over them once they
+  lie 8 pixels or more apart (the fast time bases), and dots in XY. Off now joins the points in XY too. The idea comes
+  from fumingcaps' fork (0.2.2) ([First Steps](wiki/First-Steps.md)).
+
+Changed:
+
+- More records a second reach the screen at slow time bases: after a record that lasts 25 ms or more the acquisition
+  no longer waits for a second one that cannot come, and the next record is armed while the current one is still
+  being prepared for the screen. Two channels, XY and YT alike: 5 ms/div 12.1 instead of 8.6 records a second (97 %
+  of the time covered), 2 ms/div 23.1 instead of 13.1 (92 %), 1 ms/div 44 instead of 34 (70 %) (unit). The idea
+  of the first part comes from fumingcaps' fork (0.2.2). `acq.prearm = off` in system.conf is the way back for the
+  second part.
+
+Fixed:
+
+- Power off and Restart in the power dialog, and the restart into an update, first unmount a USB stick and leave the
+  card's data partition read only, so neither is left half written
+  ([Updates and going back](wiki/Updates-and-Going-Back.md)).
+- A deep record (10 M to 125 M points) stopped at a short time base and then zoomed out shows its whole length again,
+  not only the few microseconds around the trigger that were on the screen (#47, reported on a DHO804; unit).
+- A record transfer the FPGA does not finish stops the acquisition for 1 s instead of 10 s; the scope then sets the
+  acquisition up again by itself, waiting longer when it happens again and again. `:SYSTem:STATe?` counts them
+  (`dma timeouts`).
+- A set-up or mask saved to a slot, and the screen's set-up kept across power cycles, are synced before they replace
+  the old file: switching the scope off at the mains right after a save leaves the old file or the new one, never a
+  part of it ([First Steps](wiki/First-Steps.md)).
+
 ## 0.2.2
 
 Released on 2026-11-26. Mostly waveforms a second: the screen follows the panel's refresh, the drawing of Normal,
