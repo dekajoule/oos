@@ -149,6 +149,17 @@ fn tdiv_by_value_and_legacy_index() {
     assert!(parse_setup("tdiv = 3e-9").is_err());
 }
 
+// Break it catches: a setup of before Auto (dots = true / false) loading as another choice, or Auto not kept
+#[test]
+fn dots_of_older_setups_and_auto_round_trip() {
+    for (line, want) in [("dots = true\n", Dots::On), ("dots = false\n", Dots::Off), ("dots = auto\n", Dots::Auto)] {
+        let m = parse_setup(line).unwrap();
+        assert_eq!(m.dots, want, "{}", line);
+        assert_eq!(parse_setup(&setup_text(&m)).unwrap().dots, want);
+    }
+    assert!(setup_text(&parse_setup("dots = true\n").unwrap()).contains("dots = true"));
+}
+
 #[test]
 fn vdiv_by_value_and_legacy_index() {
     let m = parse_setup("ch1.vdiv = 0.0001\nch2.vscale = 10\n").unwrap();
@@ -240,7 +251,7 @@ pub(super) fn custom() -> Model {
     m.math_bw = 777.0;
     m.zones[1] =
         crate::zone::Zone { on: true, src: 2, inside: false, pts: vec![(-1e-4, 0.5), (2.5e-5, 1.25), (3e-5, -0.75)] };
-    m.dots = true;
+    m.dots = Dots::On;
     m.z_src = Some(3);
     m.hist = Hist::Horizontal;
     (m.view, m.spec_src, m.spec_center, m.spec_span, m.spec_rbw, m.spec_trace, m.spec_ref, m.spec_wf, m.spec_dist) =

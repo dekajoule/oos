@@ -458,8 +458,8 @@ pub struct Model {
     pub zdelay: f32,   // centre of the zoom window relative to the trigger
     /// colour-graded persistence: trace pixels coloured by hit density (temperature map)
     pub color_grade: bool,
-    /// draw the samples as dots instead of connected lines (pseudo dot mode)
-    pub dots: bool,
+    /// Display > Dots: the samples as dots, joined by lines, or Auto (`Dots`)
+    pub dots: Dots,
     /// what an HDMI monitor shows (Display > HDMI). Mirror copies the panel. Waveform and Layout put the plot on the
     /// display and leave the panel for controls; the density changes that plot, the panel keeps its bars.
     pub hdmi: HdmiMode,
