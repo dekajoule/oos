@@ -7,8 +7,8 @@
 use super::decode::decode;
 use super::plan::{
     batch_plan, deep_raw_settings, edge_check, final_replay, frame0_check_wanted, frame0_left_out,
-    frame1_left_out_unseen, frame1_off_trigger, prearm_keeps_replay, stop_plan, zone_batch, zone_batch_from, Edge,
-    FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP, FRAME1_CHECK_MAX, PREARM_OFF,
+    frame1_left_out_unseen, frame1_off_trigger, hold_grace_looks, partly_read, prearm_keeps_replay, stop_plan,
+    zone_batch, zone_batch_from, Edge, FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP, FRAME1_CHECK_MAX, PREARM_OFF,
 };
 use super::serial::{i2c_of, serial_debug, serial_lines_acquired, spi_of, uart_debug, uart_of, SERIAL_HW};
 use super::settings::{
@@ -1003,8 +1003,9 @@ fn final_replay_at_stop() {
     assert!(!prearm_keeps_replay(&b, &p, w));
     let ahead = prearm_keeps_replay(&b, &p, w);
     assert!(final_replay(&b, &p, 3, false, ahead, w).is_some());
-    // prearm stays where no deep replay can come: without the deep measurements, a shallow record
-    assert!(prearm_keeps_replay(&b, &p, None));
+    // not for a record the live read takes only part of either, deep measurements or not: the views after a STOP read
+    // it again from the ring (issue #47)
+    assert!(partly_read(&b) && !prearm_keeps_replay(&b, &p, None));
     m.mdepth = 0;
     m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
     let s = settings(&m, false);
@@ -1395,4 +1396,22 @@ fn a_record_as_long_as_the_fill_wait_is_read_without_it() {
     assert_eq!(at(5e-3), 0);
     // short records keep the wait: many frames a batch
     assert_eq!(at(1e-6), super::plan::FILL_MS);
+}
+
+// Break it catches (issue #47): a STOP that cuts the wait for a deep record being recorded (the arm has already written
+// the ring over the record before, so the views after the STOP find only the live window), or a grace for records the
+// live read takes whole, which would hold every STOP up for nothing
+#[test]
+fn a_stop_lets_a_partly_read_record_finish_and_no_other() {
+    let s = Settings { mask: 1, tdiv: 50e-9, depth: 50_000_000, window: None, ..Settings::default() };
+    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+    let b = batch_plan(&s, &p);
+    assert!(partly_read(&b), "50 M at 50 ns/div: the live read is the screen window");
+    // 40 ms of record: twice that and 50 ms, in looks every 10 ms
+    assert_eq!(hold_grace_looks(&b, &p), 13);
+    let s = Settings { mask: 1, tdiv: 1e-6, depth: 10_000, window: None, ..Settings::default() };
+    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+    let b = batch_plan(&s, &p);
+    assert!(!partly_read(&b));
+    assert_eq!(hold_grace_looks(&b, &p), 0);
 }
