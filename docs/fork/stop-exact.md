@@ -36,7 +36,7 @@ In the acquisition thread the STOP is `StopRun` in `ui/src/board/dho/hw/stop.rs`
   2026-11-20, 1 kHz square, 1 ms/div, 100 k, Normal): `:STOP;*OPC?` answered after 100 to 160 ms, and the preamble
   and the data read at once and 0.6 s later were the same record in 12 of 12 runs (main: 0 of 12); without a
   trigger (Normal, generator off) `*OPC?` answered after about 100 ms, not 3 s.
-- Arming ahead (`acq.prearm = on`, the unit's set-up) is skipped for batches the deep measurements may replay
+- Arming ahead (`acq.prearm`, on by default) is skipped for batches the deep measurements may replay
   (`prearm_keeps_replay`: a compressed deep record with deep measurements on), so the ring of the last batch stays for
   the replay. Prearm's gain is at short time bases; at deep records the read takes most of the batch anyway.
 - No replay when the newest frame was already raw (rate-limited deep read, live compression), when the next batch was
