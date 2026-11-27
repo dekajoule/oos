@@ -18,18 +18,19 @@ pub(super) fn force_prearm(on: Option<bool>) {
     PREARM_ON.force(on);
 }
 
-/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
-/// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
-/// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
-///.
+/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time. On by
+/// default since it was verified on the unit 2026-11-27 (DHO924S: the whole device test with it on, among it the stop
+/// of an acquisition armed ahead and then not read at new settings, STOP, the generator, roll and scan, segments;
+/// records a second with two channels at 5 ms/div 11.0 to 12.1, 2 ms/div 19.5 to 23.1, 1 ms/div 34 to 44). The way
+/// back: `acq.prearm = off` in system.conf, or OOS_PREARM=0.
 pub(super) fn prearm_on() -> bool {
     PREARM_ON.get()
 }
 
-static PREARM_ON: crate::board::policy::Switch =
-    crate::board::policy::Switch::new(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get());
+static PREARM_ON: crate::board::policy::Switch = crate::board::policy::Switch::new(|| !PREARM_OFF.get());
 
-pub(super) const PREARM: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.prearm", env: None, on: "on" };
+pub(super) const PREARM_OFF: crate::sysconf::Flag =
+    crate::sysconf::Flag { key: "acq.prearm", env: Some("OOS_PREARM"), on: "off" };
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
 #[cfg(any(target_os = "linux", test))]

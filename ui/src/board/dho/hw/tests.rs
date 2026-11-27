@@ -8,7 +8,7 @@ use super::decode::decode;
 use super::plan::{
     batch_plan, deep_raw_settings, edge_check, final_replay, frame0_check_wanted, frame0_left_out,
     frame1_left_out_unseen, frame1_off_trigger, prearm_keeps_replay, stop_plan, zone_batch, zone_batch_from, Edge,
-    FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP, FRAME1_CHECK_MAX, PREARM,
+    FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP, FRAME1_CHECK_MAX, PREARM_OFF,
 };
 use super::serial::{i2c_of, serial_debug, serial_lines_acquired, spi_of, uart_debug, uart_of, SERIAL_HW};
 use super::settings::{
@@ -32,7 +32,7 @@ use std::sync::Arc;
 fn the_switches_take_the_image_defaults_under_the_settings_file() {
     use super::{plan::zone_batch_from, units::mask_map_from};
     use crate::sysconf::fork_text_of as both;
-    for f in [&CORE_OFFSET, &HW_STATUS_OFF, &DVM_HW, &MASK_HW, &ZONE_HW, &SERIAL_HW, &PREARM, &FRAME0_KEEP] {
+    for f in [&CORE_OFFSET, &HW_STATUS_OFF, &DVM_HW, &MASK_HW, &ZONE_HW, &SERIAL_HW, &PREARM_OFF, &FRAME0_KEEP] {
         f.check_both_files();
     }
     assert!(!DVM_HW.of(None, "dvm.hw = yes\n") && !CORE_OFFSET.of(None, "cal.core_offset = on\n"));
