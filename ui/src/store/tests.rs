@@ -1213,3 +1213,20 @@ fn a_setup_loads_what_it_can() {
     assert!(bad.len() == 2 && bad[0].contains("dec_proto") && bad[1].contains("avg_hw"), "{:?}", bad);
     assert_eq!(parse_setup_lenient(&setup_text(&m)).1, Vec::<String>::new());
 }
+
+// Break it catches: a setup or mask slot written in place (`write`), which a power cut can leave half written, or a
+// durable write that skips the target check `write` makes (a link on the way, a directory in the file's place).
+#[test]
+fn a_slot_file_is_replaced_in_one_step() {
+    let d = std::env::temp_dir().join(format!("oos-store-durable-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let p = d.join("setups").join("setup1.txt");
+    write_durable(&p, b"first").unwrap();
+    write_durable(&p, b"second").unwrap();
+    assert_eq!(std::fs::read(&p).unwrap(), b"second");
+    assert!(!p.with_file_name("setup1.txt.new").exists(), "the temporary file is renamed, not left beside it");
+    let dir_in_place = d.join("setups").join("mask1.txt");
+    std::fs::create_dir_all(&dir_in_place).unwrap();
+    assert!(write_durable(&dir_in_place, b"x").is_err(), "a directory in the file's place is refused");
+    let _ = std::fs::remove_dir_all(&d);
+}
