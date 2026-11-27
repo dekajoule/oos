@@ -135,6 +135,10 @@ with the other preferences and across restarts; Default set-up and Recall keep i
 
 ## Display settings
 
+- **Display > Dots:** how the samples are drawn. On (the default) draws a dot for every sample; Off joins them with
+  lines. Auto draws lines, and once the samples lie 8 pixels or more apart (the fast time bases, where the line between
+  them is interpolated) marks the samples the scope really took over the line; in XY it draws dots. The idea of Auto
+  comes from fumingcaps' fork.
 - **Display > Backlight** (from 0.1.9): the panel's brightness, 10 to 100 %, in steps that look even. It is a
   setting of the scope (`/oos/system.conf`).
 - **System > Graphics** (from 0.1.7; under Display until 0.1.11): GPU (the default) or CPU. With GPU the scope's

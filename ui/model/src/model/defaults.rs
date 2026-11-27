@@ -153,7 +153,7 @@ impl Default for Model {
             zdelay: 0.0,
             color_grade: false,
             // samples as dots by default
-            dots: true,
+            dots: Dots::On,
             hdmi: HdmiMode::Waveform,
             bar_compact: false,
             hdmi_view: 0,

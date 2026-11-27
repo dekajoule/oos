@@ -398,7 +398,7 @@ A reference can be a trigger, measurement, cursor, Math or decoder source like a
 
 | Command | Values |
 |---|---|
-| `:DISPlay:TYPE[?]` | `DOTS\|VECTors` |
+| `:DISPlay:TYPE[?]` | `DOTS\|VECTors\|AUTO` |
 | `:DISPlay:GRADing:TIME[?]` | `MIN`, `0.1`, `0.5`, `1`, `5`, `10`, `INFinite` |
 | `:DISPlay:WBRightness[?]`, `:GBRightness[?]`, `:GRID[?]`, `:RULers[?]`, `:COLor[?]` | waveform/grid brightness, grid, rulers, colour grading |
 | `:DISPlay:VIEW[?] <n>`, `:VIEW:COUNt[?] 1..4`, `:VIEW:MONitor[?] 0..4` | OOS: the views of Display > Views, and the one an HDMI monitor shows |

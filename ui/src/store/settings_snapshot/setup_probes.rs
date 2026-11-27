@@ -290,7 +290,7 @@ const KEYS: &[(&str, P)] = &[
     ("zoom_tdiv", Num(TDIV)),
     ("zdelay", Num(&[])),
     ("color_grade", Bool),
-    ("dots", Bool),
+    ("dots", Is(&["true", "false", "on", "off", "1", "0", "TRUE", "yes", "auto", "AUTO"])),
     ("bar", Is(&["cards", "compact", "Cards"])),
     ("hdmi", Is(&["Mirror", "Waveform", "Layout", "mirror"])),
     ("hdmi_view", Is(&["0", "1", "4", "5", "+1"])),
