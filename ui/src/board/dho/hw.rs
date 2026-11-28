@@ -556,11 +556,12 @@ impl<P: port::Port> Loop<P> {
         // without a trigger that wait was the whole `STOP_FINAL_WAIT`
         let asked = &req.asked;
         let (grace, held) = (plan::hold_grace_looks(&b, p), std::cell::Cell::new(0u32));
-        let changed = || cut_wait(&self.out, asked, grace, &held);
+        let changed = || cut_wait(&self.out, asked, grace, &held, true);
         // the workers still hold the buffers the next batch needs (one to read into, one to swap in): wait for them
         // and draw with them instead of reading a batch that would be dropped
         if let Some(x) = admit {
             let free = || x.lent() + 2 <= decode::POOL;
+            let changed = || cut_wait(&self.out, asked, grace, &held, false);
             plan::wait_for_workers(&mut self.clock, free, || x.help(&mut self.batch.helper), changed);
         }
         // while the FPGA's ring fills this thread draws frames of the last batch (drawpipe.rs), one per look at
@@ -636,17 +637,23 @@ impl<P: port::Port> Loop<P> {
     }
 }
 
-/// Whether the wait for a batch ends now: new settings at once; a STOP (`hold`) after `grace` looks (a deep record being
-/// recorded finishes first, `plan::hold_grace_looks`, issue #47), `held` counting them; a view read in STOP at once.
+/// Whether the wait for a batch ends now: new settings at once; a STOP (`hold`) after `grace` looks at the frame count
+/// (`look`; a deep record being recorded finishes first, `plan::hold_grace_looks` and `plan::hold_cuts`, issue #47),
+/// `held` counting them; a view read in STOP at once.
 #[cfg(any(target_os = "linux", test))]
-fn cut_wait(out: &HwShared, asked: &(Option<Settings>, Slow), grace: u32, held: &std::cell::Cell<u32>) -> bool {
+fn cut_wait(
+    out: &HwShared,
+    asked: &(Option<Settings>, Slow),
+    grace: u32,
+    held: &std::cell::Cell<u32>,
+    look: bool,
+) -> bool {
     let g = lock(out);
     if (g.want.as_ref(), g.slow) != (asked.0.as_ref(), asked.1) {
         return true;
     }
     if g.hold {
-        held.set(held.get() + 1);
-        return held.get() > grace;
+        return plan::hold_cuts(grace, held, look);
     }
     g.stop_view.is_some()
 }

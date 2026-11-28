@@ -7,8 +7,9 @@
 use super::decode::decode;
 use super::plan::{
     batch_plan, deep_raw_settings, edge_check, final_replay, frame0_check_wanted, frame0_left_out,
-    frame1_left_out_unseen, frame1_off_trigger, hold_grace_looks, partly_read, prearm_keeps_replay, stop_plan,
-    zone_batch, zone_batch_from, Edge, FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP, FRAME1_CHECK_MAX, PREARM_OFF,
+    frame1_left_out_unseen, frame1_off_trigger, hold_cuts, hold_grace_looks, partly_read, prearm_keeps_replay,
+    prearm_unless, stop_plan, zone_batch, zone_batch_from, Edge, FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP,
+    FRAME1_CHECK_MAX, PREARM_OFF,
 };
 use super::serial::{i2c_of, serial_debug, serial_lines_acquired, spi_of, uart_debug, uart_of, SERIAL_HW};
 use super::settings::{
@@ -1414,4 +1415,30 @@ fn a_stop_lets_a_partly_read_record_finish_and_no_other() {
     let b = batch_plan(&s, &p);
     assert!(!partly_read(&b));
     assert_eq!(hold_grace_looks(&b, &p), 0);
+}
+
+// Break it catches (issue #47): the wait for the workers, which looks every 250 us, using up the STOP's grace of looks
+// every 10 ms in a few ms, so a deep record is cut before it is finished; a cut one look after the grace
+#[test]
+fn only_the_looks_at_the_frame_count_use_up_the_grace_of_a_stop() {
+    let held = std::cell::Cell::new(0);
+    for _ in 0..800 {
+        assert!(!hold_cuts(13, &held, false), "the wait for the workers does not cut a STOP with a grace");
+    }
+    assert_eq!(held.get(), 0);
+    let cut_at = (1..=20).find(|_| hold_cuts(13, &held, true));
+    assert_eq!(cut_at, Some(13), "the 13th look ends the wait: 130 ms");
+    // without a grace the STOP cuts at once, in either wait
+    assert!(hold_cuts(0, &std::cell::Cell::new(0), false) && hold_cuts(0, &std::cell::Cell::new(0), true));
+}
+
+// Break it catches: arming ahead back off by default (verified on the unit as on, 2026-11-27), or on with
+// `acq.prearm = off` or OOS_PREARM=0
+#[test]
+fn arming_ahead_is_on_unless_it_is_switched_off() {
+    use crate::sysconf::fork_text_of as both;
+    assert!(prearm_unless(PREARM_OFF.of(None, &both("", ""))), "on by default");
+    assert!(!prearm_unless(PREARM_OFF.of(None, &both("acq.prearm = off\n", ""))), "off in system.conf");
+    assert!(!prearm_unless(PREARM_OFF.of(Some("0"), &both("", ""))), "off with OOS_PREARM=0");
+    assert!(prearm_unless(PREARM_OFF.of(Some("1"), &both("acq.prearm = off\n", ""))), "the variable wins");
 }

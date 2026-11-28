@@ -27,7 +27,12 @@ pub(super) fn prearm_on() -> bool {
     PREARM_ON.get()
 }
 
-static PREARM_ON: crate::board::policy::Switch = crate::board::policy::Switch::new(|| !PREARM_OFF.get());
+static PREARM_ON: crate::board::policy::Switch = crate::board::policy::Switch::new(|| prearm_unless(PREARM_OFF.get()));
+
+/// Arming ahead is on unless `PREARM_OFF` is set: the default of `prearm_on`.
+pub(super) fn prearm_unless(off: bool) -> bool {
+    !off
+}
 
 pub(super) const PREARM_OFF: crate::sysconf::Flag =
     crate::sysconf::Flag { key: "acq.prearm", env: Some("OOS_PREARM"), on: "off" };
@@ -383,6 +388,18 @@ pub(super) fn hold_grace_looks(b: &Settings, p: &hz::Params) -> u32 {
     }
     let record_ms = p.memsel as f64 * 1e3 / p.rate as f64;
     ((2.0 * record_ms + 50.0) / 10.0).ceil() as u32
+}
+
+/// Whether a STOP cuts the wait for a batch now: at the `grace`-th look at the frame count (`look`, `held` counting
+/// them), so a grace of 25 looks ends the wait after 250 ms; a look of the wait for the workers (`wait_for_workers`,
+/// every 250 us) does not count against it and cuts only without a grace, or 13 looks would be used up in a few ms and
+/// a deep record cut before it is finished (issue #47).
+pub(super) fn hold_cuts(grace: u32, held: &std::cell::Cell<u32>, look: bool) -> bool {
+    if !look {
+        return grace == 0;
+    }
+    held.set(held.get() + 1);
+    held.get() >= grace
 }
 
 /// The raw read at STOP (docs/fork/stop-exact.md) of the newest frame of the batch `b` with `count` frames read just
