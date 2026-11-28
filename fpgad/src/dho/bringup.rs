@@ -48,6 +48,17 @@ pub(super) fn xdma_params(v: Option<&str>) -> Result<String, String> {
     Ok(words.join(" "))
 }
 
+/// `xdma_params`, or, for a value that is not allowed, the parameters without `xdma.params` (said on stderr): the C2H
+/// timeout of 1 s stays either way, as in the shell's loader (`oos-fpga-up`).
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn xdma_params_or_default(v: Option<&str>) -> String {
+    xdma_params(v).unwrap_or_else(|e| {
+        let d = xdma_params(None).unwrap_or_else(|_| XDMA_DEFAULT.into());
+        eprintln!("oos-fpgad: {}; loading xdma with {}", e, d);
+        d
+    })
+}
+
 /// PCIe host + xdma bring-up with retries (the loop of oos-fpga-up, without the FPGA boot), then BAR1. The device and
 /// the xdma nodes are polled every 20 ms instead of the fixed 2 s / 1 s sleeps of oos-fpga-up (`insmod` returns once
 /// the driver probed, so a link that is up shows at once).
@@ -83,10 +94,7 @@ pub(super) fn pcie_up() -> std::io::Result<oos_hal::dho::bus::Bar1> {
             .output()
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-        let params = xdma_params(conf.as_deref()).unwrap_or_else(|e| {
-            eprintln!("oos-fpgad: {}; loading xdma with {}", e, XDMA_DEFAULT);
-            XDMA_DEFAULT.into()
-        });
+        let params = xdma_params_or_default(conf.as_deref());
         eprintln!("oos-fpgad: insmod xdma.ko {}", params);
         if !sh(&format!("insmod {}/updates/xdma.ko {}", m, params)) {
             return Err(std::io::Error::other("insmod xdma failed"));
