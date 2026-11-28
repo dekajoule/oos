@@ -45,8 +45,7 @@ Both are pinned, so a build takes the same compiler and the same base images unt
   are built on the host.
 
   To bump: set `channel` to the new release, run `tools/check.sh`, fix what it finds (a new Clippy lint, a changed
-  layout of rustfmt), all in one pull request. The weekly run tries the newest stable release against the tree (job
-  `canary`) and opens an issue when it fails.
+  layout of rustfmt), all in one pull request (ADR 0084: no scheduled run tries a newer release before).
 - **Base images:** `OOS_ALPINE` and `OOS_UBUNTU` in `tools/lib/docker.sh` are `name:tag@sha256:<digest>`. Docker takes
   the image by its digest; the tag only says which release that is. The digest is the one of the index for all
   platforms, so the same name serves an arm64 and an x86-64 host. It pins the base image, not what a build installs

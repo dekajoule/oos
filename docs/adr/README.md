@@ -102,6 +102,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0079](system/0079-the-rear-usb-port-is-a-network-link-to-one-computer.md) | system | The rear USB port is a network link to one computer, off by default | proposed |
 | [0081](code/0081-the-acquisition-arms-only-what-the-deposit-workers-can-draw.md) | code | The acquisition arms only what the deposit workers can draw | proposed |
 | [0083](code/0083-hot-paths-are-data-oriented-and-a-family-may-plug-in-its-own-kernels.md) | code | Hot paths are data-oriented, and a family may plug in its own kernels next to the portable reference | accepted |
+| [0084](process/0084-there-is-no-weekly-run.md) | process | There is no weekly run | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents

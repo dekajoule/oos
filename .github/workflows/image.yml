@@ -9,7 +9,7 @@
 # programs built from the OOS source (see the job). That is a check of the build, not a part of a release: a release
 # needs one image.
 #
-# With `sims` (the weekly run asks for it): the simulations run on what was built (tools/check.sh sim).
+# With `sims` (by hand): the simulations run on what was built (tools/check.sh sim).
 #
 # For a tag `vX.Y.Z` the last job drafts the release: the image, the update package, the install file, SHA256SUMS
 # and the changelog of that version. A draft, not a publication.
@@ -23,15 +23,6 @@ on:
         default: false
       sims:
         description: Run the simulations on what was built (tools/check.sh sim)
-        type: boolean
-        default: false
-  # the weekly run
-  workflow_call:
-    inputs:
-      both_hosts:
-        type: boolean
-        default: false
-      sims:
         type: boolean
         default: false
   push:
@@ -117,8 +108,8 @@ jobs:
             kernel/out/base/SHA256SUMS
             kernel/out/base/config
           if-no-files-found: error
-      # After the image: its scripts and programs in containers and virtual machines, without a scope. From the
-      # weekly run or by hand with `sims`, and when this file changes on a branch (a test of this step); never for a
+      # After the image: its scripts and programs in containers and virtual machines, without a scope. By hand
+      # with `sims`, and when this file changes on a branch (a test of this step); never for a
       # tag: a release is not held up by them.
       - name: Simulations (tools/check.sh sim)
         if: >-

@@ -17,7 +17,7 @@
 #                                                family of rootfs/board/
 #
 #   git diff --name-only BASE...HEAD | tools/ci-parts.sh
-#   tools/ci-parts.sh --all                      every part (a push to main, the weekly run)
+#   tools/ci-parts.sh --all                      every part (a push to main)
 #
 # What reaches what: the crates depend on each other as hal <- ui, hal <- fpgad, dsp <- ui; keys/ is compiled into
 # hal, the tests of hal read rootfs/. A change of how the checks run (this file, tools/check.sh, the workflow,
@@ -66,7 +66,7 @@ if [ $all = 0 ]; then
 		ui/*) ui=1 ;;
 		fpgad/*) fpgad=1 ;;
 		tools/compare-base.sh | tools/plan-matrix.sh | tools/board/*/plan-matrix.sh | tools/code-size.py) compare=1 ;;
-		# no code of the host checks: documents, the image, the GPU helper (built and tried in the weekly run), the
+		# no code of the host checks: documents, the image, the GPU helper (built with the image), the
 		# other workflows, the host tools (their tests and syntax run in the job files)
 		*.md | docs/* | wiki/* | boot/* | kernel/* | gpu/* | .github/* | tools/* | LICENSE | THIRD-PARTY-LICENSES.md | \
 			.gitignore | .gitattributes) ;;
