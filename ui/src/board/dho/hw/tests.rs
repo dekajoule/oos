@@ -1430,6 +1430,17 @@ fn only_the_looks_at_the_frame_count_use_up_the_grace_of_a_stop() {
     assert_eq!(cut_at, Some(13), "the 13th look ends the wait: 130 ms");
     // without a grace the STOP cuts at once, in either wait
     assert!(hold_cuts(0, &std::cell::Cell::new(0), false) && hold_cuts(0, &std::cell::Cell::new(0), true));
+    // and the loop's two conditions as it takes them: a STOP in the wait for the workers leaves the grace alone
+    let out: HwShared = std::sync::Arc::new(std::sync::Mutex::new(crate::board::Shared::default()));
+    let asked = (None, lock(&out).slow);
+    lock(&out).hold = true;
+    let held = std::cell::Cell::new(0);
+    let (looks, workers) = super::cut_waits(out.clone(), &asked, 13, &held);
+    assert!((0..800).all(|_| !workers()) && held.get() == 0, "the wait for the workers used up the grace");
+    assert_eq!((1..=20).find(|_| looks()), Some(13));
+    // new settings end either wait at once
+    lock(&out).slow = crate::board::Slow::Roll;
+    assert!(workers());
 }
 
 // Break it catches: arming ahead back off by default (verified on the unit as on, 2026-11-27), or on with
