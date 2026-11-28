@@ -26,10 +26,12 @@ pub use oos_store::*;
 
 /// `write` for the files a slot keeps on the card or a stick (setups, masks): a temporary file, fsync, rename, the
 /// directory synced (`oos_hal::fsutil::write_atomic`), so a power cut leaves the old file or the new one, never a part.
+/// A directory that cannot be synced is an error: the caller says the file is saved only when it is.
 pub fn write_durable(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     check_target(path)?;
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    oos_hal::fsutil::write_atomic(path, data, &oos_hal::fsutil::Opts::default())
+    let opts = oos_hal::fsutil::Opts { dir_sync: oos_hal::fsutil::DirSync::Required, ..Default::default() };
+    oos_hal::fsutil::write_atomic(path, data, &opts)
 }
