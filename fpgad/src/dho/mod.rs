@@ -391,7 +391,7 @@ fn c2h() -> Result<std::fs::File, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::bringup::xdma_params;
+    use super::bringup::{xdma_params, xdma_params_or_default};
     use super::tool::{pll_dry, slot_lines, status_lines};
     use super::*;
 
@@ -472,7 +472,10 @@ mod tests {
             "poll_mode=0 $(id)",
         ] {
             assert!(xdma_params(Some(bad)).is_err(), "{}", bad);
+            // and what is loaded then: the default with its C2H timeout, not the driver's 10 s
+            assert_eq!(xdma_params_or_default(Some(bad)), "poll_mode=1 c2h_timeout=1", "{}", bad);
         }
+        assert_eq!(xdma_params_or_default(Some("poll_mode=0")), "poll_mode=0 c2h_timeout=1");
     }
 
     #[test]
