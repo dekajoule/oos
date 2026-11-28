@@ -1241,3 +1241,21 @@ fn a_slot_file_is_replaced_in_one_step() {
     assert!(write_durable(&dir_in_place, b"x").is_err(), "a directory in the file's place is refused");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// Break it catches: the settings counted as saved although their copy on the card failed, so the next pass skips the
+// same text and the next start comes up with older settings
+#[test]
+fn a_failed_copy_of_the_settings_on_the_card_is_tried_again() {
+    let d = std::env::temp_dir().join(format!("oos-store-card-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let card = d.join("oos-ui.setup");
+    // the data partition is not there yet (not mounted, read only): not saved
+    assert!(!setup_on_card(Some(&card), "tdiv = 1e-3\n"));
+    // the next pass with the same text writes it once it can
+    std::fs::create_dir_all(&d).unwrap();
+    assert!(setup_on_card(Some(&card), "tdiv = 1e-3\n"));
+    assert_eq!(std::fs::read_to_string(&card).unwrap(), "tdiv = 1e-3\n");
+    // without a data partition the copy in /tmp is all there is
+    assert!(setup_on_card(None, "tdiv = 1e-3\n"));
+    let _ = std::fs::remove_dir_all(&d);
+}

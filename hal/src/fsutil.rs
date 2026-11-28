@@ -58,8 +58,14 @@ fn appended(path: &Path, ext: &str) -> PathBuf {
 /// Replaces `path` with `bytes` in one step (see the module). The directory must exist.
 pub fn write_atomic(path: &Path, bytes: &[u8], o: &Opts) -> std::io::Result<()> {
     let tmp = o.tmp.map_or_else(|| appended(path, ".new"), Path::to_path_buf);
+    // a temporary file left by an earlier attempt goes first, and the new one is created, never opened: on a foreign
+    // stick a symbolic link in its place would otherwise have the file it points to written over
+    match std::fs::remove_file(&tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
     let mut open = std::fs::OpenOptions::new();
-    open.write(true).create(true).truncate(true);
+    open.write(true).create_new(true);
     if let Some(m) = o.mode {
         std::os::unix::fs::OpenOptionsExt::mode(&mut open, m);
     }
@@ -122,6 +128,25 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(d.join("b")).unwrap().permissions().mode() & 0o777, 0o600);
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // Break it catches: a symbolic link in the temporary file's place (a foreign stick) followed, so the file it points
+    // to is written over; a temporary file left by an earlier attempt that stops the next write
+    #[test]
+    fn a_link_or_a_leftover_in_the_temporary_place_is_replaced_not_followed() {
+        let d = dir("link");
+        let victim = d.join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        let p = d.join("setup1.txt");
+        std::os::unix::fs::symlink(&victim, d.join("setup1.txt.new")).unwrap();
+        write_atomic(&p, b"new", &Opts { dir_sync: DirSync::Required, ..Default::default() }).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert_eq!(std::fs::read(&p).unwrap(), b"new");
+        assert!(!std::fs::symlink_metadata(&p).unwrap().file_type().is_symlink());
+        std::fs::write(d.join("setup1.txt.new"), b"half").unwrap();
+        write_atomic(&p, b"newer", &Opts::default()).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"newer");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

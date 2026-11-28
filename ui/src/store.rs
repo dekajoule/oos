@@ -26,10 +26,23 @@ pub use oos_store::*;
 
 /// `write` for the files a slot keeps on the card or a stick (setups, masks): a temporary file, fsync, rename, the
 /// directory synced (`oos_hal::fsutil::write_atomic`), so a power cut leaves the old file or the new one, never a part.
+/// A directory that cannot be synced is an error: the caller says the file is saved only when it is.
 pub fn write_durable(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     check_target(path)?;
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    oos_hal::fsutil::write_atomic(path, data, &oos_hal::fsutil::Opts::default())
+    let opts = oos_hal::fsutil::Opts { dir_sync: oos_hal::fsutil::DirSync::Required, ..Default::default() };
+    oos_hal::fsutil::write_atomic(path, data, &opts)
+}
+
+/// The settings' copy on OOS's data partition (`card`, None without one) for the save every 2 s: replaced in one step
+/// with the directory synced, as `write_durable`. Whether the text counts as saved: not after a failed write, so the
+/// next pass tries again instead of leaving older settings for the next start.
+pub fn setup_on_card(card: Option<&std::path::Path>, text: &str) -> bool {
+    let opts = oos_hal::fsutil::Opts { dir_sync: oos_hal::fsutil::DirSync::Required, ..Default::default() };
+    match card {
+        Some(p) => oos_hal::fsutil::write_atomic(p, text.as_bytes(), &opts).is_ok(),
+        None => true,
+    }
 }

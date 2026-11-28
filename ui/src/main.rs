@@ -1381,16 +1381,12 @@ impl Device {
                 let tmp = format!("{}.new", SETUP_FILE);
                 if std::fs::write(&tmp, &t).and_then(|_| std::fs::rename(&tmp, setup_path)).is_ok() {
                     // and across power cycles on OOS's own data partition (rcS copies it back to /tmp at boot), synced
-                    // before the rename: a power cut leaves the old set-up or the new one
-                    if sysconf::data_partition() {
-                        let opts = oos_hal::fsutil::Opts::default();
-                        let _ = oos_hal::fsutil::write_atomic(
-                            std::path::Path::new("/oos/oos-ui.setup"),
-                            t.as_bytes(),
-                            &opts,
-                        );
+                    // before the rename: a power cut leaves the old set-up or the new one. A failed write there is
+                    // tried again on the next pass: the text counts as saved only when it is on the card too
+                    let card = sysconf::data_partition().then_some(std::path::Path::new("/oos/oos-ui.setup"));
+                    if store::setup_on_card(card, &t) {
+                        self.setup_last = t;
                     }
-                    self.setup_last = t;
                 }
             }
         }
