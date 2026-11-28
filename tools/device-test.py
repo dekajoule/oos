@@ -45,7 +45,7 @@ from oosclient import Link, LinkError, NoBlock  # noqa: E402
 import device_select  # noqa: E402
 
 # The facts of a board family the tests take (ADR 0067, 4): the models its *IDN? names, its channels, the vertical
-# scales, the highest sample rate and whether it has a generator. `--board` picks one, by default the family whose
+# scales, the highest sample rate and which of its models have a generator. `--board` picks one, by default the family whose
 # models match the scope's *IDN?, else dho. A port adds its entry (docs/porting.md).
 PROFILES = {
     "dho": {
@@ -53,7 +53,8 @@ PROFILES = {
         "channels": (1, 2, 3, 4),
         "vscales": [1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 100e-3, 200e-3, 500e-3, 1.0, 2.0, 5.0, 10.0],
         "max_rate": 1.25e9,
-        "generator": True,
+        # docs/models.md: a DHO800/DHO900 has the generator when its name ends in "S" (DHO914S, DHO924S)
+        "generator": r"DHO9\d\dS$",
     },
 }
 
@@ -72,10 +73,14 @@ def family_of(idn):
     return next((n for n, f in PROFILES.items() if re.match(f["models"], model)), "dho")
 
 
-def use_profile(name):
-    """The facts the tests read: the profile of NAME as module values."""
+def use_profile(name, idn=None):
+    """The facts the tests read: the profile of NAME as module values. With the scope's *IDN? answer, `generator`
+    says whether this model has one; without it, whether the family's first model (a DHO924S for dho) has one."""
     global PROFILE, CH, VSCALES
-    PROFILE = profile(name)
+    PROFILE = dict(profile(name))
+    p = idn.split(",") if idn else []
+    model = p[1].strip() if len(p) > 1 else "DHO924S"
+    PROFILE["generator"] = bool(re.match(PROFILE["generator"], model))
     CH, VSCALES = PROFILE["channels"], PROFILE["vscales"]
 
 
@@ -246,7 +251,8 @@ class Scope:
         self.w(":VIEW SCOP")
         self.w("*RST")
         self.w("*CLS")
-        self.w(":SOUR:OUTP OFF")
+        if PROFILE["generator"]:
+            self.w(":SOUR:OUTP OFF")
         self.set(fine_v="false", fine_t="false", tfine=1)
         for c in CH:
             self.w(f":CHAN{c}:PROB 1")
@@ -417,13 +423,15 @@ def zero_of_every_scale(s, o):
     bad = []
     worst = 0.0
     # a cable on the generator is no open input
-    s.gen("SIN", 1e3, 4.0)
+    if PROFILE["generator"]:
+        s.gen("SIN", 1e3, 4.0)
     for c in CH:
         s.w(f":CHAN{c}:DISP 1")
         s.w(f":CHAN{c}:SCAL 1")
     s.settle(extra=0.5)
     used = [c for c in CH if s.meas("VPP", c, 3) < 3.0 and not (o.rf and c == o.rf_ch) and c not in o.busy]
-    s.w(":SOUR:OUTP OFF")
+    if PROFILE["generator"]:
+        s.w(":SOUR:OUTP OFF")
     for c in CH:
         s.w(f":CHAN{c}:DISP {1 if c in used else 0}")
     for c in used:
@@ -2720,7 +2728,7 @@ def main():
         idn = s.q("*IDN?")
         if not o.board:
             o.board = family_of(idn)
-            use_profile(o.board)
+        use_profile(o.board, idn)
         log(f"scope: {idn}, board family {o.board}")
         for tier, name, f, need in TESTS:
             always = name in ("generator_reaches", "protected_areas_before", "protected_areas_after")
