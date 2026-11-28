@@ -23,7 +23,9 @@ macOS, the card as `/dev/rdiskM` after `diskutil unmountDisk /dev/diskM`; on Lin
 
 A start with an overclock that does not finish sets the setting aside by itself.
 
-Serial console: UART2, 115200 8N1, verified on the unit (the console of OOS's kernel). The stock loader also reports
-there why it refuses an image ([docs/boot.md](https://github.com/dekajoule/oos/blob/main/docs/boot.md)).
+Serial console: UART2, 1500000 8N1, verified on the unit (the console of OOS's kernel). The stock loader before it
+talks at 115200 8N1 on the same pins, so switch the terminal to 1500000 after "Starting kernel". The loader also
+reports there why it refuses an image
+([docs/boot.md](https://github.com/dekajoule/oos/blob/main/docs/boot.md#serial-console)).
 
 When you report a problem, please add the build from **System > About OOS** and `/tmp/oos-boot.status`.

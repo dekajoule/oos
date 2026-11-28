@@ -88,6 +88,25 @@ The loader's check:
 
 The loader's messages go to UART2 (115200 8N1).
 
+### Serial console
+
+OOS's kernel uses the same UART2 at 1500000 8N1, so a terminal there switches its speed after the loader's "Starting
+kernel" (verified on the unit). At 115200 the console held the start back: the 8250 console waits for every byte, and
+the 20 KB the kernel prints before the console shows on the screen took 1.7 s of the 3.0 s from the kernel start to
+fbcon (measured on the unit). earlycon is left out: at 1500000 it changes nothing, because ttyS2 replays the early
+messages when it starts.
+
+After a power-on the RK3399's PMU IO domain (PMUIO2, `pmu1830-supply`) is in its 1.8 V reset mode (PMUGRF_SOC_CON0
+bit 9, RK3399 datasheet), although its supply is the 3.0 V rail `vcc_3v0` (RK808 LDO8). Until rockchip-iodomain switches
+it to 3.0 V, UART2 is not readable at 1500000 (verified on the unit; why this domain affects UART2, whose pins lie in
+another domain, is not known). The driver switches it once its supply regulator exists. `vcc_3v0` is always on at a
+fixed 3.0 V, so the device tree names the same rail as a fixed regulator, `pmu1830_early`, for this domain alone: the
+switch then comes 0.7 s after the kernel starts, before ttyS2 starts at 0.8 s, instead of at 1.8 s after the PMIC
+(verified on the unit). PMUGRF_SOC_CON0 reads 0x100 afterwards (3.0 V mode, set by register), as before, and both times lie
+before `/init`. Since the switch comes earlier, the backlight comes on while the loader's logo is still on the panel,
+and the logo shows for a moment before the kernel takes the panel over (seen on the unit at power-on; the cause is
+assumed: the backlight's enable line is GPIO1_C2, and the TRM names the GPIO1 pads after this domain).
+
 ## Image format the stock loader accepts in `recovery`
 
 - Android boot image, header version 0, page size 2048: `ANDROID!`, sizes and load addresses of kernel, ramdisk and
