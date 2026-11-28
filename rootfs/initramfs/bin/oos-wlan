@@ -42,13 +42,18 @@ knows() {
 	return 1
 }
 
-# rtw89 (RTL8851BU: TP-Link Archer TX10UB and others) and rtw88 (RTL8821CU: the stick of the MHO900, where the image
-# has it) for the sticks they know, else rtl8xxxu (RTL8188EU and others)
+# rtw89 (RTL8851BU: TP-Link Archer TX10UB and others) and rtw88 (RTL8821AU/RTL8811AU: TP-Link Archer T2U Nano and
+# others; RTL8821CU: the stick of the MHO900, where the image has it) for the sticks they know, else rtl8xxxu
+# (RTL8188EU and others)
 load() {
 	if knows rtw89_8851bu; then
 		[ -e /sys/module/rtw89_8851bu ] && return
 		set -- lib/crypto/libarc4 net/wireless/cfg80211 net/mac80211/mac80211
 		for m in rtw89_core rtw89_usb rtw89_8851b rtw89_8851bu; do set -- "$@" ../updates/$m; done
+	elif knows rtw88_8821au; then
+		[ -e /sys/module/rtw88_8821au ] && return
+		set -- lib/crypto/libarc4 net/wireless/cfg80211 net/mac80211/mac80211
+		for m in rtw88_core rtw88_usb rtw88_88xxa rtw88_8821a rtw88_8821au; do set -- "$@" ../updates/$m; done
 	elif knows rtw88_8821cu; then
 		[ -e /sys/module/rtw88_8821cu ] && return
 		set -- lib/crypto/libarc4 net/wireless/cfg80211 net/mac80211/mac80211
