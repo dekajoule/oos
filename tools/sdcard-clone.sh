@@ -88,6 +88,16 @@ else
 		sys=$(lsblk -lno MOUNTPOINT "/dev/$d" 2>/dev/null |
 			awk '$0 ~ /^(\/|\/(boot|efi|usr|var|home|opt|srv|etc|root)(\/.*)?|\[SWAP\])$/ {print; exit}')
 		[ -z "$sys" ] || die "$d holds the running system ($sys)"
+		# in use without a mountpoint of its own: held by device-mapper or md (LVM, crypt, RAID), or a member of a ZFS
+		# pool, an LVM volume group, a RAID or a btrfs of several devices
+		for h in /sys/block/"$d"/holders/* /sys/block/"$d"/"$d"*/holders/*; do
+			if [ -e "$h" ]; then die "$d is in use (held by ${h##*/})"; fi
+		done
+		m=$(lsblk -lno FSTYPE "/dev/$d" 2>/dev/null | grep -Ex 'zfs_member|LVM2_member|linux_raid_member' | head -n 1 || true)
+		[ -z "$m" ] || die "$d is in use or part of a pool ($m)"
+		for b in /sys/fs/btrfs/*/devices/*; do
+			case "${b##*/}" in "$d"|"$d"[0-9]*|"$d"p[0-9]*) die "$d is in use (a device of a btrfs)";; esac
+		done
 		case "$d" in
 			mmcblk*)
 				t=$(cat "/sys/block/$d/device/type" 2>/dev/null || true)
@@ -118,11 +128,14 @@ else
 
 	raw_dev() { echo "/dev/$1"; }
 
-	# as diskutil unmountDisk: every mounted file system on the card (udisks for a desktop's automount, else umount)
+	# as diskutil unmountDisk: every mounted file system on the card (udisks for a desktop's automount, else umount),
+	# and it fails when one stays mounted (lsblk shows one mount of each partition, a partition can have more)
 	unmount_disk() {
 		lsblk -lnpo NAME,MOUNTPOINT "/dev/$1" | awk 'NF >= 2 {print $1}' | while read -r p; do
-			udisksctl unmount -b "$p" >/dev/null 2>&1 || sudo umount "$p" || die "cannot unmount $p"
+			udisksctl unmount -b "$p" </dev/null >/dev/null 2>&1 || sudo umount "$p" </dev/null || die "cannot unmount $p"
 		done
+		left=$(lsblk -lno MOUNTPOINT "/dev/$1" | awk 'NF {print; exit}')
+		[ -z "$left" ] || die "$1 is still mounted at $left: unmount it and try again"
 	}
 
 	eject_disk() { sync; echo "$1 can be taken out"; }

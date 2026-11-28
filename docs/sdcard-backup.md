@@ -71,9 +71,11 @@ tools/sdcard-clone.sh read sdc ~/oos-backup/sd-original.img       # reads, verif
 tools/sdcard-clone.sh write ~/oos-backup/sd-original.img sdd      # the second card; asks for the disk id, verifies
 ```
 
-The tool refuses the disk of the running system (`/`, `/boot`, `/usr`, `/var`, `/home`, swap) and any disk that is not
-a removable USB medium or an SD card (an `mmcblk` of type SD; an eMMC is refused), and an empty slot of a card reader.
-It unmounts what a desktop mounted from the card before it reads or writes. By hand:
+The tool refuses the disk of the running system (`/`, `/boot`, `/usr`, `/var`, `/home`, swap), a disk in use without
+a mountpoint of its own (LVM, RAID, ZFS, btrfs), a disk that is neither on USB nor an SD card (an `mmcblk` of type SD;
+an eMMC is refused), and an empty slot of a card reader. An external USB disk is accepted, as on macOS: the disk id you
+type before `write` is what keeps it safe. The tool unmounts what a desktop mounted from the card before it reads or
+writes, and stops when something stays mounted. By hand:
 
 ```sh
 lsblk -o NAME,SIZE,MODEL,TRAN                    # the card: /dev/sdX, or /dev/mmcblkN in a built-in reader
