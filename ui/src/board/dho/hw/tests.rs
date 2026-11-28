@@ -7,8 +7,8 @@
 use super::decode::decode;
 use super::plan::{
     batch_plan, deep_raw_settings, edge_check, final_replay, frame0_check_wanted, frame0_left_out,
-    frame1_left_out_unseen, frame1_off_trigger, prearm_keeps_replay, stop_plan, zone_batch, zone_batch_from, Edge,
-    FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP, FRAME1_CHECK_MAX, PREARM,
+    frame1_left_out_unseen, frame1_off_trigger, hold_grace_looks, partly_read, prearm_keeps_replay, stop_plan,
+    zone_batch, zone_batch_from, Edge, FRAME0_CHECK_MAX_FRAMES, FRAME0_KEEP, FRAME1_CHECK_MAX, PREARM_OFF,
 };
 use super::serial::{i2c_of, serial_debug, serial_lines_acquired, spi_of, uart_debug, uart_of, SERIAL_HW};
 use super::settings::{
@@ -32,7 +32,7 @@ use std::sync::Arc;
 fn the_switches_take_the_image_defaults_under_the_settings_file() {
     use super::{plan::zone_batch_from, units::mask_map_from};
     use crate::sysconf::fork_text_of as both;
-    for f in [&CORE_OFFSET, &HW_STATUS_OFF, &DVM_HW, &MASK_HW, &ZONE_HW, &SERIAL_HW, &PREARM, &FRAME0_KEEP] {
+    for f in [&CORE_OFFSET, &HW_STATUS_OFF, &DVM_HW, &MASK_HW, &ZONE_HW, &SERIAL_HW, &PREARM_OFF, &FRAME0_KEEP] {
         f.check_both_files();
     }
     assert!(!DVM_HW.of(None, "dvm.hw = yes\n") && !CORE_OFFSET.of(None, "cal.core_offset = on\n"));
@@ -606,6 +606,37 @@ fn frame1_without_its_edge_is_found() {
     assert!(!frame1_off_trigger(&frame(410), &Settings { trig_src: 9, ..s.clone() }));
 }
 
+// Unit 2026-11-25 (#578): a 250 Hz sine at 1 ms/div crosses the level about 200 samples before the trigger point,
+// because the comparator fires only when the signal is past the level by its hysteresis. The check found no edge within
+// 32 samples, and both frames of every two-frame batch were left out: half a record a second in the picture instead of
+// some 20. Breaks it catches: a slow edge left out, and a frame of issue #5 kept because its step is far enough away.
+#[test]
+fn a_slow_edge_before_the_trigger_point_is_at_it() {
+    let s = Settings { level: 0.0, ..Settings::default() };
+    let period = 20_000.0f32;
+    let sine = |cross: usize| {
+        let mut f = Frame { pre: 5000, ..Frame::default() };
+        f.ch[0] =
+            (0..20_000).map(|i| 0.5 * (std::f32::consts::TAU * (i as f32 - cross as f32) / period).sin()).collect();
+        f
+    };
+    // the crossing 200 samples before the trigger point, the signal still near the level there
+    assert_eq!(edge_check(&sine(4800), &s), Edge::At);
+    // a crossing after the trigger point within the band counts too (a level set a little below the hardware's)
+    assert_eq!(edge_check(&sine(5150), &s), Edge::At);
+    // a crossing so long before that the signal is far past the level at the trigger point: off
+    assert_eq!(edge_check(&sine(1500), &s), Edge::Off);
+    // issue #5: a full step 90 samples early is still off, and so is one 300 samples early
+    let step = |edge: usize| {
+        let mut f = Frame { pre: 5000, ..Frame::default() };
+        f.ch[0] = (0..20_000).map(|i| if i >= edge { 1.0 } else { -1.0 }).collect();
+        f
+    };
+    assert_eq!(edge_check(&step(4910), &s), Edge::Off);
+    assert_eq!(edge_check(&step(4700), &s), Edge::Off);
+    assert_eq!(edge_check(&step(5006), &s), Edge::At);
+}
+
 // Issue #5 on the unit (2026-11-19, 1 kpts, 10 us/div, batches of 26 to 32): frame 1 with its edge at the trigger point
 // but older memory before it drew a full-swing step at -38 us. Breaks it catches: frame 1 of a long batch kept when its
 // edge is in place, frame 1 of a small batch (slow time bases, #220) left out unseen, and either with the rule off.
@@ -972,8 +1003,9 @@ fn final_replay_at_stop() {
     assert!(!prearm_keeps_replay(&b, &p, w));
     let ahead = prearm_keeps_replay(&b, &p, w);
     assert!(final_replay(&b, &p, 3, false, ahead, w).is_some());
-    // prearm stays where no deep replay can come: without the deep measurements, a shallow record
-    assert!(prearm_keeps_replay(&b, &p, None));
+    // not for a record the live read takes only part of either, deep measurements or not: the views after a STOP read
+    // it again from the ring (issue #47)
+    assert!(partly_read(&b) && !prearm_keeps_replay(&b, &p, None));
     m.mdepth = 0;
     m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-6).abs() < 1e-12).unwrap();
     let s = settings(&m, false);
@@ -1258,4 +1290,128 @@ fn the_acquisition_loop_runs_on_the_simulated_unit() {
     let f = g.queue.back().unwrap_or(&g.frame);
     let (lo, hi) = f.ch[0].iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
     assert!((hi - 0.5).abs() < 0.01 && (lo + 0.5).abs() < 0.01, "CH1 from {} to {} V", lo, hi);
+}
+
+// Break it catches (ADR 0081): the workers' grant shortening a batch of the slow time bases (frames 0 and 1 of a short
+// batch have rules of their own) or lengthening one past its plan.
+#[test]
+fn the_grant_limits_only_long_batches() {
+    use super::plan::admitted;
+    let short = FRAME0_CHECK_MAX_FRAMES as u32;
+    assert_eq!([admitted(1, 1), admitted(short, 1), admitted(2, 1000)], [1, short, 2]);
+    assert_eq!([admitted(1000, 211), admitted(1000, 1), admitted(20, 1000)], [211, short + 1, 20]);
+}
+
+/// The acquisition thread's wait for the workers on the unit's virtual clock: `free` after `busy` looks, `help` true
+/// for the first `helps` calls; whether it ended free, the looks at `changed`, and the time it took in us.
+fn wait_for(busy: usize, helps: usize, changed_at: usize) -> (bool, usize, u64) {
+    let (looks, helped, seen) = (std::cell::Cell::new(0), std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let mut clock = oos_hal::dho::boot::sim::SimClock::default();
+    let free = || {
+        looks.set(looks.get() + 1);
+        looks.get() > busy
+    };
+    let help = || {
+        helped.set(helped.get() + 1);
+        helped.get() <= helps
+    };
+    let changed = || {
+        seen.set(seen.get() + 1);
+        seen.get() >= changed_at
+    };
+    let got = super::plan::wait_for_workers(&mut clock, free, help, changed);
+    (got, seen.get(), clock.t_us)
+}
+
+// Break it catches (ADR 0081): the thread arming while the workers still hold the buffers (the batch would be read and
+// dropped), waiting for ever on a stuck worker, sleeping while it could draw for them, or waiting on through new
+// settings or a STOP.
+#[test]
+fn the_thread_waits_for_busy_workers_and_not_for_ever() {
+    use super::plan::ADMIT_WAIT_US;
+    // free at once: no wait
+    assert_eq!(wait_for(0, 0, usize::MAX), (true, 0, 0));
+    // busy, then free: it helped while there were frames to draw, slept only after
+    let (free, looks, us) = wait_for(10, 4, usize::MAX);
+    assert!(free && looks == 10 && us == 6 * 250, "{} looks, {} us", looks, us);
+    // a stuck worker: the wait ends after its time, and the batch goes on as before
+    let (free, _, us) = wait_for(usize::MAX, 0, usize::MAX);
+    assert!(!free && (ADMIT_WAIT_US..ADMIT_WAIT_US + 250).contains(&us), "{} us", us);
+    // new settings or STOP while it waits: at once to them
+    assert_eq!(wait_for(usize::MAX, 0, 3), (false, 3, 2 * 250));
+}
+
+// Break it catches (ADR 0081): the read-out buffers lent to the workers miscounted, so the thread arms a batch that
+// finds no buffer to swap in and is dropped whole, or waits although one is back.
+#[test]
+fn a_batch_after_the_wait_finds_a_buffer_and_is_not_dropped() {
+    let counters: &'static crate::board::pipe::Counters = Box::leak(Box::default());
+    let pipe = crate::drawpipe::Pipe::start(0, false, counters);
+    let p = hz::Params {
+        ratio: 1,
+        rate: 1_250_000_000,
+        memsel: 1408,
+        dot_fs: 800_000,
+        seg: 0,
+        max_frames: 1000,
+        pre: 704,
+        post: 704,
+    };
+    let s = Settings { mask: 1, window: None, compress: 1, header: false, ..Settings::default() };
+    let fb = oos_hal::dho::seq::frame_bytes(&s, &p);
+    let mut m = Model::default();
+    m.ch[0].on = true;
+    pipe.set_view(Some(&m), 970, 448);
+    let decode: crate::board::pipe::DecodeInto = {
+        let (s, p) = (s.clone(), p);
+        Arc::new(move |c: &[u8], f: &mut Frame| super::decode_into(c, &s, &p, 0, f))
+    };
+    // the board's pool: one buffer to read into, two lent to the workers (held here as the workers hold them)
+    let fed: Vec<_> = (0..2)
+        .map(|_| {
+            let mut d = oos_hal::dho::bus::DmaBuf::new();
+            d.read(&mut &vec![0u8; 8 * fb][..], 8 * fb, |_, _| {}).expect("read");
+            pipe.feed_codes(Box::new(d), fb, 0, 8, 0, decode.clone(), None)
+        })
+        .collect();
+    let free = || pipe.lent() + 2 <= super::decode::POOL;
+    assert!(!free(), "both buffers are with the workers");
+    let mut clock = oos_hal::dho::boot::sim::SimClock::default();
+    let mut hp = crate::drawpipe::Helper::default();
+    assert!(super::plan::wait_for_workers(&mut clock, free, || pipe.help(&mut hp), || false));
+    // the first batch was drawn to its end and its buffer is back for the next read; nothing was dropped
+    assert_eq!((pipe.lent(), clock.t_us), (1, 0));
+    assert!(pipe.take_buffer().is_some());
+    assert_eq!(counters.read().2, 0);
+    drop(fed);
+}
+
+#[test]
+fn a_record_as_long_as_the_fill_wait_is_read_without_it() {
+    // two channels, 100 kpts: 1 ms/div records 16 ms (a second frame can land in the wait), 2 and 5 ms/div 40 and
+    // 80 ms (none can: the wait would be dead time of every record)
+    let at = |tdiv_s: f64| super::plan::fill_wait_ms(&hz::prep(3, (tdiv_s * 1e15) as i128, 100_000, 0));
+    assert_eq!(at(1e-3), super::plan::FILL_MS);
+    assert_eq!(at(2e-3), 0);
+    assert_eq!(at(5e-3), 0);
+    // short records keep the wait: many frames a batch
+    assert_eq!(at(1e-6), super::plan::FILL_MS);
+}
+
+// Break it catches (issue #47): a STOP that cuts the wait for a deep record being recorded (the arm has already written
+// the ring over the record before, so the views after the STOP find only the live window), or a grace for records the
+// live read takes whole, which would hold every STOP up for nothing
+#[test]
+fn a_stop_lets_a_partly_read_record_finish_and_no_other() {
+    let s = Settings { mask: 1, tdiv: 50e-9, depth: 50_000_000, window: None, ..Settings::default() };
+    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+    let b = batch_plan(&s, &p);
+    assert!(partly_read(&b), "50 M at 50 ns/div: the live read is the screen window");
+    // 40 ms of record: twice that and 50 ms, in looks every 10 ms
+    assert_eq!(hold_grace_looks(&b, &p), 13);
+    let s = Settings { mask: 1, tdiv: 1e-6, depth: 10_000, window: None, ..Settings::default() };
+    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+    let b = batch_plan(&s, &p);
+    assert!(!partly_read(&b));
+    assert_eq!(hold_grace_looks(&b, &p), 0);
 }

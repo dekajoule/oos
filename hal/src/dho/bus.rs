@@ -14,6 +14,14 @@ pub const WINDOW: usize = 0x8000;
 pub trait Bus {
     fn wr(&mut self, off: u32, v: u32);
     fn rd(&mut self, off: u32) -> u32;
+    /// `wr` without the wait some buses make after every write (`Bar1::gap_us`); `settle` waits once after the last of
+    /// a group. Only `Grouped` writes this way.
+    fn wr_unsettled(&mut self, off: u32, v: u32) {
+        self.wr(off, v)
+    }
+    /// The wait after a group of `wr_unsettled` writes, before the bus or the C2H stream is read: nothing when no such
+    /// write is pending, nothing on a bus without a gap.
+    fn settle(&mut self) {}
     /// Applies a write sequence in order.
     fn apply(&mut self, seq: &[Write]) {
         for &(o, v) in seq {
@@ -55,7 +63,12 @@ pub struct DmaBuf {
     cap: usize,
     /// valid bytes from `off`
     len: usize,
+    /// the next read asks for `STALL_EXTRA` bytes more than the play holds, so it times out (`stall_next_read`)
+    stall: bool,
 }
+
+/// What a read made to stall asks for beyond its play (`DmaBuf::stall_next_read`).
+const STALL_EXTRA: usize = 8;
 
 impl DmaBuf {
     pub fn new() -> DmaBuf {
@@ -74,6 +87,12 @@ impl DmaBuf {
         self.cap = cap;
     }
 
+    /// A test of the timeout path on a unit (`OOS_DMA_STALL` of oos-ui): the next read asks for a few bytes more than
+    /// the FPGA plays, which it never delivers, so xdma.ko ends the read with ETIMEDOUT after its `c2h_timeout`.
+    pub fn stall_next_read(&mut self) {
+        self.stall = true;
+    }
+
     /// Reads `bytes` from `c2h` to the start of the region. `short(got, k)` is called for every read shorter than
     /// what was left.
     pub fn read(
@@ -82,13 +101,14 @@ impl DmaBuf {
         bytes: usize,
         mut short: impl FnMut(usize, usize),
     ) -> std::io::Result<&mut [u8]> {
-        self.reserve(bytes);
+        let ask = bytes + if std::mem::take(&mut self.stall) { STALL_EXTRA } else { 0 };
+        self.reserve(ask);
         self.len = 0;
         let off = self.off;
         let mut got = 0;
-        while got < bytes {
+        while got < ask {
             // at most `MAX_READ` per read(): the rest of the stream follows in the next one, as after a short read
-            let want = (bytes - got).min(MAX_READ);
+            let want = (ask - got).min(MAX_READ);
             match c2h.read(&mut self.raw[off + got..off + got + want])? {
                 0 => {
                     return Err(std::io::Error::new(
@@ -142,7 +162,34 @@ impl Bus for Recorder {
     }
 }
 
-/// BAR1 mapped from `/dev/xdma0_bypass`. Writes are spaced by `gap_us` (the verified read-out used 10 us).
+/// The writes of one live sequence without the gap after each: every write goes to `wr_unsettled` of the bus beneath,
+/// which settles once before the next read, before the C2H read of a `Read` step, and when the group is dropped. The
+/// batch loop's arm, read-out, LA read, prearm and disarm run through it (`seq::acquire_batch_on`,
+/// docs/protocols/acquisition-start.md "Write spacing of the batch sequences"); everything else keeps the gap after
+/// every write.
+pub struct Grouped<'a, B: Bus>(pub &'a mut B);
+
+impl<B: Bus> Bus for Grouped<'_, B> {
+    fn wr(&mut self, off: u32, v: u32) {
+        self.0.wr_unsettled(off, v)
+    }
+    fn rd(&mut self, off: u32) -> u32 {
+        self.0.settle();
+        self.0.rd(off)
+    }
+    fn settle(&mut self) {
+        self.0.settle()
+    }
+}
+
+impl<B: Bus> Drop for Grouped<'_, B> {
+    fn drop(&mut self) {
+        self.0.settle()
+    }
+}
+
+/// BAR1 mapped from `/dev/xdma0_bypass`. Writes are spaced by `gap_us` (the verified read-out used 10 us), those of a
+/// `Grouped` sequence only after its last write.
 #[cfg(target_os = "linux")]
 pub struct Bar1 {
     regs: *mut u32,
@@ -152,6 +199,8 @@ pub struct Bar1 {
     writable: bool,
     _file: std::fs::File,
     pub gap_us: u64,
+    /// a `wr_unsettled` write without its gap yet
+    unsettled: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -180,7 +229,7 @@ impl Bar1 {
         if p == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(Bar1 { regs: p as *mut u32, len, writable, _file: f, gap_us: 10 })
+        Ok(Bar1 { regs: p as *mut u32, len, writable, _file: f, gap_us: 10, unsettled: false })
     }
 }
 
@@ -195,10 +244,17 @@ impl Drop for Bar1 {
 #[cfg(target_os = "linux")]
 impl Bus for Bar1 {
     fn wr(&mut self, off: u32, v: u32) {
+        self.wr_unsettled(off, v);
+        self.settle();
+    }
+    fn wr_unsettled(&mut self, off: u32, v: u32) {
         assert!(self.writable, "a write to a read-only mapping of the register window");
         assert!((off as usize) < self.len && off.is_multiple_of(4));
         unsafe { std::ptr::write_volatile(self.regs.add((off >> 2) as usize), v) };
-        if self.gap_us > 0 {
+        self.unsettled = true;
+    }
+    fn settle(&mut self) {
+        if std::mem::take(&mut self.unsettled) && self.gap_us > 0 {
             std::thread::sleep(std::time::Duration::from_micros(self.gap_us));
         }
     }

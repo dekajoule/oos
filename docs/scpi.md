@@ -11,7 +11,6 @@ This reference describes the repository implementation. Primary Rigol syntax was
 | Raw TCP SCPI | TCP 5555 | Recommended for scripts. Newline-terminated program messages; newline-terminated replies. |
 | HiSLIP | TCP 4880 | Same interpreter, with HiSLIP framing. Basic sessions; full locking/overlap semantics are not implemented. A reply is split into messages of the client's maximum message size, but of at least 4 KiB of data. |
 | VXI-11 | Linux scope service | Same interpreter, partial RPC transport. Pending operation reads have the limitation described below. Not offered on a computer (`--serve`). |
-| USBTMC (USB488) | rear USB-B port, `usb.tmc`, off | Same interpreter, VISA `USB::0x1209::0x0001::<serial>::INSTR`, no network needed. A DEV_DEP_MSG_OUT message up to its EOM is one program message; its reply, newline-terminated, is returned in transfers of at most the requested TransferSize (and 1 MiB). No TermChar, no REN/GTL/LLO, no TRIGGER; READ_STATUS_BYTE gives MAV and EAV. A waiting `*OPC?` is kept like raw TCP. See [usb-device.md](usb-device.md). Not offered on a computer. |
 | HTTP/MCP adapter | HTTP web port | `POST /mcp`, JSON-RPC `tools/call` with tool name `scpi`. This is not a VISA interface. `/cmd` uses a separate front-panel command language. |
 
 On a computer, `oos-ui --serve` offers the same interpreter without a scope, and can use other ports. For example:
@@ -586,7 +585,7 @@ in `ui/model/src/settings/display.rs`; this table is written from there
 | none | a choice of the screen's layout, not of the measurement | `density` | Density | On the Windows page: what the screen shows around the plot, the bars and cards, the plot alone, the plot over a lower pane or two stacked traces, or four panes; a change sets the windows and the lower pane up again. A setup without it takes it from its windows and pane. |
 | none | a choice of the screen's layout, not of the measurement | `pane` | Lower | On the Windows page with Split: what shows under the plot, two stacked traces or a pane of the spectrum, the results, the events, the trend or the bus view. |
 | `:DISPlay:COLor[?]` | `ON`, `OFF`, `1`, `0`; the query answers `1` or `0` | `color_grade` | Colour grade | Colours the persistence by how often a point was hit. |
-| `:DISPlay:TYPE[?]` | `DOTS`, `VECTors`; the query answers `DOTS` or `VECT` | `dots` | Dots | Draws every sample as a dot instead of joining them with lines. |
+| `:DISPlay:TYPE[?]` | `DOTS`, `VECTors`, `AUTO`; the query answers `DOTS`, `VECT` or `AUTO` | `dots` | Dots | Off joins the samples with lines, On draws every sample as a dot, Auto draws lines with the samples marked once they lie 8 pixels apart, and dots in XY. |
 | none | a choice of the screen's layout, not of the measurement | `bar` | Bottom bar | The bottom bar as cards or as one compact line. |
 | none | a choice of the screen's layout, not of the measurement | `hdmi` | HDMI | What a monitor on the HDMI port shows: the panel, the waveform alone, or a layout of its own; the menu steps to the end of the list and stops. |
 | none | a choice of the screen's layout, not of the measurement | `text_size` | Text size | The size of the text on the screen; the menu steps to the end of the list and stops. |

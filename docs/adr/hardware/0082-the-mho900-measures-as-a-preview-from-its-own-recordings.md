@@ -2,7 +2,7 @@
 
 - Status: proposed
 - Date: 2026-11-24
-- Category: hardware (touches ADR 0010, ADR 0015, ADR 0028, ADR 0067, ADR 0081; process: the size of a pull request)
+- Category: hardware (touches ADR 0010, ADR 0015, ADR 0028, ADR 0067, ADR 0084; process: the size of a pull request)
 
 ## Context
 
@@ -10,7 +10,7 @@ ADR 0028 brought the MHO900's platform to OOS without its acquisition. Since the
 test builds `mho-dev-1` to `mho-dev-50` and with three owners' units (two MHO98, one MHO934; GitHub issues #4, #248,
 #491), has made the acquisition board measure (docs/mho.md, docs/protocols/mho-acquisition.md):
 
-- **verified on units:** the start of the board from the unit's own recordings of the stock system (ADR 0081), the
+- **verified on units:** the start of the board from the unit's own recordings of the stock system (ADR 0084), the
   channels alone and together, their scales, time bases up to 4 GSa/s, offset, AC/GND coupling, the bandwidth limit,
   the edge trigger, 50 and 100 ms/div, roll, peak detect, the counter, both generators with every shape, Bode with the
   built-in generator, the fan;
@@ -52,5 +52,5 @@ review and merge; the owners' reports, named in it, stand in for the run on a un
 
 ## References
 
-docs/mho.md, docs/protocols/mho-acquisition.md, ADR 0028, ADR 0067, ADR 0081; the branch `oos-mho` and the test
+docs/mho.md, docs/protocols/mho-acquisition.md, ADR 0028, ADR 0067, ADR 0084; the branch `oos-mho` and the test
 builds `mho-dev-N`; GitHub issues #4, #248, #491.

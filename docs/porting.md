@@ -67,7 +67,7 @@ comparison and its programs count as new. For the test on a unit, the port adds 
 whether it has a generator; `--board <board>` picks it, and the model in `*IDN?` does by default.
 
 The MHO900 is the first such port: `hal/src/mho/`, `ui/src/board/mho/`, `fpgad/src/mho/`, `rootfs/board/mho/`,
-`kernel/dts/rk3399-rigol-mho900.dts` ([mho.md](mho.md), ADR 0028, ADR 0081). Its acquisition starts from the unit's own
+`kernel/dts/rk3399-rigol-mho900.dts` ([mho.md](mho.md), ADR 0028, ADR 0084). Its acquisition starts from the unit's own
 recordings of the stock system and is a preview ([mho.md](mho.md#setting-a-unit-up-towards-a-preview)).
 
 ## Board families

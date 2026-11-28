@@ -5,7 +5,7 @@ storage and updates of OOS on the MHO900's main board, and, as a **preview** (AD
 unit's own recordings of the stock system on the scope ("Setting a unit up" below) the build starts the acquisition
 board at every boot and measures; without them it shows the **demo signal**. Of the front panel it reads the keys and sets the LEDs. The decisions are
 [ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md) (superseded by [ADR 0082](adr/hardware/0082-the-mho900-measures-as-a-preview-from-its-own-recordings.md)) and
-[ADR 0081](adr/hardware/0081-mho900-first-acquisition-from-the-units-own-snapshot.md); how a port is built in general
+[ADR 0084](adr/hardware/0084-mho900-first-acquisition-from-the-units-own-snapshot.md); how a port is built in general
 is in [porting.md](porting.md).
 
 **Verified on two units (owners' reports, 2026-11-21, build `mho-dev-1`):** an MHO98 (GitHub issue #4) and an MHO934
@@ -245,7 +245,7 @@ From mho-dev-14 on, two steps cover what the earlier builds asked for one at a t
 
 The steps of the earlier builds follow.
 
-**Not yet verified on hardware** (ADR 0081). The board is started from the unit's own snapshot of the stock system and
+**Not yet verified on hardware** (ADR 0084). The board is started from the unit's own snapshot of the stock system and
 measures at that one setting: the probe compensation signal on the snapshot's channel.
 
 1. Under the stock system, right after a power-on with at least one channel off: `tools/mho-check.py <scope-ip>

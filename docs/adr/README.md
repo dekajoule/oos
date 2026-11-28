@@ -24,7 +24,7 @@ A decision that touches two categories goes where its consequences are largest a
 <!-- index: written by tools/adr-index.py from the records; run it instead of editing these lines -->
 | ADR | Category | Decision | Status |
 |---|---|---|---|
-| [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted, amended by ADR 0064 |
+| [0001](code/0001-three-crates-with-pure-hal-and-dsp.md) | code | Three crates; the hardware layer and the signal processing are pure functions | accepted, amended by ADR 0064 and ADR 0083 |
 | [0002](code/0002-extension-by-registered-modules.md) | code | Decoders, measurements and analyser pages are modules behind one registration | accepted, amended by ADR 0058 |
 | [0003](code/0003-gpu-drawing-in-a-helper-process.md) | code | The GPU draws from commands in a helper process; the CPU stays the fallback | accepted |
 | [0004](code/0004-standard-draw-path-by-default.md) | code | Two draw paths: Standard by default, Batch to choose | superseded by ADR 0029 |
@@ -102,8 +102,10 @@ A decision that touches two categories goes where its consequences are largest a
 | [0078](system/0078-the-image-builds-its-own-busybox-without-network-servers.md) | system | The image builds its own busybox, without telnet and the network servers it does not run | proposed |
 | [0079](system/0079-the-rear-usb-port-is-a-network-link-to-one-computer.md) | system | The rear USB port is a network link to one computer, off by default | proposed |
 | [0080](system/0080-the-rear-usb-port-is-a-usbtmc-instrument-for-visa.md) | system | The rear USB port is a USBTMC instrument for VISA, a FunctionFS function served by oos-ui, off by default | proposed |
-| [0081](hardware/0081-mho900-first-acquisition-from-the-units-own-snapshot.md) | hardware | the MHO900's first acquisition starts its board from the unit's own snapshot of the stock system | proposed |
+| [0081](code/0081-the-acquisition-arms-only-what-the-deposit-workers-can-draw.md) | code | The acquisition arms only what the deposit workers can draw | proposed |
 | [0082](hardware/0082-the-mho900-measures-as-a-preview-from-its-own-recordings.md) | hardware | the MHO900 measures as a preview, from the unit's own recordings of the stock system, and comes to main in one pull request | proposed |
+| [0083](code/0083-hot-paths-are-data-oriented-and-a-family-may-plug-in-its-own-kernels.md) | code | Hot paths are data-oriented, and a family may plug in its own kernels next to the portable reference | accepted |
+| [0084](hardware/0084-mho900-first-acquisition-from-the-units-own-snapshot.md) | hardware | the MHO900's first acquisition starts its board from the unit's own snapshot of the stock system | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents

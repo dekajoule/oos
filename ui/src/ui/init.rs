@@ -67,6 +67,7 @@ impl Ui {
             cal: Default::default(),
             hdmi: windows::Hdmi::default(),
             start_up: Default::default(),
+            greeting: Default::default(),
             bode: Default::default(),
             workspace: workspace::Workspace::default(),
             sim_play: false,

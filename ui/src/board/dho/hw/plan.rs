@@ -18,18 +18,19 @@ pub(super) fn force_prearm(on: Option<bool>) {
     PREARM_ON.force(on);
 }
 
-/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time.
-/// `acq.prearm = on` in system.conf, or OOS_PREARM set (any value). Off by default: the stop of an acquisition armed
-/// ahead that is then not read (a settings change, the generator, self-cal, roll) is not verified on the unit yet
-///.
+/// Arm the next batch before the decode of the current one (`seq::prearm`), so the decode is no longer dead time. On by
+/// default since it was verified on the unit 2026-11-27 (DHO924S: the whole device test with it on, among it the stop
+/// of an acquisition armed ahead and then not read at new settings, STOP, the generator, roll and scan, segments;
+/// records a second with two channels at 5 ms/div 11.0 to 12.1, 2 ms/div 19.5 to 23.1, 1 ms/div 34 to 44). The way
+/// back: `acq.prearm = off` in system.conf, or OOS_PREARM=0.
 pub(super) fn prearm_on() -> bool {
     PREARM_ON.get()
 }
 
-static PREARM_ON: crate::board::policy::Switch =
-    crate::board::policy::Switch::new(|| std::env::var_os("OOS_PREARM").is_some() || PREARM.get());
+static PREARM_ON: crate::board::policy::Switch = crate::board::policy::Switch::new(|| !PREARM_OFF.get());
 
-pub(super) const PREARM: crate::sysconf::Flag = crate::sysconf::Flag { key: "acq.prearm", env: None, on: "on" };
+pub(super) const PREARM_OFF: crate::sysconf::Flag =
+    crate::sysconf::Flag { key: "acq.prearm", env: Some("OOS_PREARM"), on: "off" };
 
 /// Stops the acquisition armed ahead, if one is, before anything else writes the FPGA.
 #[cfg(any(target_os = "linux", test))]
@@ -76,6 +77,61 @@ pub fn batch_plan(s: &Settings, p: &hz::Params) -> Settings {
         b.frames = b.frames.min(zone_batch());
     }
     b
+}
+
+/// Longest wait for further frames of a batch after its first one (`seq::acquire_batch_on`): the ring fills while
+/// the loop draws frames of the last batch.
+#[cfg(any(target_os = "linux", test))]
+pub(super) const FILL_MS: u64 = 25;
+
+/// The wait for further frames of a batch after its first one: `FILL_MS`, or none when one record lasts `FILL_MS` or
+/// longer, as no further frame can be complete within the wait. From 2 ms/div at 100 kpts (records of 40 ms and more)
+/// the wait was dead time of every record: 8.7 records a second at 5 ms/div and 13 at 2 ms/div, where the records
+/// themselves allow 12.5 and 25 (unit 2026-11-27, two channels, XY and YT alike). The fork yottabytesolutions/oos
+/// (fumingcaps, release v0.2.2) shortens this wait at slow time bases the same way.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn fill_wait_ms(p: &hz::Params) -> u64 {
+    let record_ms = p.memsel as f64 * 1e3 / p.rate.max(1) as f64;
+    if record_ms >= FILL_MS as f64 {
+        0
+    } else {
+        FILL_MS
+    }
+}
+
+/// Frames a batch arms with the deposit workers' grant (`pipe::Workers::grant`, ADR 0081): a batch planned with up to
+/// `FRAME0_CHECK_MAX_FRAMES` (slow time bases, SINGLE) as planned, a longer one at most `grant` but not that short, so
+/// the rules for frames 0 and 1 of a short batch stay with the slow time bases.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn admitted(planned: u32, grant: u32) -> u32 {
+    planned.min(grant.max(FRAME0_CHECK_MAX_FRAMES as u32 + 1))
+}
+
+/// Longest wait for the deposit workers before a batch is armed (`wait_for_workers`): a stuck worker must not stop
+/// the acquisition.
+#[cfg(any(target_os = "linux", test))]
+pub(super) const ADMIT_WAIT_US: u64 = 200_000;
+
+/// Waits before a batch is armed until the deposit workers can take it without its being dropped (`free`), drawing
+/// frames for them meanwhile (`help`, as while the ring fills) and looking at `changed` (new settings, STOP) between.
+/// False when the wait ended without `free` (changed, or after `ADMIT_WAIT_US`): the batch then goes on as before.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn wait_for_workers<C: oos_hal::dho::boot::Clock>(
+    clock: &mut C,
+    free: impl Fn() -> bool,
+    mut help: impl FnMut() -> bool,
+    changed: impl Fn() -> bool,
+) -> bool {
+    let t0 = clock.now_us();
+    while !free() {
+        if changed() || clock.now_us().saturating_sub(t0) >= ADMIT_WAIT_US {
+            return false;
+        }
+        if !help() {
+            clock.sleep_us(250);
+        }
+    }
+    true
 }
 
 /// Longest record whose first batch after a change of settings is left out (`read_with` in `spawn`), in seconds.
@@ -194,17 +250,41 @@ pub(super) fn edge_check(f: &Frame, s: &Settings) -> Edge {
     }
     // a fifth of a division: an edge the trigger took crosses it, noise on a flat level near the level does not
     let hyst = (0.2 * s.ch[tc].scale) as f32;
-    oos_dsp::edges::edge_near(
-        v,
-        f.pre,
-        s.level as f32,
-        hyst,
-        s.slope != Slope::Falling,
-        s.slope == Slope::Either,
-        FRAME1_SPAN,
-    )
-    .map_or(Edge::Off, |_| Edge::At)
+    let level = s.level as f32;
+    let near = |span| {
+        oos_dsp::edges::edge_near(v, f.pre, level, hyst, s.slope != Slope::Falling, s.slope == Slope::Either, span)
+    };
+    if near(FRAME1_SPAN).is_some() {
+        return Edge::At;
+    }
+    // a slow edge: the comparator does not fire exactly at the level, and a slow slope takes many samples between the
+    // two (unit 2026-11-25: a 50 Hz sine 2 Vpp at 0.5 V/div and 1 ms/div fired some 50 mV below the level, which it
+    // crossed 100 to 800 samples after the trigger point; every two-frame batch was left out, a fifth of a record a
+    // second reached the picture). The crossing counts when the signal stays in the band of the level from the
+    // trigger point to it, with room for noise; a frame joined with older memory (issue #5) has a full step there.
+    match near(SLOW_EDGE_SPAN) {
+        Some(t) => {
+            let (a, b) = ((t as usize).min(f.pre), (t as usize + 1).max(f.pre));
+            let inside = v[a..=b.min(v.len() - 1)].iter().all(|&x| (x - level).abs() <= SLOW_EDGE_BAND * hyst);
+            if inside {
+                Edge::At
+            } else {
+                Edge::Off
+            }
+        }
+        None => Edge::Off,
+    }
 }
+
+#[cfg(any(target_os = "linux", test))]
+/// Samples around the trigger point in which the level crossing of a slow edge may lie (`edge_check`), when the signal
+/// stays within the band of the level up to the trigger point.
+const SLOW_EDGE_SPAN: usize = 16_384;
+
+#[cfg(any(target_os = "linux", test))]
+/// The band of a slow edge (`edge_check`), in multiples of the check's hysteresis (a fifth of a division): the offset
+/// of the comparator (a tenth of a division on the unit) and the noise on it.
+const SLOW_EDGE_BAND: f32 = 1.5;
 
 /// Frames per batch while the zone trigger runs: `zone.batch = <n>` in system.conf, default 1.
 pub(super) fn zone_batch() -> u32 {
@@ -273,16 +353,36 @@ pub fn stop_plan(b: &Settings, p: &hz::Params, tdiv: f64, delay: f64) -> (Settin
     (r, pre / k)
 }
 
-/// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch of the live compression or
-/// one whose newest frame the deep measurements may read raw (`deep_raw_settings`), since the next batch would write
-/// the ring under it. Prearm gains at
-/// short time bases; deep compressed records take most of a batch in the read anyway.
+/// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch of the live compression,
+/// one whose newest frame the deep measurements may read raw (`deep_raw_settings`), or a record the live read takes
+/// only part of (`partly_read`), since the next batch would write the ring under it and the views after a STOP could
+/// not read it again (issue #47: 50 M at 50 ns/div, zoomed out after the STOP, showed the 7 us of the live window).
+/// Prearm gains at short time bases; deep records take most of a batch in the read anyway.
 pub(super) fn prearm_keeps_replay(
     b: &Settings,
     p: &hz::Params,
     deep: Option<crate::board::policy::deep::Want>,
 ) -> bool {
-    !raw_newest(b, p) && (deep.is_none() || deep_raw_settings(b, p).is_none())
+    !raw_newest(b, p) && !partly_read(b) && (deep.is_none() || deep_raw_settings(b, p).is_none())
+}
+
+/// Whether the live read of batch `b` takes only part of its record (`batch_plan`: a screen window, or the record
+/// through the FPGA compression): the rest is only in the ring, for the views after a STOP.
+pub(super) fn partly_read(b: &Settings) -> bool {
+    b.window.is_some() || b.compress > 1
+}
+
+/// Looks at the stop condition (every 10 ms of the wait for a batch, `seq::acquire_batch_on`) a STOP lets pass before
+/// it cuts that wait: for a record the live read takes only part of, as long as the record takes twice and 50 ms more,
+/// so the record being recorded is finished and read, and stays in the ring for the views (issue #47: a STOP cut it,
+/// the arm had already written the ring over the record before, and nothing was left but the live window). Without a
+/// trigger the STOP comes that much later; other records keep the cut at once.
+pub(super) fn hold_grace_looks(b: &Settings, p: &hz::Params) -> u32 {
+    if !partly_read(b) || p.rate == 0 {
+        return 0;
+    }
+    let record_ms = p.memsel as f64 * 1e3 / p.rate as f64;
+    ((2.0 * record_ms + 50.0) / 10.0).ceil() as u32
 }
 
 /// The raw read at STOP (docs/fork/stop-exact.md) of the newest frame of the batch `b` with `count` frames read just

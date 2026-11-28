@@ -158,7 +158,8 @@ For how the hardware works, see the [hardware overview](https://dekajoule.github
 - **Analysers**: spectrum, eye diagram and jitter, power, Bode with the built-in or an external generator, bandwidth
   test, Identify
 - **Logic analyser** with the PLA2216 probe, and the **generator** of S models
-- **Remote control**: web remote, SCPI, VXI-11, MCP for AI assistants, SSH, the scope by name over mDNS
+- **Remote control**: web remote, SCPI, VXI-11, MCP for AI assistants, SSH, the scope by name over mDNS, and the
+  desktop program [oos-desktop](https://github.com/dekajoule/oos-desktop) for Windows, macOS and Linux
 - **System**: its own cold boot of all hardware, self-calibration into its own files, signed updates with trial start
   and automatic rollback
 

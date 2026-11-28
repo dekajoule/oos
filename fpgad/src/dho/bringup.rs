@@ -8,11 +8,20 @@
 #[cfg(target_os = "linux")]
 use oos_hal::dho::afe;
 
-// PCIe host and xdma up and down are the same on every board family with this endpoint (crate::pcie)
+// PCIe host and xdma up and down are the same on every board family with this endpoint (crate::pcie); the DHO loads
+// xdma with a 1 s C2H timeout (`crate::pcie::DHO_C2H_TIMEOUT`)
 #[cfg(test)]
-pub(super) use crate::pcie::xdma_params;
+pub(super) fn xdma_params(v: Option<&str>) -> Result<String, String> {
+    crate::pcie::xdma_params(v, Some(crate::pcie::DHO_C2H_TIMEOUT))
+}
 #[cfg(target_os = "linux")]
-pub(super) use crate::pcie::{pcie_down, pcie_up};
+pub(super) use crate::pcie::pcie_down;
+
+/// `crate::pcie::pcie_up` with the DHO's C2H timeout.
+#[cfg(target_os = "linux")]
+pub(super) fn pcie_up() -> std::io::Result<oos_hal::dho::bus::Bar1> {
+    crate::pcie::pcie_up(Some(crate::pcie::DHO_C2H_TIMEOUT))
+}
 
 /// Uptime of the BOOT command sent by `oos-fpgad fpga-boot`.
 #[cfg(target_os = "linux")]

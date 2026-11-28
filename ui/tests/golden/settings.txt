@@ -3500,7 +3500,9 @@ setup dots "-1" -> true; error: line 2: dots: not a boolean: -1
 setup dots "0" -> false
 setup dots "1" -> true
 setup dots "1e9" -> true; error: line 2: dots: not a boolean: 1e9
+setup dots "AUTO" -> auto
 setup dots "TRUE" -> true; error: line 2: dots: not a boolean: TRUE
+setup dots "auto" -> auto
 setup dots "false" -> false
 setup dots "off" -> false
 setup dots "on" -> true
