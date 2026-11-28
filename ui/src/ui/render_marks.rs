@@ -209,22 +209,26 @@ impl Ui {
             None => (rec.t0, rec.dt, None),
         };
         let a = self.plot.area;
-        let (tdiv, _) = self.view();
+        let (tdiv, view_mid) = self.view();
         if !(dt > 0.0) || !self.m.dots.marks(dt / tdiv as f64 * a.w as f64 / HDIV as f64) {
             return;
         }
         cv.set_clip(a);
         for c in (0..NCH).filter(|&c| self.m.ch[c].on && self.shows(c) && self.m.z_src != Some(c)) {
             let col = mix(CH_COLORS[c], rgb(255, 255, 255), 140);
-            // a deskewed channel is drawn earlier by its deskew (draw_channels), from the frame's samples that then
-            // fall into the window: its marks the same way
+            // a deskewed channel is drawn earlier by its deskew (draw_channels), from the frame's samples in the view
+            // moved by it (`captured_record_view`, from the frame's own origin, which need not fall on a sample of
+            // the window): its marks the same way
             let shift = self.m.deskew_ch[c];
             let (v, origin) = match raw {
+                Some(r) if shift == 0.0 => (r.frame.ch[c].get(r.i0..r.i1).unwrap_or(&[]), t0),
                 Some(r) => {
                     let n = r.frame.ch[c].len();
-                    let lo = ((r.i0 as f64 + shift / dt).floor().max(0.0) as usize).min(n);
-                    let hi = ((r.i1 as f64 + shift / dt).ceil().max(0.0) as usize).clamp(lo, n);
-                    (&r.frame.ch[c][lo..hi], t0 + (lo as f64 - r.i0 as f64) * dt - shift)
+                    let frame0 = r.t0 - r.i0 as f64 * dt;
+                    let (half, mid) = (tdiv as f64 * HDIV as f64 / 2.0, view_mid as f64 + shift);
+                    let lo = (((mid - half - frame0) / dt).ceil().max(0.0) as usize).min(n);
+                    let hi = ((((mid + half - frame0) / dt).floor() + 1.0).max(0.0) as usize).clamp(lo, n);
+                    (&r.frame.ch[c][lo..hi], frame0 + lo as f64 * dt - shift)
                 }
                 None => (&rec.ch[c][..], t0 - shift),
             };
