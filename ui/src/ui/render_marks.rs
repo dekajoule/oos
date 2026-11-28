@@ -216,12 +216,20 @@ impl Ui {
         cv.set_clip(a);
         for c in (0..NCH).filter(|&c| self.m.ch[c].on && self.shows(c) && self.m.z_src != Some(c)) {
             let col = mix(CH_COLORS[c], rgb(255, 255, 255), 140);
-            let v = match raw {
-                Some(r) => r.frame.ch[c].get(r.i0..r.i1).unwrap_or(&[]),
-                None => &rec.ch[c][..],
+            // a deskewed channel is drawn earlier by its deskew (draw_channels), from the frame's samples that then
+            // fall into the window: its marks the same way
+            let shift = self.m.deskew_ch[c];
+            let (v, origin) = match raw {
+                Some(r) => {
+                    let n = r.frame.ch[c].len();
+                    let lo = ((r.i0 as f64 + shift / dt).floor().max(0.0) as usize).min(n);
+                    let hi = ((r.i1 as f64 + shift / dt).ceil().max(0.0) as usize).clamp(lo, n);
+                    (&r.frame.ch[c][lo..hi], t0 + (lo as f64 - r.i0 as f64) * dt - shift)
+                }
+                None => (&rec.ch[c][..], t0 - shift),
             };
             for (j, &v) in v.iter().enumerate().filter(|(_, v)| v.is_finite()) {
-                let (x, y) = (self.x_of_time((t0 + j as f64 * dt) as f32), self.y_of_volts(c, v));
+                let (x, y) = (self.x_of_time((origin + j as f64 * dt) as f32), self.y_of_volts(c, v));
                 if x >= a.x && x < a.x + a.w {
                     cv.fill(Rect::new(x - 1, y - 1, 2, 2), col);
                 }
@@ -607,26 +615,51 @@ mod sample_marks_tests {
 
     /// The pixels `draw_sample_marks` lights on an empty canvas with CH1's record of `n` samples over the screen.
     fn lit(dots: Dots, n: usize) -> usize {
+        marks(dots, n, 0.0, false).len()
+    }
+
+    /// The columns of those pixels, with CH1 deskewed by `deskew` samples; with `frame` the samples are a window in the
+    /// middle of a hardware frame three times as long, as at an interpolated time base.
+    fn marks(dots: Dots, n: usize, deskew: f64, frame: bool) -> Vec<usize> {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.m.dots = dots;
         let (tdiv, _) = ui.view();
         let window = tdiv as f64 * HDIV as f64;
         let dt = window / n as f64;
         let v: Vec<f32> = (0..n).map(|k| if k % 2 == 0 { 0.5 } else { -0.5 }).collect();
+        ui.m.deskew_ch[0] = deskew * dt;
+        let raw = frame.then(|| crate::wave::Raw {
+            frame: std::sync::Arc::new(crate::board::Frame {
+                dt,
+                ch: [[v.clone(), v.clone(), v.clone()].concat(), Vec::new(), Vec::new(), Vec::new()],
+                ..Default::default()
+            }),
+            i0: n,
+            i1: 2 * n,
+            t0: -window / 2.0,
+            conditioned: true,
+        });
         ui.last[0] = Some(Record {
             t0: -window / 2.0,
             dt,
             ch: [v, Vec::new(), Vec::new(), Vec::new()],
             triggered: true,
             partial: false,
-            raw: None,
+            raw,
             la: None,
             pairs: false,
             peak: false,
         });
         let mut cv = Canvas::new(PANEL_W, PANEL_H);
         ui.draw_sample_marks(&mut cv);
-        cv.px.iter().filter(|&&p| p != 0).count()
+        cv.px.iter().enumerate().filter(|(_, &p)| p != 0).map(|(i, _)| i % PANEL_W as usize).collect()
+    }
+
+    /// The middle column of the marks (a mean would follow a mark the clip cuts at the edge).
+    fn centre(m: &[usize]) -> f64 {
+        let mut m = m.to_vec();
+        m.sort_unstable();
+        m[m.len() / 2] as f64
     }
 
     // Break it catches: marks with On or Off, marks over a dense record (a dotted band over the line), or none where the
@@ -638,5 +671,23 @@ mod sample_marks_tests {
         assert_eq!(lit(Dots::Auto, 2000), 0);
         assert_eq!(lit(Dots::On, 50), 0);
         assert_eq!(lit(Dots::Off, 50), 0);
+    }
+
+    // Break it catches: the marks of a deskewed channel where the record lies, beside its line that is drawn shifted
+    // by the deskew
+    #[test]
+    fn the_marks_of_a_deskewed_channel_move_with_its_line() {
+        // a deskew of minus half a sample draws the line half the samples' spacing later, and the marks with it
+        for frame in [false, true] {
+            let (plain, moved) = (marks(Dots::Auto, 50, 0.0, frame), marks(Dots::Auto, 50, -0.5, frame));
+            // a mark at the edge of the plot may lose a column to the clip
+            assert!(plain.len().abs_diff(moved.len()) <= 4, "{} and {} pixels", plain.len(), moved.len());
+            let spacing = (plain.iter().max().unwrap() - plain.iter().min().unwrap()) as f64 / 49.0;
+            let d = centre(&moved) - centre(&plain);
+            assert!(
+                (d - spacing / 2.0).abs() < spacing / 4.0,
+                "frame {frame}: the marks moved {d:.1} px, {spacing:.1} apart"
+            );
+        }
     }
 }
