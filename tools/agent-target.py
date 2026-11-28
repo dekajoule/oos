@@ -29,7 +29,7 @@ CRATES = ("hal", "dsp", "ui", "fpgad")
 MOST = 80
 LARGE = 2000
 # what is only proven on a scope (the paths of tools/pr-gate.sh): tasks there wait for the maintainer at a unit
-UNIT = ("hal/src/dho/", "hal/src/update/", "ui/src/board/", "fpgad/", "boot/", "kernel/", "rootfs/")
+UNIT = ("hal/src/dho/", "hal/src/mho/", "hal/src/update/", "ui/src/board/", "fpgad/", "boot/", "kernel/", "rootfs/")
 
 
 def needs_unit(path):

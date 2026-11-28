@@ -127,6 +127,7 @@ impl Line {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     #[test]
     fn ioctl_numbers_match_linux_headers() {

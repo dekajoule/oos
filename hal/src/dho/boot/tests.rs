@@ -3,6 +3,8 @@
 
 //! Whole-sequence tests against `sim::Unit` (scripted reads, virtual time).
 
+#![cfg(oos_board = "dho")]
+
 use super::sim::{AfeStub, PllRec, SimClock, Unit, UNIT_IDELAY};
 use super::*;
 

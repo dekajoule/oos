@@ -4,22 +4,7 @@
 //! Front-panel MCU protocol (UART0, frames `FA cmd data crc7 AF`, see docs/protocols/frontpanel.md), platform independent
 //! so the host tests cover it.
 
-/// CRC-7/MMC over [cmd, data] (poly 0x09, init 0), 7-bit result.
-pub fn crc7(cmd: u8, data: u8) -> u8 {
-    let mut c: u8 = 0;
-    for b in [cmd, data] {
-        c ^= b;
-        for _ in 0..8 {
-            c = if c & 0x80 != 0 { (c << 1) ^ 0x12 } else { c << 1 };
-        }
-    }
-    c >> 1
-}
-
-/// One MCU frame `FA cmd data crc7 AF`.
-pub fn frame(cmd: u8, data: u8) -> [u8; 5] {
-    [0xfa, cmd, data, crc7(cmd, data), 0xaf]
-}
+pub use crate::panelframe::{crc7, frame, keys, led_frames, take, Piece, LED_HW_BIT};
 
 /// Key code of the power key, see docs/protocols/board.md section 4.
 pub const KEY_POWER: u8 = 0x1b;
@@ -47,58 +32,10 @@ pub fn flash_time(seconds: f32) -> [u8; 5] {
     frame(0x04, (seconds * 10.0).round().clamp(0.0, 255.0) as u8)
 }
 
-/// Hardware LED bit of each panel LED index (from the LED id: bit = 8 * (id >> 8) + log2(id & 0xff) - 8).
-/// G2 (index 10) has no valid id on the DHO900.
-pub const LED_HW_BIT: [Option<u8>; 19] = [
-    Some(10),
-    Some(11),
-    Some(12),
-    Some(13), // CH1-CH4
-    Some(16),
-    Some(17),
-    Some(15),
-    Some(14), // RUN, STOP, SINGLE red, SINGLE orange
-    Some(1),
-    Some(2),
-    None,
-    Some(0), // LA, G1, G2, TOUCH
-    Some(7),
-    Some(5),
-    Some(9),
-    Some(8), // A up/down, B left/right, SLOPE1, SLOPE2
-    Some(6),
-    Some(3),
-    Some(4), // A left/right, B up/down, INTENSITY
-];
-
-/// The three LED frames (cmd 1/2/3 = hardware LEDs 0-7, 8-15, 16-18) for a mask in panel LED order (see `Ui::leds`).
-pub fn led_frames(mask: u32) -> [[u8; 5]; 3] {
-    let mut hw = 0u32;
-    for (i, b) in LED_HW_BIT.iter().enumerate() {
-        if let (true, Some(b)) = (mask & (1 << i) != 0, b) {
-            hw |= 1 << b;
-        }
-    }
-    let mut out = [[0u8; 5]; 3];
-    for (k, f) in out.iter_mut().enumerate() {
-        let cmd = k as u8 + 1;
-        let data = ((hw >> (8 * k)) & 0xff) as u8;
-        *f = frame(cmd, data);
-    }
-    out
-}
-
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
-
-    #[test]
-    fn crc7_matches_frontpanel_py() {
-        // tools/frontpanel.py selftest
-        assert_eq!(crc7(0x01, 0x00), 0x0b);
-        assert_eq!(crc7(0x02, 0xff), 0x6f);
-        assert_eq!(crc7(0x06, 0x15), 0x0e);
-    }
 
     #[test]
     fn power_frames_match_board_md() {

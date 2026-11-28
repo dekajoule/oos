@@ -7,14 +7,17 @@
 //!   oos-ui --offline               start in offline mode: analog off, no demo on CH1-CH4
 //!   oos-ui --script FILE           anywhere: run a command script off-screen and write screenshots (tests)
 //!   oos-ui --replay FRAME.bin --pre "<:WAV:PRE? string>"   show a captured raw frame (CH1) instead of the demo source
+//!   oos-ui --hw                    on the MHO900 by hand only (oos-mho-live, docs/mho.md "First acquisition"): the
+//!                                  board `oos-fpgad mho-start` set up from /oos/mho-snapshot.txt, measured live
 //!   --store-dir DIR                storage directory for setups, CSV and PNG (default /tmp/oos; scripts: the script's dir)
 //!   --model NAME                   act as this model (DHO802 .. DHO924S), instead of /rigol/data/vendor.bin
 //!   --limits FILE                  experimental limits (default /oos/limits.conf, docs/models.md)
 
 // SCPI, web remote, display and the live source only run on the scope (Linux); the host build is the test runner and
 // leaves them unused. The guard against dead code is the scope build (tools/check.sh target): what only the tests use
-// is #[cfg(test)] or carries an allow with its reason.
-#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// is #[cfg(test)] or carries an allow with its reason. An MHO900 build (docs/mho.md) never reaches the DHO's hardware
+// path either: its live compression, deep reads and core placement.
+#![cfg_attr(any(not(target_os = "linux"), oos_board = "mho"), allow(dead_code))]
 
 mod board;
 mod cmd;
@@ -135,11 +138,18 @@ fn main() {
     }
     let experimental = p.experimental();
     let foreign = p.foreign.clone();
+    let drives = p.drives_hardware();
     oos_hal::model::init(p);
-    // another board (docs/porting.md): no hardware source, the demo signal instead
-    let args: Vec<String> = match &foreign {
-        Some(_) => args.iter().filter(|a| !matches!(a.as_str(), "--hw" | "--fpga-live" | "--afe")).cloned().collect(),
-        None => args,
+    // another board (docs/porting.md), or a build for a board without acquisition code (the MHO900, docs/mho.md): no
+    // hardware source, the demo signal instead; on a board that takes them by hand, `--hw` and `--fpga-live` stay
+    let by_hand = foreign.is_none() && <board::Active as board::Board>::LIVE_BY_HAND;
+    let args: Vec<String> = match drives {
+        false => args
+            .iter()
+            .filter(|a| a.as_str() != "--afe" && (!matches!(a.as_str(), "--hw" | "--fpga-live") || by_hand))
+            .cloned()
+            .collect(),
+        true => args,
     };
     // on the unit the frame loop and the acquisition thread (started with the source) keep the two A72 for themselves
     #[cfg(target_os = "linux")]
@@ -155,6 +165,11 @@ fn main() {
         ui.toast(&format!(
             "This is a {}: OOS drives DHO800/DHO900 hardware only. Demo signal shown (docs/porting.md)",
             m
+        ));
+    } else if !drives {
+        ui.toast(&format!(
+            "OOS does not acquire on the {} yet: demo signal shown (docs/mho.md)",
+            oos_hal::target::ACTIVE.family_name
         ));
     }
     ui.overclock.path = limits;

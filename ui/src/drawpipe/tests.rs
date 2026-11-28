@@ -24,6 +24,7 @@ fn fresh() -> &'static Counters {
     Box::leak(Box::default())
 }
 
+#[cfg(oos_board = "dho")]
 fn dec(s: &Settings, p: &hz::Params) -> DecodeInto {
     let (s, p) = (s.clone(), *p);
     Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::decode_into(c, &s, &p, 0, f))
@@ -115,6 +116,7 @@ fn frames_of(
 
 // Break it catches: the workers' codes path (large frames, no per-frame measurements) drawing another picture or
 // other trigger statistics than `draw_frame` on every frame, or frames lost on it
+#[cfg(oos_board = "dho")]
 #[test]
 fn batch_picture_from_the_codes_equals_each_frame_drawn() {
     let (w, h) = (970, 448);
@@ -150,6 +152,7 @@ fn batch_picture_from_the_codes_equals_each_frame_drawn() {
 // Break it catches (`draw_frame_codes`): a picture or trigger statistics from the read-out words that differ from
 // decoding the frame first (column extremes, join, interleaved channels, the near window, the wide fallback),
 // or the codes path taken where it must not be.
+#[cfg(oos_board = "dho")]
 #[test]
 fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
     let (w, h) = (970, 448);
@@ -239,6 +242,7 @@ fn drawing_from_the_codes_equals_drawing_the_decoded_frame() {
 
 // Timing guard (tools/perf-guard.sh): a worker frame drawn from the read-out words against decode + draw, lines,
 // no per-frame measurements. The A53 gains more than the host (the f32 copy is 2x the read-out per channel).
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_codes_per_frame() {
@@ -320,6 +324,7 @@ fn merge_all(
 }
 
 /// The same frames one by one: `draw_frame` and the per-frame statistics on every frame.
+#[cfg(oos_board = "dho")]
 fn reference(
     bytes: &[u8],
     fb: usize,
@@ -344,6 +349,7 @@ fn reference(
 // vectors, frames claimed by several workers and the helper, dense and sparse frames, dots, two channels),
 // trigger or measurement statistics that leave frames out, frames lost or counted twice, a merge that does not
 // clear for minimum persistence, a buffer that does not come back.
+#[cfg(oos_board = "dho")]
 #[test]
 fn batch_picture_equals_each_frame_drawn() {
     let (w, h) = (970, 448);
@@ -413,6 +419,7 @@ fn batch_picture_equals_each_frame_drawn() {
 // Break it catches (issue #186): frames lost or merged twice while the workers and the helper fold their maps into
 // one set and the UI takes it meanwhile, a merge that adds more than one set of maps on the UI's thread, or maps of
 // channels that are off.
+#[cfg(oos_board = "dho")]
 #[test]
 fn every_frame_is_merged_once_while_the_workers_fold() {
     let (w, h) = (970, 448);
@@ -459,6 +466,7 @@ fn every_frame_is_merged_once_while_the_workers_fold() {
 }
 
 // Break it catches: the acquisition thread's share drawn differently from the workers', or not handed to the UI.
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_helper_alone_draws_the_same_picture() {
     let (w, h) = (970, 448);
@@ -486,6 +494,7 @@ fn the_helper_alone_draws_the_same_picture() {
 
 // Break it catches: frame 0 of a batch (the frame the FPGA held across the arm, issue #5) drawn in batch mode,
 // where the path without batches leaves it out.
+#[cfg(oos_board = "dho")]
 #[test]
 fn frames_before_first_are_left_out() {
     let (w, h) = (970, 448);
@@ -510,6 +519,7 @@ fn frames_before_first_are_left_out() {
 
 // Break it catches (#441): timed persistence through the batch merge. The picture ages once, before the first maps of
 // the screen step are added, and not at all when nothing is merged (no record: the newest trace is held).
+#[cfg(oos_board = "dho")]
 #[test]
 fn a_merge_ages_the_picture_once_before_adding() {
     let (w, h) = (970, 448);
@@ -547,6 +557,7 @@ fn a_merge_ages_the_picture_once_before_adding() {
 
 // Break it catches: frames of older settings drawn, maps of an older mapping merged, frames nobody drew not
 // counted, batches taken while the fast path does not apply.
+#[cfg(oos_board = "dho")]
 #[test]
 fn stale_work_is_dropped_and_counted() {
     let (w, h) = (970, 448);
@@ -599,6 +610,7 @@ fn stale_work_is_dropped_and_counted() {
 /// Host cost per frame of a worker (decode into kept vectors, trigger refinement, deposit) against the frames
 /// mode's per-frame work on the UI thread (`decode` + `draw_frame`), and the rate of 1, 2 and 4 workers (the
 /// helper runs the same code per frame). Run by tools/perf-guard.sh.
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_deposit_worker_per_frame() {
@@ -666,6 +678,7 @@ fn perf_guard_deposit_worker_per_frame() {
 
 /// One batch of 16 frames of `bytes` as the acquisition thread hands it on in batch mode: frame 0 left out, the
 /// others to the workers and its own share (`help`), until all are drawn and in the mailbox.
+#[cfg(oos_board = "dho")]
 fn feed_batch(pipe: &Pipe, bytes: &[u8], fb: usize, s: &Settings, p: &hz::Params, stamp: u64, hp: &mut Helper) {
     let (cs, cp) = (s.clone(), *p);
     let codes: CodesInto =
@@ -686,6 +699,7 @@ fn feed_batch(pipe: &Pipe, bytes: &[u8], fb: usize, s: &Settings, p: &hz::Params
 /// it does with the frames of a batch the workers do not take. Also the merge alone, with minimum persistence (the
 /// maps swapped in) and with persistence (added): its time and the pixels it adds. Guarded: the workers must not
 /// cost the frame loop more than the queue. Run by tools/perf-guard.sh.
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_batch_step_at_10_us_per_div() {
@@ -773,6 +787,7 @@ fn perf_guard_batch_step_at_10_us_per_div() {
 // Break it catches (unit 2026-11-18, more batches dropped for want of a buffer): a batch's buffer kept until every
 // holder of the batch lets it go (a worker folding its maps into the mailbox, a worker with the batch in its
 // queue) instead of coming back with its last frame drawn.
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_buffer_comes_back_with_the_last_frame_drawn() {
     let m = model(1e-6, false, false);
@@ -790,6 +805,7 @@ fn the_buffer_comes_back_with_the_last_frame_drawn() {
 // Break it catches (unit 2026-11-18, more frames dropped at 4 channels): the drawers folding their maps into the
 // mailbox after every batch (folds a screen that grow with the batches: worker time and memory traffic on the
 // small cores taken from drawing), or frames lost while they park their maps between screens.
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_drawers_fold_once_a_screen() {
     let (w, h) = (970, 448);
@@ -823,6 +839,7 @@ fn the_drawers_fold_once_a_screen() {
 // map where the traces hold counts in a small part of it (where the batches are fewer than the screens every
 // drawer of a batch folds its maps, at 4 channels four 970 x 448 maps each on a small core), counts left out, or
 // pixels outside the blocks with counts touched wrongly (saturation, the last partial block).
+#[cfg(oos_board = "dho")]
 #[test]
 fn folding_and_clearing_touch_the_blocks_with_counts() {
     let (w, h) = (970, 448);
@@ -858,6 +875,7 @@ fn folding_and_clearing_touch_the_blocks_with_counts() {
 /// while the drawers fold it leaves screens empty). The drops depend on the computer; host (M3), 4 channels, a
 /// batch every 400 us: 31-37 % with a mailbox per drawer, 40 % with the shared one folded after every batch,
 /// 1-13 % with the maps parked between screens. Run by tools/perf-guard.sh.
+#[cfg(oos_board = "dho")]
 #[test]
 #[ignore]
 fn perf_guard_batch_at_a_fixed_rate() {
@@ -972,6 +990,7 @@ fn keep_out_holds_while_its_guard_lives() {
 
 // Break it catches: the workers drawing the zoom picture other than `draw_frame` with the zoom's model on every frame,
 // or the merge leaving its maps out (#582)
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_workers_draw_the_zoom_picture_of_every_frame() {
     let ((w, h), (zw, zh)) = ((970, 448), (970, 200));
@@ -1075,6 +1094,7 @@ fn a_frame_triggered_on_the_other_slope_is_not_drawn() {
 // Break it catches: an Average run folded on the workers whose average differs in any bit from folding each frame's
 // screen record (`wave::to_record`): another trigger point, other places or another interpolation of the points,
 // a channel left out, the sparse or the min/max branch of the record not taken.
+#[cfg(oos_board = "dho")]
 #[test]
 fn a_frame_folded_into_an_average_run_is_its_screen_record_folded() {
     for (mask, n, tdiv) in [(0xf, 3520u32, 1e-6), (0x1, 12_512, 1e-6), (0x1, 128, 5e-9), (0x3, 62_500, 1e-5)] {

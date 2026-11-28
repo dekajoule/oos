@@ -179,6 +179,7 @@ fn a_channel_keeps_its_name() {
     assert_eq!(back.ch_label[0], "Vcc");
 }
 
+#[cfg(oos_board = "dho")]
 #[test]
 fn holdoff_steps_and_setups() {
     let mut u = crate::ui::testkit::demo_ui();
@@ -538,6 +539,7 @@ fn fine_scale_walks_between_the_steps() {
 }
 
 #[test]
+#[cfg(oos_board = "dho")]
 fn fine_scale_stands_on_every_row_of_the_table() {
     for probe in [1.0, 10.0, 100.0] {
         let mut u = with_two_channels();
@@ -619,6 +621,7 @@ fn the_expand_point_stays_put() {
     assert!((div(&u.m) / d0 - 1.0).abs() < 1e-5);
 }
 
+#[cfg(oos_board = "dho")]
 #[test]
 fn a_channel_can_measure_something_else() {
     let mut u = with_two_channels();
@@ -662,6 +665,7 @@ fn old_setups_at_20_volts_land_on_the_top_step() {
     assert_eq!(m.ch[0].vscale, top);
 }
 
+#[cfg(oos_board = "dho")]
 #[test]
 fn what_the_screen_says_reaches_the_settings() {
     let hw = |m: &Model| crate::board::dho::hw::settings(m, false);
@@ -773,6 +777,7 @@ fn the_event_table_can_be_reached_from_the_menu() {
     assert!(v.contains(&Item::DecTable) && v.contains(&Item::DecExport));
 }
 
+#[cfg(oos_board = "dho")]
 #[test]
 fn trigger_coupling_by_menu_scpi_and_setup() {
     let mut u = with_two_channels();

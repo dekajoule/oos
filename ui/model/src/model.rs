@@ -65,8 +65,8 @@ pub fn decode_source_name(source: usize) -> String {
 const _: () = assert!(NCH == oos_dsp::CHANNELS, "triggers and expressions in dsp take oos_dsp::CHANNELS channels");
 
 /// Generator slots of the UI state: the largest model of the board (the unit's own: `gen_count`). The board of the
-/// build has as many (`platform.rs`).
-pub const NGEN: usize = 1;
+/// build has as many (`platform.rs`): two on the MHO900 (G1 and G2), one on the DHO800/DHO900.
+pub const NGEN: usize = oos_hal::target::GENERATORS;
 
 /// Analog inputs of the unit (`oos_hal::model::platform()`), at most NCH.
 pub fn n_ch() -> usize {

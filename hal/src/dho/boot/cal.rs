@@ -93,6 +93,7 @@ impl CalFiles {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

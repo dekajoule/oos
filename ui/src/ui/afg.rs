@@ -317,6 +317,7 @@ mod arb_tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn frequency_keypad_ends_with_the_unit_and_keeps_the_limit() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.open_menu(MenuId::Afg);
@@ -348,6 +349,7 @@ mod arb_tests {
 
     use super::*;
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn capture_load_and_scpi() {
         let dir = crate::ui::testkit::Scratch::new("ui-arb");

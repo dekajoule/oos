@@ -377,6 +377,7 @@ mod tests {
     // Break it catches, end to end through `drawpipe::draw_frame` (decode, trigger refinement on the pairs, deposit):
     // a compressed frame drawn at another place than its raw frame, a trigger not found on pairs, the pair path not
     // taken (the record path would differ in many columns).
+    #[cfg(oos_board = "dho")]
     #[test]
     fn draw_frame_of_pairs_matches_the_raw_frame() {
         let (w, h) = (970usize, 448usize);
@@ -412,6 +413,7 @@ mod tests {
 
     // Timing guard (tools/perf-guard.sh): decode + draw of one compressed frame against its raw frame at 10 us/div
     // (k = 15). The batch gain is the read size (15x fewer bytes); the host work per frame must shrink with it.
+    #[cfg(oos_board = "dho")]
     #[test]
     #[ignore]
     fn perf_guard_compressed_frame() {

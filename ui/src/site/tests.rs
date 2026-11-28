@@ -870,6 +870,7 @@ fn mcp_empty_query_is_empty_text_while_an_empty_write_is_ok() {
 }
 
 #[test]
+#[cfg(oos_board = "dho")]
 fn mcp_session() {
     // over HTTP: a notification gets 202 with no body and no type
     let mut h = Web::open(0);
@@ -900,6 +901,7 @@ fn mcp_session() {
 }
 
 #[test]
+#[cfg(oos_board = "dho")]
 fn scpi_extensions() {
     let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
     for _ in 0..3 {

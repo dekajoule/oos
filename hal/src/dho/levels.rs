@@ -148,6 +148,7 @@ pub fn channel_levels(runs: &[[Slot; 8]], mask: u32, vert: &[Vert; 4]) -> [Optio
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

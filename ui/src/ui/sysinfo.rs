@@ -341,7 +341,7 @@ fn sysinfo_temps(readings: Option<(u32, Option<(f32, f32)>)>) -> Vec<Row> {
         }
         None => b.push(kvc("FPGA die", "-", DIM)),
     }
-    b.push(kv("Fan", "always on (GPIO hog)"));
+    b.push(kv("Fan", board().fan()));
     b.push(Row::Head("Temperature limits".into()));
     b.push(kv("SoC throttling", "70 / 85 \u{b0}C (kernel)"));
     b.push(kv("SoC alarm", format!("{:.0} \u{b0}C", soc)));
@@ -373,6 +373,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn opens_refreshes_and_closes_like_a_dialog() {
         let mut ui = crate::ui::testkit::demo_ui();
         ui.activate(Item::SysInfo);

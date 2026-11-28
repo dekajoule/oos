@@ -471,6 +471,7 @@ fn background_measurements_follow_a_running_record() {
 // Break it catches: a hardware recording that starts without a new number for the thread, stops on the count of
 // records that reached the screen instead of the thread's read-back, browses the RAM history instead of playing
 // the segment from the FPGA, or loses the stamps in the status line and the table. The thread is played by hand.
+#[cfg(oos_board = "dho")]
 #[test]
 fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
     use super::*;
@@ -539,6 +540,7 @@ fn hardware_segments_record_in_the_thread_and_browse_on_demand() {
 
 // Break it catches: the software limit applied to hardware segments, or the hardware limit to the software history.
 #[test]
+#[cfg(oos_board = "dho")]
 fn segment_counts_follow_the_limit_of_the_set_up() {
     use super::*;
     let shared: crate::board::HwShared = Default::default();
@@ -641,6 +643,8 @@ fn fast_path_draws_every_queued_frame() {
     ui.m.acq = AcqMode::Average;
     assert!(ui.fast_ok());
     (ui.m.avg_hw, ui.m.avg_count) = (true, 16);
+    // the FPGA's average is the DHO800/DHO900's (the MHO900 averages in software)
+    #[cfg(oos_board = "dho")]
     assert!(board().avg_hw(&ui.m) && !ui.fast_ok(), "the FPGA's average");
 }
 
@@ -1144,6 +1148,7 @@ fn fast_path_keeps_to_its_budget() {
 // Break it catches: an FPGA-averaged frame blended once more in software, the software average lost for frames
 // the FPGA did not average, no clear request on CLEAR / RUN / SINGLE, hardware averaging where the board falls back
 // (roll, a count the FPGA does not take, the switch off).
+#[cfg(oos_board = "dho")]
 #[test]
 fn hardware_average_bypasses_the_blend_and_restarts() {
     use super::*;
@@ -1217,6 +1222,7 @@ fn hardware_average_bypasses_the_blend_and_restarts() {
 /// against 29 screens, through the queue to the frame loop: every record is used, as many as were queued, at 1 and 4
 /// channels. The frame loop's part; whether a batch holds one frame or two (frame 0 left out, issue #5) is the
 /// acquisition thread's.
+#[cfg(oos_board = "dho")]
 #[test]
 fn batch_mode_uses_every_record_at_1_ms_per_div() {
     use super::*;

@@ -1,0 +1,275 @@
+# MHO900: the platform, and a first acquisition by hand
+
+An OOS build for the Rigol MHO900 (MHO934, MHO954, MHO984, MHO98): the screen, touch, network, the web remote, SCPI,
+storage and updates of OOS on the MHO900's main board, and, as a **preview** (ADR 0082), its acquisition: with the
+unit's own recordings of the stock system on the scope ("Setting a unit up" below) the build starts the acquisition
+board at every boot and measures; without them it shows the **demo signal**. Of the front panel it reads the keys and sets the LEDs. The decisions are
+[ADR 0028](adr/system/0028-mho900-platform-port-without-acquisition.md) (superseded by [ADR 0082](adr/hardware/0082-the-mho900-measures-as-a-preview-from-its-own-recordings.md)) and
+[ADR 0084](adr/hardware/0084-mho900-first-acquisition-from-the-units-own-snapshot.md); how a port is built in general
+is in [porting.md](porting.md).
+
+**Verified on two units (owners' reports, 2026-11-21, build `mho-dev-1`):** an MHO98 (GitHub issue #4) and an MHO934
+(issue #248) started OOS from the ADB install: the screen with the demo signal, touch, System info, Ethernet with DHCP
+(100 Mbit/s, MHO934), SSH and the web remote (MHO934), the fan; the next power-on started the stock system with its
+calibration and licences. Not working in that build: the front panel (not read), the RTL8821CU WLAN stick (no driver),
+the model (vendor.bin could not be opened, MHO954 assumed). The rest of this page says what is known how. What it rests on is the platform probe of one MHO954 (firmware 00.01.00, hardware 3, GitHub issue #4), compared with the
+stock survey of a DHO924S. The probe of one MHO98 (the same firmware and hardware code) shows the same board: its device
+tree, I2C devices, GPIO use, partitions and drivers are the MHO954's; only the licence files under `/rigol/data`
+differ. The probe of one MHO934 (GitHub issue #248) shows the same again.
+
+The work on the MHO900's acquisition happens on the branch `oos-mho`, not on main, and its test builds are the
+pre-releases `mho-dev-N`. Pull requests for the MHO900 go against `oos-mho`.
+
+## What the MHO900 shares with the DHO800/DHO900
+
+From the probe (reported by one unit, not checked on hardware by us):
+
+| Part | MHO954 (probe) | Same as DHO800/DHO900 |
+|---|---|---|
+| SoC, memory | RK3399, 4 GB, the same memory map | yes |
+| stock system | Android, kernel 4.4.126, started from the SD card | yes |
+| card layout | `mtdparts` word for word as on the DHO (misc, boot, recovery, backup ... rigol at the same sectors) | yes |
+| PMIC | RK808 with every rail at the same voltages, two SYR82x with the VSEL pins GPIO1_C7 / GPIO1_B6 | yes |
+| panel | 1024x600 DSI, ID 93 65 04 (JD9365), the same timings and reset pin | yes |
+| touch | FocalTech on i2c2 at 0x38, interrupt GPIO4_A6, reset GPIO4_A7 | yes |
+| other I2C | ADC128D818, five TMP421, an MB85RC64 FRAM, RX8010 RTC | yes |
+| Ethernet | RK3399 GMAC, Motorcomm PHY, reset GPIO3_B7 | yes |
+| keys | `rk29-keypad` (SARADC keys of the reference design, power key) | yes |
+
+## What differs
+
+| Part | MHO954 (probe) | DHO800/DHO900 |
+|---|---|---|
+| FPGA | a bitstream the SoC loads at every start (`sparrow3_K160T.bit`, `sparrow3_RT688.bit`), over GPIOs (`programb` GPIO1_B5, `initb` GPIO2_C7, `done` GPIO2_C4) | Zynq XC7Z015 from its own flash |
+| PCIe | XDMA `10ee:7024`, PERST# on GPIO1_A3 | `10ee:7022`, PERST# on GPIO2_C2 |
+| sample clock | a 3-wire bus on GPIO1_C1..C3 and a `sysref_reset` line (GPIO1_C6): JESD204 ADCs (assumed from the name) | LMX2582 on GPIO0_A2/A3/A6 |
+| front ends | the same AFE chip selects, plus four sets of select lines (`a`, `b`, `c` on GPIO3_D2..D7, GPIO4_A1..A3, GPIO4_C5, GPIO4_D0, GPIO4_D1) and four `afe_rms` inputs (GPIO4_D2..D5) | four RT1642 on the AFE bus |
+| generator | an option on its own board with its own MCU firmware (`afg_uart`) | on the main board |
+| fan | PWM1 (GPIO4_C6), 25 kHz, `pwm-fan` | on/off line GPIO4_A5 |
+| beeper | not on GPIO4_A3 (that pin is an AFE select line) | `pwm-gpio` on GPIO4_A3 |
+| backlight enable | none (GPIO1_C2 is the PLL's chip select) | GPIO1_C2 |
+| calibration | other files (`cal_ac_chan*`, `cal_hfflat_chan*`, `cal_lfflat_chan*`, `cal_offset_chan*`, `cal_afe_bandwidth` ...) | `hal/src/dho/calfile.rs` |
+| WLAN stick shipped | RTL8821CU (`0bda:c820`) | RTL8188EU |
+
+## What the build does
+
+- **Kernel**: the same kernel as the DHO, with the device tree `kernel/dts/rk3399-rigol-mho900.dts`. It takes the DHO
+  tree and changes what is the DHO's: PCIe with the MHO's PERST# (GPIO1_A3), spi5 with a spidev for the FPGA's image,
+  the bring-up's lines named as stock names them, no spi1, no beeper on GPIO4_A3, no backlight enable on GPIO1_C2, no
+  fan line on GPIO4_A5. The fan runs on PWM1 at full speed from the start (`pwm-fan`, `CONFIG_SENSORS_PWM_FAN`), until
+  the CPU's thermal zone takes it over (below, "Fan"). The
+  MHO's acquisition pins are named for the bring-up and the first acquisition (the front ends' bus and their select
+  lines) and driven only by them.
+- **Image**: `rootfs/board/mho`: the PCIe host and xdma modules (loaded only by the bring-up below), the touch driver, `/rigol` mounted read only (vendor.bin
+  for the model and the MAC). `oos-board has-hardware` says no, so rcS starts no bring-up and oos-ui starts without
+  `--hw`.
+- **oos-ui**: `ui/src/board/mho` behind `Board`. It starts no acquisition thread, applies nothing and drives no
+  generator. Touch is the input, and a USB mouse or keyboard where the build has them. The **front panel** is listened
+  read on UART0 at 1.5 Mbaud with the DHO's frames (`FA cmd data crc7 AF`, protocols/frontpanel.md). **Verified on
+  the unit** (an MHO934, GitHub issue #248, from mho-dev-4 on): every key and knob sends the DHO's codes (the seven
+  knobs the DHO's pairs 0x8a/0x8b to 0xea/0xeb), and the DHO's LED frames switch all LEDs on and off. Every frame and
+  every byte that starts none goes to `/tmp/oos-panel.log`; keys act as keys, and oos-ui sets the LEDs as on the DHO
+  (which bit lights which LED on the MHO900 is not yet verified on hardware). No power or other command goes to the
+  MCU.
+  `oos-panel` (on the image) shows the log and sends, only when the owner asks, the DHO's version query, "UI loaded"
+  or all LEDs on/off. Scales 1 mV/div to 10 V/div (the stock system takes 500 uV/div as 1 mV/div:
+  verified on the unit), couplings DC, AC, GND and 50 ohm, depths to 100 M: from the data sheet, **assumed**; they only
+  shape the demo. A notice on the screen says that OOS does not acquire.
+- **oos-hal**: `hal/src/mho` describes the board for the neutral code (`Target`): the card layout (the DHO's), the
+  models, `acquisition: false`. The model comes from vendor.bin with the keys found in the stock software
+  (`hal/src/vendorkeys.rs`). In `mho-dev-1` that search found nothing on both units; it now also looks into the
+  libraries the stock package keeps compressed, and when it still finds nothing the warning in System info says what it
+  searched. Until then an owner sets the model by hand: `echo "model = MHO98" > /oos/limits.conf` over SSH, then
+  restart. `Platform::drives_hardware` is false in this build, so `oos-fpgad` refuses every
+  hardware command but the two run by hand (`bringup`, `mho-start`) and oos-ui drops `--hw`, whatever the vendor
+  file says; it keeps `--fpga-live` only for the first acquisition (`oos-mho-live`).
+- **Updates**: packages of this build are for `mho900-recovery`; a DHO package is refused on an MHO and the other way
+  round. The first install takes no MHO900 model by itself (no variant has run OOS): it needs `--any-model`
+  (`oos-any-model.txt` on the stick).
+
+- **WLAN**: the RTL8821CU stick of the MHO900 gets `rtw88` (`rtw88_8821cu` of Linux 6.12, firmware `rtw8821c_fw.bin`
+  and its Bluetooth firmware from linux-firmware); `oos-wlan` picks it by the stick's USB id (docs/wlan.md). Not yet
+  verified on hardware.
+
+Not in it: power off from the front panel (no power command goes to the panel MCU; switch off at the power key or
+the mains), the beeper, the FPGA temperature.
+
+## Fan
+
+The stock system drives the fan's PWM (PWM1, 25 kHz, `pwm-fan`, 0 to 255) between 30 % and 100 % with a regulator
+of its own, from the SoC's temperature (`thermal_zone0`): on an MHO98 it kept it at 175 to 186 at 54 to 56 deg C
+(**verified on the unit**, GitHub issue #4, read from `/sys/class/hwmon` under the stock system). The five TMP421 on
+I2C bus 4 have no driver bound under the stock system, so their temperatures do not take part there.
+
+OOS leaves it to the kernel's thermal framework: the device tree gives `pwm-fan` eight levels from 77 (30 %) to 255
+and the CPU's thermal zone five active trips (38, 42, 46, 48 and 50 deg C, 2 deg C hysteresis), each mapped to a range
+of levels (1-2, 2-3, 3-5, 5-6, 7). Active trips are handled by the `step_wise` governor, which `oos-board early` gives
+the zone (`/sys/class/thermal/thermal_zoneN/policy`; the kernel's default, `power_allocator`, only drives cooling
+devices with a power model, so it leaves a fan alone). Above a trip the fan rises one level per second while the
+temperature rises, up to the map's highest level; it falls back once the temperature is below the trip by its
+hysteresis; below 38 deg C it is at level 0. The fan runs at full speed from the driver's probe until the governor
+first acts, and stays so if no thermal zone takes it. The CPU's own passive trips stay (the frequency is lowered from
+85 deg C). `cat /sys/class/hwmon/hwmon*/pwm1` and `/sys/class/thermal/cooling_device*/cur_state` show the fan's level.
+
+## Reporting back
+
+An owner who tests a build sends what it saw with one command over SSH, which only reads:
+
+```sh
+oos-mho-report
+```
+
+It writes `/oos/mho-report-<date>.txt` (and a copy on a USB stick in the front port): the build, the start's report
+(`/oos/mho-start.txt`), the screen's log, the fan and temperatures, and the lines of the generator, counter, logic
+analyser, roll, depth, peak detect and 50 ohm. Lines with a MAC address, a network address or the word "serial" are
+left out, so the file can be attached to the GitHub issue as it is: `scp root@<scope>:/oos/mho-report-*.txt .`.
+
+## Build
+
+```sh
+kernel/build-base.sh                         # one kernel for both boards; the build makes every device tree
+OOS_BOARD=mho boot/build-dev-image.sh        # boot/out/oos-dev.img for the MHO900, and MHO900_OOS_Install.GEL
+```
+
+The Rust crates take the board from `OOS_BOARD` when they are built (`cfg(oos_board = "mho")`, ADR 0067):
+`OOS_BOARD=mho cargo build` in `ui/` and `fpgad/`. `tools/check.sh` builds every family for the scope in its `target`
+layer; the board's own tests are in `oos-hal`, which holds every family. The UI's tests are those of the DHO800/DHO900
+and run with the default `dho`.
+
+## Trying it on a unit
+
+Two owners have (see the top of this page). The risk is smaller now that the kernel has started on two units, but an
+install still changes the card. What keeps it small:
+
+- Work on a **copy of the SD card** (docs/sdcard-backup.md) and keep the original card aside. The install writes the
+  boot selection and the `recovery` and `backup` partitions of the card it runs on; the original stays untouched.
+- The first install starts OOS **once** (one-shot): the next power-on starts the stock system again. An OOS that hangs
+  is left by switching off.
+- The stock MHO900 update may not take the `.GEL` file: it is not known which file names it accepts. Over ADB the
+  same install runs without it (`oos-update gel-install ... --any-model`, docs/install-usb.md).
+- What to look for: the panel lights up and shows OOS, touch works, Ethernet gets an address, the fan runs, and
+  `dmesg` from a shell (SSH) says what did not come up.
+- One setting of the stock system whole, for the first acquisition under OOS: `tools/mho-check.py <scope-ip> --snapshot`
+  right after a power-on, with the probe compensation signal on the channel it names (protocols/mho-acquisition.md,
+  section 7).
+- The card route writes OOS into `recovery` but does not select it: `boot/switch.py oos` (wiki/Installation.md,
+  step 4) or `card-install.py ... --arm` does. The ADB route (`gel-install ... --execute`) selects it itself.
+- The front panel under the stock system, without installing: `tools/mho-check.py <scope-ip> --panel` records the
+  stock program's traffic on `ttyS0` in both directions while the owner presses each key and names it.
+- The front panel: press keys and turn knobs, then `oos-panel log` over SSH. Frames there with the DHO's codes mean
+  the same protocol; bytes only under `skipped` mean another framing or speed. `oos-panel version`, `oos-panel
+  ui-loaded` and `oos-panel leds on` are single writes to the MCU, worth a try only after that.
+
+## Bring-up, step 1 (by hand, for owners who test it)
+
+`oos-fpgad bringup --hw-code N --yes` over SSH starts the acquisition board the way the stock system does
+(protocols/mho-acquisition.md, section 1) and stops at the first step that fails, saying what it saw. Nothing starts it
+by itself, and nothing of it outlasts a power-off. **Verified on the unit** (hp197's MHO98, hardware code 3, mho-dev-5,
+GitHub issue #4) up to `pcie`: the clock chip reads TI's vendor ID before and after its 136 words, the FPGA takes the
+unit's image in 3.0 s and raises DONE, the PCIe link trains at 5.0 GT/s on four lanes (the DHO800/DHO900: two), xdma
+binds the endpoint 10ee:7024 with a 64 KiB and a 16 MiB BAR, and the FPGA version reads 0x20260110, the value
+mho-check.py reads under the stock system. The `adc` step is verified on that MHO98 and on an MHO934 (issue #248),
+where every step ran the same: both ADCs answer all 32 reads, and the ADC clock count reads 49999
+(protocols/mho-acquisition.md, section 4).
+
+| step | what it does | what it reads back |
+|---|---|---|
+| `power` | `adc_power`, `afe_power` = 1 (GPIO0_A1, GPIO0_A2) | |
+| `clock` | `sysref_reset` = 0 as stock leaves it; reads the clock chip's ID registers over the 3-wire bus (GPIO1_C1..C3); only when the vendor ID is TI's (0x51 0x04) it writes the unit's own table `/rigol/resource/conf/init_all_clock_V00_0N.txt` (N from the hardware code) | the ID before and after |
+| `fpga` | `fpga_power` = 1 (GPIO1_A0); PROGRAM_B (GPIO1_B5) low, then high; the unit's own image from `/rigol/FPGA` (`acq::fpga_image`) over `/dev/spidev5.0` at 25 MHz (slave serial; the name comes from the device tree's `spi5` alias, without which the port is `/dev/spidev2.0`); 5 s | INIT_B (GPIO2_C7) and DONE (GPIO2_C4) |
+| `pcie` | the PCIe host module and `xdma.ko`, with the DHO's retries | the endpoint's device ID, then the registers of `bringup::FIRST_READS` (the same tools/mho-check.py reads under the stock system) |
+| `adc` | nothing is written to an ADC: read transfers through the FPGA's SPI bridge (0x3000, protocols/mho-acquisition.md section 4) for registers 0x00 to 0x0f of ADC 0 and ADC 1 | the ADC clock count 0x1210 (62500 on the DHO800/DHO900), then each register's raw word, or `-` with what 0x3004 held when bit 16 (valid) was not set |
+
+`--until power|clock|fpga|pcie|adc` ends after that step (`adc`, the last, without it); without `--yes` it only says what it would do and reads the
+hardware-code straps. The hardware code is given by hand (`--hw-code 3`: what mho-check.py reported on every unit so
+far), because how the straps map to it is not known yet. The clock chip's frame is that of its data sheet (24 bits,
+MSB first, a read bit, 13 address bits, 8 data bits); it has not been recorded on a unit. The pure parts are in
+`hal/src/mho/bringup.rs`, the steps in `fpgad/src/mho/bringup.rs`.
+
+What it answers: whether the board's supplies, clock chip and FPGA come up under OOS, and whether the FPGA's registers
+read as under the stock system. The next steps (the JESD204 link, the ADCs, the front ends, a first record) build on
+its output.
+
+## Next: the acquisition
+
+[protocols/mho-acquisition.md](protocols/mho-acquisition.md) describes the acquisition board as the stock MHO900 system
+uses it (**not yet verified on hardware**), and `hal/src/mho/acq.rs` keeps it as data: the start-up order (supplies on
+GPIO0_A1, GPIO0_A2 and GPIO1_A0, the LMK04821 clock, the Kintex-7 image per hardware code, PCIe), the register blocks,
+the ADCs' SPI bridge at 0x3000 and the read-out format. The main result for a port: the register window, the
+read-out stream, the run and read-out registers of the SCU and the sample format (7500 codes per division around
+32768, the DHO's interleave) are the DHO800/DHO900's. OOS's decode and its measurements therefore carry over once the
+board delivers frames.
+
+An owner can check these assumptions under the stock system with `tools/mho-check.py <scope-ip>` (read-only on the
+hardware; over SCPI it changes settings and sets them back) and attach the report to the GitHub issue.
+
+Still to be measured on a unit at the bench: the clock and ADC settings, the JESD204 link, the front ends and their
+select lines, the calibration files, the generator board and the front panel. Nothing of it is turned on before it
+has run on a unit (ADR 0010); `Target::acquisition` stays false until then.
+
+## Setting a unit up (towards a preview)
+
+The goal of the next weeks is an **MHO900 preview**: a build that an owner sets up in three steps and that measures
+with the functions below verified on units. Until then every build is a test build. From the computer, with the
+release's `mho-check.py`, `mho-settings.py`, `mho-setup.py` and `mho-poll` in one folder:
+
+1. Under the stock system: `python3 mho-setup.py <scope-ip> record`. It records the board's cold start and one
+   setting whole (the probe compensation signal on the channel it names, about 5 minutes), then every setting OOS
+   needs (nothing connected, about 40 minutes), into a folder `mho-setup-<date>`. It sets every setting back.
+2. Install OOS and start it ("Trying it on a unit" above), then `python3 mho-setup.py <scope-ip> install`: the
+   recordings go to `/oos`, and the acquisition starts, from then on at every boot.
+3. After testing: `python3 mho-setup.py <scope-ip> report` fetches `oos-mho-report`'s file ("Reporting back").
+
+The preview is reached when:
+
+- the functions of mho-dev-36 (fan, peak detect, depth, 50 ohm, counter, generator, roll, logic analyser) and the ones
+  verified before are verified on at least two units, and what fails is fixed or left out;
+- the three steps above worked for an owner who had not tested before;
+- a decision record describes the acquisition on the MHO900 as a preview (it supersedes the platform-only port of
+  ADR 0028 for this board) and the work comes to main by pull requests.
+
+Not in the preview: a generator with sine and arbitrary waves, 50 ohm at every scale, a start of the board without
+the unit's own recordings of the stock system.
+
+## First acquisition (by hand, for owners who test it)
+
+From mho-dev-14 on, two steps cover what the earlier builds asked for one at a time:
+
+1. Under the stock system: `tools/mho-check.py <scope-ip> --capture-all`, with `mho-poll` of the release next to it.
+   It records the stock system's cold start of the acquisition board and then takes the snapshot
+   (protocols/mho-acquisition.md, section 7).
+2. Under OOS: copy `mho-capture-*.txt` to `/oos/mho-capture.txt` and `mho-snapshot-*.txt` to
+   `/oos/mho-snapshot.txt`, then `oos-mho-live`. Later tries need no new build: a recipe copied to
+   `/oos/mho-recipe.txt` (section 10), or a newer `oos-fpgad` copied to `/oos/bin/oos-fpgad`, is used by the next
+   `oos-mho-live`.
+
+The steps of the earlier builds follow.
+
+**Not yet verified on hardware** (ADR 0084). The board is started from the unit's own snapshot of the stock system and
+measures at that one setting: the probe compensation signal on the snapshot's channel.
+
+1. Under the stock system, right after a power-on with at least one channel off: `tools/mho-check.py <scope-ip>
+   --snapshot`, with the probe compensation output on the channel it names (protocols/mho-acquisition.md, section 7).
+   Then, also under the stock system, `tools/mho-check.py <scope-ip> --afe-init`: it restarts the stock program
+   and records how it sets the front ends up (protocols/mho-acquisition.md, section 7).
+2. Start OOS (a build from `mho-acq-1` on), copy the files to the scope (the second one from mho-dev-13 on:
+   `scp mho-afe-init-*.txt root@<scope>:/oos/mho-afe-init.txt`): `scp mho-snapshot-*.txt
+   root@<scope>:/oos/mho-snapshot.txt`. The signal stays connected to the same channel.
+3. Over SSH: `oos-mho-live`. From mho-dev-18 on it restarts oos-ui with `--hw`: the MHO900's acquisition thread
+   (`ui/src/board/mho/hw.rs`) reads whole records at the snapshot's setting and puts them on the snapshot's channel in
+   volts; switch that channel on on the screen. From mho-dev-20 on, with the unit's `mho-settings.py` recording copied
+   to `/oos/mho-settings.txt`, the first channel on, its scale and the time base set the board
+   (protocols/mho-acquisition.md, section 11). It runs `oos-fpgad mho-start --snapshot /oos/mho-snapshot.txt --yes` (the report goes
+   to `/oos/mho-start.txt`, its last line says `RESULT: IT MEASURES` when the square wave came back), then restarts
+   oos-ui on the board's frames. `oos-mho-live off` goes back to the demo signal; a power-off undoes all of it.
+   From mho-dev-31 on the scope runs `oos-mho-live` by itself at every start when `/oos/mho-snapshot.txt` is there
+   (its output in `/tmp/oos-mho-live.log`); a file `/oos/mho-manual` leaves it to the owner again. With a recording
+   of `mho-settings.py --extended` the screen's channels on (several at once), their offset, AC and GND coupling and
+   bandwidth limit set the board too. From mho-dev-34 on also peak detect, a fixed memory depth and 50 ohm (at
+   the recorded scale only), from mho-dev-35 on the counter, generator 1 (square, noise, DC), roll and the logic
+   analyser (protocols/mho-acquisition.md, section 11), and generator 2 like generator 1 (Gen 2 on the generator
+   page, `:SOURce2:...`; section 12.5).
+
+What `mho-start` does, step by step, is in protocols/mho-acquisition.md section 10; `--dry` lists every step without
+touching the board. Only that setting is measured: the scale, time base and trigger keys still act on the demo's
+terms.

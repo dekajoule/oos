@@ -53,7 +53,7 @@ impl Column {
 
     /// The column for the zone's value range `lo..=hi` (volts) on a channel at `scale`/`offset`, rounded outwards to
     /// whole codes and clipped to the code range; off when the range lies wholly outside it.
-    #[cfg(test)]
+    #[cfg(all(test, oos_board = "dho"))]
     fn of_range(lo: f64, hi: f64, scale: f64, offset: f64) -> Column {
         Column::of_codes(mask::code(lo, scale, offset), mask::code(hi, scale, offset))
     }
@@ -188,6 +188,7 @@ pub fn read(bus: &mut impl Bus, s1190: u32) -> Raw {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

@@ -405,6 +405,7 @@ impl Overlay {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

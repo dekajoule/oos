@@ -136,6 +136,7 @@ pub fn load_first(name: &str, dirs: &[&str]) -> Option<(Vec<u8>, String)> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

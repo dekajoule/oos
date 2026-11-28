@@ -4,6 +4,9 @@
 //! A clock off the 1-2-5 grid (1.375 GHz, the first step of the overclocking test), in its own process: the rate the
 //! time base model reports must be the rate the SPU dividers it writes really make, or the time axis is wrong.
 
+// the DHO800/DHO900's clocks and SPU dividers
+#![cfg(oos_board = "dho")]
+
 use oos_hal::{
     dho::{clock, hz, spu},
     model,

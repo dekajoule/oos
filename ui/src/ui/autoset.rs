@@ -804,6 +804,7 @@ mod tests {
         assert_eq!(ui.m.ch[0].bw, BW_FULL);
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn noise_reject_menu_setup_scpi_and_hardware() {
         let mut ui = crate::ui::testkit::demo_ui();
@@ -825,6 +826,7 @@ mod tests {
 
     // Break it catches: the levels stages waiting the full auto time per record, or the fast auto trigger staying on
     // after the auto set-up (docs/fork/trigger-lockin.md)
+    #[cfg(oos_board = "dho")]
     #[test]
     fn levels_stages_use_the_fast_auto_trigger_only() {
         let mut ui = crate::ui::testkit::demo_ui();

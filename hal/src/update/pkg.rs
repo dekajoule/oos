@@ -238,6 +238,7 @@ mod tests {
     const SEED: [u8; 32] = [42; 32];
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn round_trip_and_tampering() {
         let img: Vec<u8> = (0..5000u32).map(|i| (i * 13) as u8).collect();
         let pk = ed25519::public_key(&SEED);

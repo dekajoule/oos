@@ -167,6 +167,7 @@ pub fn volts(r: &Reading, mode: Mode, v: &Vert) -> f64 {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
     use crate::dho::bus::Recorder;

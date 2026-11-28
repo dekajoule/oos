@@ -235,6 +235,7 @@ pub fn power_on(
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::{up_with_boot_retries, Link, FPGA_BOOT_RETRIES};
     use crate::dho::bus::Bus;

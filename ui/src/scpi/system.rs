@@ -217,10 +217,12 @@ fn budget_text(v: &[f32], dt: f64, m: usize, extra: &[f64]) -> String {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod aux_out_tests {
     use super::*;
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn aux_out_over_scpi_and_in_the_setup() {
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let mut q = |ui: &mut Ui, c: &str| crate::ui::testkit::q(&mut scpi, ui, &cv, c);

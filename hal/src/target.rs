@@ -95,11 +95,17 @@ pub struct Target {
     pub set_adc_clock: fn(&mut Limits, f64) -> Result<(), String>,
     /// the ADC clocks of System > Overclock, the standard clock first
     pub clock_steps: &'static [f64],
+    /// OOS has code for the acquisition hardware of this board. False for a port of the platform alone (the MHO900):
+    /// then nothing touches the FPGA, the front ends, the generator or the front panel, and the screen shows the demo
+    /// signal (`model::Platform::drives_hardware`, docs/porting.md)
+    pub acquisition: bool,
 }
 
 /// The board this build is for: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
 #[cfg(oos_board = "dho")]
 pub const ACTIVE: Target = crate::dho::target::DHO;
+#[cfg(oos_board = "mho")]
+pub const ACTIVE: Target = crate::mho::target::MHO;
 
 /// `if_board! { <name>: items }` keeps the items only in a build for the family `<name>`, chosen with `ACTIVE`. For
 /// a crate that takes the choice from oos-hal instead of a build script of its own: oos-fpgad picks its board module
@@ -111,16 +117,31 @@ macro_rules! if_board {
     (dho: $($item:item)*) => { $($item)* };
     ($other:ident: $($item:item)*) => {};
 }
+#[cfg(oos_board = "mho")]
+#[macro_export]
+macro_rules! if_board {
+    (mho: $($item:item)*) => { $($item)* };
+    ($other:ident: $($item:item)*) => {};
+}
 
 /// Every board family in the tree, `ACTIVE` among them (ADR 0067). `hal/tests/board_families.rs` keeps this list equal
 /// to the folders of `rootfs/board/`, and the tests below compare each family's `etc/oos-board` with its `Target`.
-pub const FAMILIES: &[Target] = &[crate::dho::target::DHO];
+pub const FAMILIES: &[Target] = &[crate::dho::target::DHO, crate::mho::target::MHO];
 
 /// The memory depths of the Acquire menu of the board this build is for (name, points per channel; 0 = Auto first).
 /// Setups store the position. Chosen together with `ACTIVE` (hal test `the_depths_come_from_the_active_family`); not
 /// a field of `Target`, which would change the layout of `Target` in every program.
 #[cfg(oos_board = "dho")]
 pub const DEPTHS: &[(&str, u64)] = &crate::dho::target::DEPTHS;
+#[cfg(oos_board = "mho")]
+pub const DEPTHS: &[(&str, u64)] = &crate::mho::target::DEPTHS;
+
+/// The built-in generators of the largest model of the board this build is for: the UI's generator slots (`NGEN`).
+/// Chosen together with `ACTIVE`, beside `Target` like `DEPTHS`: 1 on the DHO800/DHO900, 2 on the MHO900 (G1 and G2).
+#[cfg(oos_board = "dho")]
+pub const GENERATORS: usize = 1;
+#[cfg(oos_board = "mho")]
+pub const GENERATORS: usize = 2;
 
 #[cfg(test)]
 mod tests {

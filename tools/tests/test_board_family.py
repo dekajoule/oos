@@ -99,7 +99,7 @@ class Tools(unittest.TestCase):
         # the layers clippy, test and target build for OOS_FAMILIES, else every family; a wrong name stops the run
         def check(families):
             return tool(["sh", str(ROOT / "tools/check.sh"), "families"], "", OOS_FAMILIES=families)
-        self.assertEqual(check("").stdout, "dho\n")
+        self.assertEqual(check("").stdout, "dho\nmho\n")
         self.assertEqual(check("dho").stdout, "dho\n")
         r = check("dho nope")
         self.assertEqual(r.returncode, 1, r.stderr)

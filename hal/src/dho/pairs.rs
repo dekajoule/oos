@@ -124,6 +124,7 @@ pub fn check(raw: &[u16], comp: &[u16], k: usize) -> Vec<Fit> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

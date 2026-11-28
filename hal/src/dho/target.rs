@@ -160,6 +160,7 @@ pub const DHO: Target = Target {
     limits,
     set_adc_clock,
     clock_steps: &CLOCK_STEPS,
+    acquisition: true,
 };
 
 /// The depths of the Acquire menu, read for the screen through the FPGA compression above 1 M (`batch_plan` of the

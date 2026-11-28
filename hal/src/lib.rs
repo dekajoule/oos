@@ -6,7 +6,7 @@
 //! The crate root holds what does not depend on one board: the model and its limits (`model`), the vendor file keys
 //! (`vendorkeys`), signed updates (`update`), WLAN (`wlan`) and the start-up status file (`bootstatus`). Everything of
 //! the DHO800/DHO900 board (RK3399 + Zynq FPGA over PCIe/XDMA) is in `dho`; a port to another board family adds a
-//! module next to it (docs/porting.md).
+//! module next to it (docs/porting.md): `mho` describes the MHO900, whose acquisition OOS does not drive.
 //!
 //! The register sequences are described in `docs/protocols/`. No code of the vendor libraries is used. Functions that
 //! build register sequences are pure (they return `(offset, value)` lists and update software shadows of the
@@ -19,6 +19,7 @@ pub mod fsutil;
 #[cfg(test)]
 mod hostile;
 pub mod model;
+pub mod panelframe;
 pub mod procs;
 pub mod target;
 pub mod update;
@@ -26,6 +27,7 @@ pub mod vendorkeys;
 pub mod wlan;
 
 pub mod dho;
+pub mod mho;
 
 /// The `N` bytes of `b` from offset `o` on, for `from_le_bytes`. Panics past the end of `b` like indexing does: for
 /// records whose length was checked when they were read in.

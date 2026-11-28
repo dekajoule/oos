@@ -60,6 +60,7 @@ pub fn analog_gnd(mask: u32, dgain: [f64; 4], gnd: [Option<u32>; 4]) -> Vec<Writ
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

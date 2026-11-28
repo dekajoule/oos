@@ -49,6 +49,7 @@ impl Lines for Recorded {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

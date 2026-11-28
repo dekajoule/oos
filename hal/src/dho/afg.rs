@@ -747,6 +747,7 @@ impl GenLines for Io {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 
@@ -951,6 +952,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod arb_tests {
     use super::*;
 
@@ -988,6 +990,7 @@ mod arb_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod noise_mod_tests {
     use super::*;
 
@@ -1041,6 +1044,7 @@ mod noise_mod_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod line_tests {
     use super::*;
     use crate::model::{lookup, Platform};

@@ -576,6 +576,7 @@ mod tests {
         assert!(LaSet::parse("true ffff 9 0 1 1 1").is_err());
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn la_memory_and_rate_limits() {
         // the DHO924S limits: 125 M / 1.25 GSa/s with one channel, 31.25 M with the LA, rate halved with a
@@ -892,6 +893,7 @@ mod trigger_tests {
         assert_eq!((at(-5e-6), at(5e-6)), (1, 0), "falling edge");
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hardware_settings_carry_the_line() {
         let mut m = Model::default();
@@ -953,6 +955,7 @@ mod pattern_tests {
         assert_eq!(back.pat_la, ui.m.pat_la);
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hardware_slots() {
         let mut m = Model::default();
@@ -1002,6 +1005,7 @@ mod bus_tests {
         assert!(t < 3.0 * dl, "field end {} s from the trigger, LA sample {}", t, dl);
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hardware_edge_on_the_frame_line() {
         let mut m = Model::default();
@@ -1018,9 +1022,11 @@ mod bus_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod duration_tests {
     use super::*;
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn duration_on_a_line() {
         // D14 = the 1 kHz square, high for 500 us: "longer than 300 us" fires 300 us after the rising edge
@@ -1047,10 +1053,12 @@ mod duration_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod review_tests {
     use super::*;
 
     /// Roll and scan keep the LA: a D line as the source reaches `seq` together with the LA settings it needs.
+    #[cfg(oos_board = "dho")]
     #[test]
     fn slow_time_bases_keep_the_la() {
         let mut m = Model::default();
@@ -1068,6 +1076,7 @@ mod review_tests {
         assert!(wr.iter().rev().find(|w| w.0 == 0x4008).unwrap().1 & (1 << 24 | 1 << 26) == 1 << 24 | 1 << 26);
     }
 
+    #[cfg(oos_board = "dho")]
     #[test]
     fn newest_la_word_at_the_newest_analog_point() {
         // 1000 analog points of 1 ms, pre at 400: the newest is 599 ms after pre; 2000 LA words of 0.5 ms
@@ -1076,6 +1085,7 @@ mod review_tests {
     }
 
     /// The channel the trigger reads is acquired hidden, with the LA on or off.
+    #[cfg(oos_board = "dho")]
     #[test]
     fn hidden_trigger_channel() {
         let mut m = Model::default();

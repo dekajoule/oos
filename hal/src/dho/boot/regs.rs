@@ -340,6 +340,7 @@ pub fn boot_message(addr: u32) -> Option<[u8; 10]> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

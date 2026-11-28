@@ -1190,6 +1190,7 @@ impl Scpi {
 #[cfg(test)]
 mod vernier_tests {
     #[test]
+    #[cfg(oos_board = "dho")]
     fn vernier_takes_any_scale_at_or_above_a_calibrated_row() {
         let (mut scpi, mut ui, cv) = crate::ui::testkit::scpi_session();
         let mut q = |c: &str| crate::ui::testkit::q(&mut scpi, &mut ui, &cv, c);

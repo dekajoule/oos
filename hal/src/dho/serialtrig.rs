@@ -157,6 +157,7 @@ pub fn i2c_words(i: &I2c) -> Vec<Write> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

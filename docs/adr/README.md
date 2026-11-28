@@ -51,6 +51,7 @@ A decision that touches two categories goes where its consequences are largest a
 | [0025](system/0025-remote-services-are-bench-lan-services.md) | system | Remote services are unauthenticated bench-LAN services, each with a switch, limited by `net.allow` | accepted, amended by ADR 0054 |
 | [0026](process/0026-contributions-are-signed-off-and-hold-no-vendor-material.md) | process | A contribution is signed off, holds no vendor material and enters main as reviewed commits | accepted, amended by ADR 0030 |
 | [0027](system/0027-newer-wlan-drivers-as-backported-modules.md) | system | A WLAN driver of a newer kernel comes as a module beside 6.12, with a patch of its own | accepted |
+| [0028](system/0028-mho900-platform-port-without-acquisition.md) | system | The MHO900 gets OOS's platform first, with no acquisition, as a board chosen at build time | superseded by ADR 0082 |
 | [0029](code/0029-batch-is-the-default-draw-path.md) | code | Batch is the default draw path | superseded by ADR 0059 |
 | [0030](process/0030-independent-reimplementation-from-black-box-descriptions.md) | process | OOS is an independent reimplementation: the tree holds black-box descriptions and code written to them | accepted |
 | [0031](process/0031-every-change-enters-main-through-a-pull-request.md) | process | Every change enters main through a pull request, the maintainer's too; decision records are decided there | accepted |
@@ -101,7 +102,9 @@ A decision that touches two categories goes where its consequences are largest a
 | [0078](system/0078-the-image-builds-its-own-busybox-without-network-servers.md) | system | The image builds its own busybox, without telnet and the network servers it does not run | proposed |
 | [0079](system/0079-the-rear-usb-port-is-a-network-link-to-one-computer.md) | system | The rear USB port is a network link to one computer, off by default | proposed |
 | [0081](code/0081-the-acquisition-arms-only-what-the-deposit-workers-can-draw.md) | code | The acquisition arms only what the deposit workers can draw | proposed |
+| [0082](hardware/0082-the-mho900-measures-as-a-preview-from-its-own-recordings.md) | hardware | the MHO900 measures as a preview, from the unit's own recordings of the stock system, and comes to main in one pull request | proposed |
 | [0083](code/0083-hot-paths-are-data-oriented-and-a-family-may-plug-in-its-own-kernels.md) | code | Hot paths are data-oriented, and a family may plug in its own kernels next to the portable reference | accepted |
+| [0084](hardware/0084-mho900-first-acquisition-from-the-units-own-snapshot.md) | hardware | the MHO900's first acquisition starts its board from the unit's own snapshot of the stock system | proposed |
 <!-- end of the index -->
 
 ## Reading order for agents

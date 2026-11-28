@@ -347,9 +347,10 @@ impl Platform {
         !self.overrides.is_empty()
     }
 
-    /// False on another board (`foreign`): then nothing may touch the acquisition hardware, the generator or the LA.
+    /// False on another board (`foreign`), and on a board OOS has no acquisition code for (`Target::acquisition`,
+    /// the MHO900): then nothing may touch the acquisition hardware, the generator, the LA or the front panel.
     pub fn drives_hardware(&self) -> bool {
-        self.foreign.is_none()
+        self.foreign.is_none() && ACTIVE.acquisition
     }
 }
 
@@ -526,10 +527,11 @@ pub(crate) fn item_key_fits(payload: &[u8], k: &[u32; 4]) -> bool {
 /// Decodes vendor.bin with the keys of this unit (`vendorkeys`).
 pub fn decode_vendor(file: &[u8]) -> Result<Vendor, String> {
     #[cfg(test)]
-    let keys = Some(TEST_KEYS);
+    let keys: Result<Keys, String> = Ok(TEST_KEYS);
     #[cfg(not(test))]
-    let keys = crate::vendorkeys::for_file(file);
-    decode_vendor_with(file, &keys.ok_or("no key for it in the stock software of this unit")?)
+    let keys = crate::vendorkeys::for_file(file)
+        .map_err(|why| format!("no key for it in the stock software of this unit ({})", why));
+    decode_vendor_with(file, &keys?)
 }
 
 /// Decodes vendor.bin: XXTEA with the file key over the file; [crc32][len][payload] with crc32 over the payload; payload =
@@ -633,6 +635,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn model_table() {
         let c = lookup("dho802").unwrap();
         assert_eq!(
@@ -649,6 +652,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn detection_and_overrides() {
         let f = encode_vendor(&[(5, "DHO812"), (7, "DHO8A123")]);
         let p = Platform::build(Some(&f), None, None);
@@ -684,6 +688,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn another_board_is_not_driven() {
         for m in ["MHO934", "MHO98", "DHO1074", "DHO4204", "HDO1104"] {
             let f = encode_vendor(&[(5, m), (7, "X1234567")]);
@@ -709,6 +714,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn limits_per_channel_count() {
         let l = Limits::standard();
         assert_eq!((l.srate(1), l.srate(2), l.srate(3), l.srate(4)), (1.25e9, 625e6, 312.5e6, 312.5e6));
@@ -717,10 +723,12 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod clock_override_tests {
     use super::*;
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn adc_clock_override() {
         let p = Platform::build(None, Some("adc.clock_hz = 2e9\n"), None);
         assert_eq!(p.limits.adc_clock_hz, 2e9);
@@ -755,12 +763,14 @@ mod bad_limits_tests {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod unit_defaults_tests {
     use super::*;
 
     const DHO804_UNIT: &str = "# physically a DHO804: no generator board, no LA connector\nafg = no\nla = no\n";
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn unit_defaults_change_capabilities_not_identity() {
         let f = encode_vendor(&[(5, "DHO924S"), (7, "DHO9A000000001")]);
         let p = Platform::build_unit(Some(&f), Some(DHO804_UNIT), None, None);
@@ -777,6 +787,7 @@ mod unit_defaults_tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn limits_conf_and_forced_model_on_top() {
         let f = encode_vendor(&[(5, "DHO924S")]);
         // the generator board fitted later: limits.conf switches it on again (experimental)
@@ -793,6 +804,7 @@ mod unit_defaults_tests {
     }
 
     #[test]
+    #[cfg(oos_board = "dho")]
     fn unit_file_takes_capability_keys_only() {
         let p = Platform::build_unit(
             None,

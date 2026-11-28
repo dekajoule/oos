@@ -5,6 +5,8 @@
 //! order, when a shadow writes again), the frame geometry and the sample codec. A test of a new step or setting goes
 //! here, next to the tests of its neighbours; the register facts it checks are described in docs/protocols/.
 
+#![cfg(oos_board = "dho")]
+
 /// Holdoff writes only when one is set, and once more when it goes back.
 
 // Break it catches: a code map that puts a channel at another word than the decode, or volts that differ from it

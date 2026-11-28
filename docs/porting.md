@@ -1,7 +1,8 @@
 # Other Rigol models
 
 OOS runs on the DHO800 and DHO900 only. **Do not install it on another model**: its acquisition part is another
-board, and the USB install and the card layout are verified on the DHO800/DHO900 only.
+board, and the USB install and the card layout are verified on the DHO800/DHO900 only. The MHO900 has a build of the
+platform alone, without acquisition, that has not run on a unit yet ([mho.md](mho.md)).
 
 If OOS starts on another board anyway, it sees it in `/rigol/data/vendor.bin`: a model outside the DHO800/DHO900
 family (not DHO8xx or DHO9xx) makes `oos-fpgad` refuse every hardware command and `oos-ui` show the demo signal
@@ -65,6 +66,10 @@ comparison and its programs count as new. For the test on a unit, the port adds 
 `tools/device-test.py`: the pattern of its models in `*IDN?`, its channels, vertical scales, highest sample rate and
 whether it has a generator; `--board <board>` picks it, and the model in `*IDN?` does by default.
 
+The MHO900 is the first such port: `hal/src/mho/`, `ui/src/board/mho/`, `fpgad/src/mho/`, `rootfs/board/mho/`,
+`kernel/dts/rk3399-rigol-mho900.dts` ([mho.md](mho.md), ADR 0028, ADR 0084). Its acquisition starts from the unit's own
+recordings of the stock system and is a preview ([mho.md](mho.md#setting-a-unit-up-towards-a-preview)).
+
 ## Board families
 
 One image per family, chosen when OOS is built; a family is ready when the maintainer says so in a pull request that
@@ -76,6 +81,7 @@ when a row has no folder in `rootfs/board/` or a folder has no row.
 | Family | Folder | Models | State |
 |---|---|---|---|
 | DHO800/DHO900 | `dho` | the variants in `hal/src/dho/target.rs` ([models.md](models.md)) | ready |
+| MHO900 | `mho` | MHO934, MHO954, MHO984, MHO98 ([mho.md](mho.md)) | in development |
 
 ## What does not carry over
 
@@ -91,9 +97,11 @@ Everything that talks to the acquisition board, which on the DHO800/DHO900 is in
 | calibration | the files in `/rigol/data`, `hal/src/dho/calfile.rs` | file formats |
 | generator, logic analyser | `protocols/afg.md`, `protocols/la.md` | other boards |
 
-Reported for the MHO900 (forum, not verified here): two ADCs, interleaved to 4 GSa/s; an FPGA said to be a Fudan
-part; a 1 GHz front end with a 50 Ω path; a two-channel generator on its own board; a logic analyser path apart from
-the ADC words. So a port means working out the whole acquisition part again, measured on a unit at the bench.
+Reported for the MHO900 (forum, not verified here): two ADCs, interleaved to 4 GSa/s; a 1 GHz front end with a 50 Ω
+path; a two-channel generator on its own board; a logic analyser path apart from the ADC words. The platform probe of
+an MHO954 (GitHub issue #4) adds: a Kintex-7 bitstream the SoC loads at every start over GPIOs, XDMA `10ee:7024`, a
+`sysref_reset` line (JESD204 ADCs), other front-end lines and calibration files ([mho.md](mho.md)). So a port means
+working out the whole acquisition part again, measured on a unit at the bench.
 
 The model limits (sample rates, memory depths, channel count, generator) live in `hal/src/model.rs`; the GUI takes
 them from there.
@@ -114,7 +122,8 @@ first 2 KiB of the boot partitions, and the names and sizes of the files under `
 What it does not: read any register, read the content of calibration, licence or key files, write anything outside
 its own folder (it mounts debugfs, a pseudo filesystem that is gone after the next start). Device tree properties
 named after a MAC address or serial number are left out; on the PC, the serial numbers it finds in the properties and
-the command line and every MAC address are replaced. Look through the files before you share them anyway.
+the command line, the SoC's serial number (`Serial` in `/proc/cpuinfo`) and every MAC address are replaced. Look
+through the files before you share them anyway.
 
 The result is `platform-probe-<model>-<date>.tar.gz`. Attach it to an issue on GitHub.
 

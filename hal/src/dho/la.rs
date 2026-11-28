@@ -267,6 +267,7 @@ pub fn words(bytes: &[u8], n: usize) -> Vec<u16> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

@@ -11,9 +11,13 @@
 //!
 //! The board is chosen when OOS is built (`Active`): an image is built for one board family anyway (kernel, device
 //! tree). `OOS_BOARD=<name>` selects it for every crate (`cfg(oos_board = "<name>")`, build.rs, ADR 0067). A port adds
-//! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name.
+//! a module next to `dho`, implements `Board` for it, and gives `Active` and `board()` a line for its name: `mho` is
+//! the MHO900, a port of the platform without acquisition (docs/mho.md).
 
+#[cfg(oos_board = "dho")]
 pub mod dho;
+#[cfg(oos_board = "mho")]
+pub mod mho;
 pub mod pipe;
 pub mod policy;
 
@@ -23,11 +27,18 @@ use std::sync::{Arc, Mutex, MutexGuard};
 /// The board this build drives: `OOS_BOARD` when OOS is built, `dho` by default (build.rs, ADR 0067).
 #[cfg(oos_board = "dho")]
 pub type Active = dho::Dho;
+#[cfg(oos_board = "mho")]
+pub type Active = mho::Mho;
 
 /// The board of this build.
 #[cfg(oos_board = "dho")]
 pub fn board() -> &'static Active {
     &dho::Dho
+}
+/// The board of this build.
+#[cfg(oos_board = "mho")]
+pub fn board() -> &'static Active {
+    &mho::Mho
 }
 
 /// What the acquisition thread of the active board is to apply, made from the model (`Board::want`).
@@ -79,6 +90,9 @@ pub trait Board: Sync + 'static {
     const MAX_CHANNELS: usize;
     /// built-in generators of the largest model of the board (the unit's own: `model::gen_count`)
     const MAX_GENERATORS: usize;
+    /// `--hw` and `--fpga-live` are taken where `Platform::drives_hardware` is false: started by hand only (the
+    /// MHO900's first acquisition, docs/mho.md "First acquisition")
+    const LIVE_BY_HAND: bool = false;
 
     /// board family, for logs
     fn name(&self) -> &'static str;
@@ -159,6 +173,8 @@ pub trait Board: Sync + 'static {
     /// alarm limits (degC): SoC, FPGA
     fn temp_limits(&self) -> (f32, f32);
     fn thermal_zones(&self) -> Vec<Zone>;
+    /// how the fan is run (System info)
+    fn fan(&self) -> &'static str;
     /// ADC clocks of System > Overclock, the standard one first
     fn clock_steps(&self) -> &'static [f64];
 

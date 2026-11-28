@@ -12,6 +12,11 @@ oos_hal::if_board! { dho:
     mod dho;
     use dho as board;
 }
+oos_hal::if_board! { mho:
+    mod mho;
+    use mho as board;
+}
+mod pcie;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -67,6 +72,7 @@ fn print_model() {
     }
 }
 
+#[cfg(oos_board = "dho")] // the commands of the DHO800/DHO900 only (dho/mod.rs)
 fn num(s: &str) -> Result<u32, String> {
     match s.strip_prefix("0x") {
         Some(h) => u32::from_str_radix(h, 16),
@@ -86,6 +92,7 @@ fn opt<'a>(a: &'a [String], k: &str) -> Option<&'a String> {
 }
 
 /// Option `k` is given.
+#[cfg(oos_board = "dho")] // the commands of the DHO800/DHO900 only (dho/mod.rs)
 fn flag(a: &[String], k: &str) -> bool {
     a.iter().any(|x| x == k)
 }

@@ -933,6 +933,7 @@ pub fn configure_ch(
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

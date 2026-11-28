@@ -28,6 +28,8 @@ also holds the parts listed here. Each keeps its own licence.
 | rtw88 driver (Linux, `rtw88_core`, `rtw88_usb`, `rtw88_88xxa`, `rtw88_8821a`, `rtw88_8821au`) | Linux 6.18.63, with `kernel/modules/rtw88-linux-6.12.patch` | GPL-2.0 OR BSD-3-Clause, as its files state | modules in `/lib/modules/*/updates/` | in its files | `kernel/modules/rtw88/` |
 | RTL8821A firmware (`rtw8821a_fw.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtw88/` | `/lib/firmware/rtw88/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
 | RTL8188EU firmware (`rtl8188eufw.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtlwifi/` | `/lib/firmware/rtlwifi/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
+| RTL8821C firmware (`rtw8821c_fw.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtw88/` | `/lib/firmware/rtw88/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
+| RTL8821C Bluetooth firmware (`rtl8821c_fw.bin`, `rtl8821c_config.bin`, from linux-firmware) | as in the tree | Realtek's licence for redistribution in binary form | `/lib/firmware/rtl_bt/` | `/lib/firmware/rtl_bt/LICENCE.rtlwifi_firmware.txt` | none: binary firmware, passed on unchanged with its licence |
 
 ## Programs and libraries
 

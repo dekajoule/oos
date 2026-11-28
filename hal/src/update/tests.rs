@@ -696,6 +696,7 @@ fn first_install_reinstall_with_oos_selected_goes_through_stock() {
 }
 
 #[test]
+#[cfg(oos_board = "dho")]
 fn a_rescue_set_from_another_unit_stops_the_install() {
     let fk = stock_card("first-other-unit");
     let vendor = |sn: &str| crate::model::encode_vendor(&[(5, "DHO924S"), (7, sn), (9, "00:19:AF:00:00:01")]);
@@ -734,6 +735,7 @@ fn only_verified_models_by_default() {
 /// Verified per hardware variant: a model OOS ran on, and the others of its variant (a DHO804 with the identity of
 /// a DHO824, as seen in a user report). The refusal names the model, the verified models, the risk and the way on.
 #[test]
+#[cfg(oos_board = "dho")]
 fn models_are_verified_per_hardware_variant() {
     let check = |m: &str, any: bool| {
         first::check_model(Some(&crate::model::encode_vendor(&[(5, m), (7, "DHO8A000000001")])), any)
@@ -771,6 +773,7 @@ fn models_are_verified_per_hardware_variant() {
 /// The variants of the board family: every model of the table in one at most, and the models of one variant differ
 /// in nothing but the bandwidth code (docs/models.md 2.1).
 #[test]
+#[cfg(oos_board = "dho")]
 fn hardware_variants_differ_only_in_bandwidth() {
     let t = &crate::target::ACTIVE;
     let mut seen = Vec::new();

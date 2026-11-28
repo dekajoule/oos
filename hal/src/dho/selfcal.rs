@@ -869,6 +869,7 @@ pub fn zero_payload(base: &[u8], ch: usize, z: &[i32; 20]) -> Vec<u8> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

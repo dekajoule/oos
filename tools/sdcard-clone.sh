@@ -20,6 +20,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/lib/docker.sh"
 
 info() { diskutil info "/dev/$1" 2>/dev/null; }
+# the size of a file in bytes: GNU stat (Linux, where `fit` also runs) or BSD stat (macOS). GNU first: its `-f` is
+# another mode and prints output even when it fails
+fsize() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1"; }
 field() { info "$1" | awk -F': *' -v k="$2" '$1 ~ "^ *"k"$" {print $2; exit}'; }
 
 check_disk() {
@@ -82,7 +85,7 @@ read)
 		sudo dd if="/dev/r$d" of="$out" bs=4m status=progress
 	fi
 	sudo chown "$(id -u):$(id -g)" "$out"
-	[ "$(stat -f %z "$out")" -eq "$bytes" ] || die "image size differs from the card size"
+	[ "$(fsize "$out")" -eq "$bytes" ] || die "image size differs from the card size"
 	echo "hashing image and card ..."
 	h_img=$(shasum -a 256 "$out" | cut -d' ' -f1)
 	h_dev=$(sudo dd if="/dev/r$d" bs=4m 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
@@ -97,7 +100,7 @@ write)
 	img=$2; d=$3
 	[ -f "$img" ] || die "no image $img"
 	check_disk "$d"; describe "$d"
-	ib=$(stat -f %z "$img"); db=$(disk_bytes "$d")
+	ib=$(fsize "$img"); db=$(disk_bytes "$d")
 	[ "$ib" -le "$db" ] || die "image ($ib bytes) is larger than the card ($db bytes); for a smaller card: $0 fit $img $d fitted.img"
 	if [ -f "$img.sha256" ] && [ "${IMAGE_VERIFIED:-0}" != 1 ]; then
 		echo "checking $img against $img.sha256 ..."
@@ -120,7 +123,7 @@ verify)
 	[ $# -eq 3 ] || die "usage: $0 verify in.img diskN"
 	img=$2; d=$3
 	check_disk "$d"
-	ib=$(stat -f %z "$img")
+	ib=$(fsize "$img")
 	diskutil unmountDisk "/dev/$d" >/dev/null 2>&1 || true
 	if [ -f "$img.sha256" ] && [ "${IMAGE_VERIFIED:-0}" = 1 ]; then h_img=$(cut -d' ' -f1 "$img.sha256"); else h_img=$(shasum -a 256 "$img" | cut -d' ' -f1); fi
 	h_dev=$(sudo dd if="/dev/r$d" bs=4m count=$(( (ib + 4194303) / 4194304 )) 2>/dev/null | head -c "$ib" | shasum -a 256 | cut -d' ' -f1)
@@ -136,7 +139,7 @@ fit)
 		""|*[!0-9]*) die "give the card (diskN) or its size in bytes, not '$target'";;
 		*) tb=$target;;
 	esac
-	ib=$(stat -f %z "$img")
+	ib=$(fsize "$img")
 	[ "$ib" -gt "$tb" ] || die "the image fits as it is ($ib <= $tb bytes): $0 write $img diskN"
 	# the last partition of the stock table (PARM at LBA 8192, offsets relative to it): it has to run to the end of the
 	# card ("-"), so a smaller card only makes it shorter, and it has to be the only one past the new end
@@ -192,7 +195,7 @@ EOF
 		chown "$OUT_OWNER" "/out/$OUT"
 		echo "$NAME: $n bytes of file system, image $((OFF + n)) bytes"
 	' || { rm -f "$out"; die "fit failed, $img is unchanged"; }
-	ob=$(stat -f %z "$out")
+	ob=$(fsize "$out")
 	[ "$ob" -le "$tb" ] || die "$out came out larger than the card ($ob > $tb)"
 	h=$(shasum -a 256 "$out" | cut -d' ' -f1)
 	echo "$h  $(basename "$out")" > "$out.sha256"

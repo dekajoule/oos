@@ -88,7 +88,7 @@ class Families(unittest.TestCase):
 
     def test_this_tree(self):
         self.assertEqual(families(ROOT, "hal/src/dho/seq.rs"), ["dho"])
-        self.assertEqual(families(ROOT, all_parts=True), ["dho"])
+        self.assertEqual(families(ROOT, all_parts=True), ["dho", "mho"])
 
     def test_a_family_of_its_own(self):
         for f in ("hal/src/mho/seq.rs", "ui/src/board/mho/hw.rs", "fpgad/src/mho/mod.rs",

@@ -334,6 +334,7 @@ pub fn measure(bus: &mut dyn crate::dho::bus::Bus, sleep_ms: &mut dyn FnMut(u32)
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

@@ -322,7 +322,7 @@ pub struct Column {
 impl Column {
     /// The column for the volt band `lo..=hi`. Limits are rounded outwards, so a sample the software mask passes is
     /// never failed here. A limit at or beyond the end of the code range (or infinite) is disabled.
-    #[cfg(test)]
+    #[cfg(all(test, oos_board = "dho"))]
     fn of_band(lo: f32, hi: f32, scale: f64, offset: f64) -> Column {
         Column::of_codes(code(lo as f64, scale, offset), code(hi as f64, scale, offset))
     }
@@ -448,6 +448,7 @@ pub fn read(bus: &mut impl Bus, s1190: u32) -> Raw {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

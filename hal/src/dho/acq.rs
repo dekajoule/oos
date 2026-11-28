@@ -149,6 +149,7 @@ pub fn configure_la(
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
     use crate::dho::hz::prep;

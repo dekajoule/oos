@@ -1,12 +1,15 @@
 // Copyright (C) 2026 dekajoule
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Access to the FPGA register window (BAR1 of the XDMA endpoint, `/dev/xdma0_bypass`, 32 KiB).
+//! Access to the FPGA register window (BAR1 of the XDMA endpoint, `/dev/xdma0_bypass`; 32 KiB on the DHO800/DHO900).
 
 use crate::dho::Write;
 
 /// FPGA version register 0x4000 of the image this layer was written against.
 pub const FPGA_VERSION: u32 = 0xe207_2115;
+
+/// Bytes of BAR1 that `Bar1::open` maps: the DHO800/DHO900's register window.
+pub const WINDOW: usize = 0x8000;
 
 pub trait Bus {
     fn wr(&mut self, off: u32, v: u32);
@@ -190,6 +193,10 @@ impl<B: Bus> Drop for Grouped<'_, B> {
 #[cfg(target_os = "linux")]
 pub struct Bar1 {
     regs: *mut u32,
+    /// bytes mapped: `WINDOW` of the DHO800/DHO900, more on a board whose blocks reach further (`open_len`)
+    len: usize,
+    /// false for `open_read_only`: `wr` refuses (the mapping has no write permission)
+    writable: bool,
     _file: std::fs::File,
     pub gap_us: u64,
     /// a `wr_unsettled` write without its gap yet
@@ -199,26 +206,30 @@ pub struct Bar1 {
 #[cfg(target_os = "linux")]
 impl Bar1 {
     pub fn open() -> std::io::Result<Bar1> {
-        Bar1::from_file(std::fs::OpenOptions::new().read(true).write(true).open("/dev/xdma0_bypass")?)
+        Bar1::open_len(WINDOW)
     }
 
-    /// Maps the 32 KiB of BAR1 of an open `/dev/xdma0_bypass` (a plain file of that size in the tests).
-    fn from_file(f: std::fs::File) -> std::io::Result<Bar1> {
+    /// Maps the first `len` bytes of the window (a multiple of 4 KiB): the MHO900's blocks reach 0x30000
+    /// (docs/protocols/mho-acquisition.md, section 3).
+    pub fn open_len(len: usize) -> std::io::Result<Bar1> {
+        Bar1::from_file(std::fs::OpenOptions::new().read(true).write(true).open("/dev/xdma0_bypass")?, len, true)
+    }
+
+    /// Maps the first `len` bytes for reading only (the device opened read-only, the pages without write
+    /// permission): a watcher beside another program that drives the FPGA (`mho-poll`) can never write a register.
+    pub fn open_read_only(len: usize) -> std::io::Result<Bar1> {
+        Bar1::from_file(std::fs::File::open("/dev/xdma0_bypass")?, len, false)
+    }
+
+    /// Maps `len` bytes of BAR1 of an open `/dev/xdma0_bypass` (a plain file of that size in the tests).
+    fn from_file(f: std::fs::File, len: usize, writable: bool) -> std::io::Result<Bar1> {
         use std::os::unix::io::AsRawFd;
-        let p = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                0x8000,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                f.as_raw_fd(),
-                0,
-            )
-        };
+        let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
         if p == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(Bar1 { regs: p as *mut u32, _file: f, gap_us: 10, unsettled: false })
+        Ok(Bar1 { regs: p as *mut u32, len, writable, _file: f, gap_us: 10, unsettled: false })
     }
 }
 
@@ -226,7 +237,7 @@ impl Bar1 {
 #[cfg(target_os = "linux")]
 impl Drop for Bar1 {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.regs as *mut libc::c_void, 0x8000) };
+        unsafe { libc::munmap(self.regs as *mut libc::c_void, self.len) };
     }
 }
 
@@ -237,7 +248,8 @@ impl Bus for Bar1 {
         self.settle();
     }
     fn wr_unsettled(&mut self, off: u32, v: u32) {
-        assert!(off < 0x8000 && off.is_multiple_of(4));
+        assert!(self.writable, "a write to a read-only mapping of the register window");
+        assert!((off as usize) < self.len && off.is_multiple_of(4));
         unsafe { std::ptr::write_volatile(self.regs.add((off >> 2) as usize), v) };
         self.unsettled = true;
     }
@@ -247,7 +259,7 @@ impl Bus for Bar1 {
         }
     }
     fn rd(&mut self, off: u32) -> u32 {
-        assert!(off < 0x8000 && off.is_multiple_of(4));
+        assert!((off as usize) < self.len && off.is_multiple_of(4));
         unsafe { std::ptr::read_volatile(self.regs.add((off >> 2) as usize)) }
     }
 }
@@ -256,6 +268,7 @@ impl Bus for Bar1 {
 unsafe impl Send for Bar1 {}
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     // Break it catches: a `Bar1` that leaves its mapping behind when dropped. The mapping keeps /dev/xdma0_bypass in
     // use, so `rmmod xdma` fails until the process exits (seen on the unit, 2026-11-08: the repeat of the BOOT command
@@ -268,7 +281,7 @@ mod tests {
         f.set_len(0x8000).unwrap();
         let name = path.to_str().unwrap().to_string();
         let mapped = || std::fs::read_to_string("/proc/self/maps").unwrap().lines().any(|l| l.contains(&name));
-        let bar = super::Bar1::from_file(f).unwrap();
+        let bar = super::Bar1::from_file(f, super::WINDOW, true).unwrap();
         assert!(mapped(), "the test must see the mapping while the Bar1 lives");
         drop(bar);
         let still = mapped();

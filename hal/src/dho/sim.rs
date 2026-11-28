@@ -1111,6 +1111,7 @@ pub fn unit(scene: Scene) -> (Rc<RefCell<Unit>>, Bar, Stream, Time) {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
     use crate::dho::bus::DmaBuf;

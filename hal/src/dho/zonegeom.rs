@@ -31,6 +31,7 @@ pub fn extent(poly: &[(f64, f64)], ta: f64, tb: f64) -> Option<(f64, f64)> {
 }
 
 #[cfg(test)]
+#[cfg(oos_board = "dho")]
 mod tests {
     use super::*;
 

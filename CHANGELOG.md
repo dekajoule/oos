@@ -637,6 +637,35 @@ measurement tests. From PR #8's second round (2026-11-15) the fixes are in, its 
 
 New:
 
+- MHO900 (MHO934, MHO954, MHO984, MHO98): a build of OOS's platform for its main board, without acquisition
+  (docs/mho.md, ADR 0028): screen, touch, network, web remote, SCPI and storage with the demo signal, nothing driven on the
+  acquisition board. `OOS_BOARD=mho boot/build-dev-image.sh`; the Rust crates take the feature `board-mho`. Built from
+  an owner's platform probe of an MHO954; not yet started on a unit.
+- MHO900 acquisition board described (docs/protocols/mho-acquisition.md, `hal/src/mho/acq.rs`, the MHO900 section of
+  docs/hardware/overview.html): start-up order, register blocks, the ADCs' SPI bridge, the read-out and sample format
+  (the DHO's) and how measurements get their data. Taken from how the stock MHO900 system uses the board; not yet
+  verified on hardware, nothing of it is driven.
+- `tools/mho-check.py`: an MHO900 owner checks these assumptions under the stock system (register reads through
+  the stock tool, settings changed over SCPI, then set back one by one and read again) and attaches the report to the
+  issue. The memory depth is written back as the scope takes it (`10k`, not the `1.0000E+04` its query answers).
+  `--map` steps through the vertical settings, time base and trigger level and records for each what the stock system
+  sets in the FPGA's configuration registers, on the GPIO lines and in the ADC bridge, for the front-end bring-up.
+  `--afe` records the words the stock system sends to the front ends and the clock chip over their GPIO buses (the
+  kernel's `gpio_value` trace event on those lines only, switched off again afterwards), which `--map` cannot see. A
+  channel is switched on before its settings are written back: a channel that is off did not take its scale (MHO98).
+  From the reports of an MHO934 (GitHub issue #248): `--afe` shows the front-end frames as channel, register and data
+  (24 bits, valid at the rising clock edge, CH1 on cs3 to CH4 on cs0), lists per step the front-end registers that
+  changed and ends with them as a table; it goes through every scale of CH2 to CH4 too. `--map` sets the bandwidth
+  limit of each channel with all four on, `--fifty` puts every channel at 50 ohm, and the lane registers are named as
+  lanes. The front-end bus and its registers are described in docs/protocols/mho-acquisition.md and
+  `hal/src/mho/acq.rs` (`afe`). From `--afe` runs of an MHO954, two MHO98 and a second run of the MHO934 (issues #4 and
+  #248): the front-end words repeat on a unit but differ from unit to unit, also between two MHO98 (the unit's
+  calibration); the 50 ohm path (bit 13 of 0x07, range 3, a status read polled while at 50 ohm), the `a` select line
+  of every channel, and the bandwidth-limit bit of each ADC lane (bit 20 + lane of 0x1004 and 0x1014) are described.
+  The MHO900 build's scales start at 1 mV/div: the stock system takes 500 uV/div as 1 mV/div. `mho-check.py` (version
+  5) no longer steps through 500 uV/div.
+- `tools/platform-probe.sh` replaces the SoC's serial number of `/proc/cpuinfo` too, and prints small device-tree
+  numbers as numbers.
 - One measurement page for everything: the categories down the left (Basic, Two sources, Serial & PAM, Jitter & eye,
   Power, Motor drive, Power rails, Double pulse; under them Selected), right of them the sources and the groups, one
   open at a time, at the bottom the last tile tapped with what it measures. Basic now holds all 60 standard
