@@ -101,8 +101,8 @@ bit 9, RK3399 datasheet), although its supply is the 3.0 V rail `vcc_3v0` (RK808
 it to 3.0 V, UART2 is not readable at 1500000 (verified on the unit; why this domain affects UART2, whose pins lie in
 another domain, is not known). The driver switches it once its supply regulator exists. `vcc_3v0` is always on at a
 fixed 3.0 V, so the device tree names the same rail as a fixed regulator, `pmu1830_early`, for this domain alone: the
-switch then comes at 5.6 s after power-on, before ttyS2 starts at 5.7 s, instead of at 6.7 s after the PMIC (verified
-on the unit). PMUGRF_SOC_CON0 reads 0x100 afterwards (3.0 V mode, set by register), as before, and both times lie
+switch then comes 0.7 s after the kernel starts, before ttyS2 starts at 0.8 s, instead of at 1.8 s after the PMIC
+(verified on the unit). PMUGRF_SOC_CON0 reads 0x100 afterwards (3.0 V mode, set by register), as before, and both times lie
 before `/init`. Since the switch comes earlier, the backlight comes on while the loader's logo is still on the panel,
 and the logo shows for a moment before the kernel takes the panel over (seen on the unit at power-on; the cause is
 assumed: the backlight's enable line is GPIO1_C2, and the TRM names the GPIO1 pads after this domain).
