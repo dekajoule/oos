@@ -52,8 +52,10 @@ pwm-fan driver (`board.md`), so pwm3 never takes it.
   `rockchip_pmx_gpio_request_enable`, which **forces the mux to GPIO**. The gpio range is registered with
   `base = pin_base` (CONFIG_GPIO_SYSFS=y), so line N of gpiochip0 really is GPIO0 pin N. Unlike 4.4, the direction set
   does not touch the mux, but the request already did.
-- IO domains: same supplies (`pmu1830-supply` = `vcc_3v0` LDO8, 3.0 V) and same regulator flags as stock. All RK808 rails are
-  `always-on`/`boot-on` in both DTs, with identical voltages (the only difference is `vcc_lcd` `enable-active-high`).
+- IO domains: same supplies (`pmu1830-supply` = `vcc_3v0` LDO8, 3.0 V; OOS names that rail as the fixed regulator
+  `pmu1830_early`, so the domain is set before the PMIC, `../boot.md`) and same regulator flags as stock. All RK808
+  rails are `always-on`/`boot-on` in both DTs, with identical voltages (the only difference is `vcc_lcd`
+  `enable-active-high`).
 
 **Verdict:** no difference in function, pull, drive or IO voltage for GPIO0_A2/A3/A6 (assumed for the pad state, E4
 checks it).
