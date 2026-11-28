@@ -2,8 +2,10 @@
 
 For the card route ([wiki/Installation.md](../wiki/Installation.md#on-a-second-card), steps 1 and 2): an image of the
 scope's original boot card, and a clone of it on the second card. Any tool that copies a whole disk sector by sector
-does the job. Tested here: `tools/sdcard-clone.sh` on macOS. The Windows tools and `dd` on Linux are common ways
-that users named or that do the same thing; they have not been run against a scope's card here.
+does the job. Tested here: `tools/sdcard-clone.sh` on macOS, and on Linux (Manjaro with a USB card reader; `list`,
+`verify` and its checks also with the programs of Debian 12 and Ubuntu 22.04 on that computer). The Windows tools and
+plain `dd` are common ways that users named or that do the same thing; they have not been run against a scope's card
+here.
 
 ## Before you start
 
@@ -64,6 +66,16 @@ Use `rdiskN` (the raw device), not `diskN`: many times faster.
 ## Linux
 
 ```sh
+tools/sdcard-clone.sh list                                       # the card, e.g. sdc (mmcblk0 in a built-in reader)
+tools/sdcard-clone.sh read sdc ~/oos-backup/sd-original.img       # reads, verifies, writes sd-original.img.sha256
+tools/sdcard-clone.sh write ~/oos-backup/sd-original.img sdd      # the second card; asks for the disk id, verifies
+```
+
+The tool refuses the disk of the running system (`/`, `/boot`, `/usr`, `/var`, `/home`, swap) and any disk that is not
+a removable USB medium or an SD card (an `mmcblk` of type SD; an eMMC is refused), and an empty slot of a card reader.
+It unmounts what a desktop mounted from the card before it reads or writes. By hand:
+
+```sh
 lsblk -o NAME,SIZE,MODEL,TRAN                    # the card: /dev/sdX, or /dev/mmcblkN in a built-in reader
 sudo umount /dev/sdX?* 2>/dev/null
 sudo dd if=/dev/sdX of=sd-original.img bs=4M status=progress conv=fsync
@@ -77,9 +89,6 @@ sudo dd if=sd-original.img of=/dev/sdY bs=4M status=progress conv=fsync
 sudo cmp -n "$(stat -c %s sd-original.img)" sd-original.img /dev/sdY && echo same
 ```
 
-`tools/sdcard-clone.sh` needs macOS for `list`, `read`, `write` and `verify`; its `fit` (a copy of the image for a
-smaller card) works on Linux with the card's size in bytes (`lsblk -bdno SIZE /dev/sdY`).
-
 ## A smaller second card
 
 If the second card is smaller than the image, `tools/sdcard-clone.sh write` refuses and names the way out: `fit` makes
@@ -92,4 +101,4 @@ tools/sdcard-clone.sh fit ~/oos-backup/sd-original.img diskM ~/oos-backup/sd-fit
 tools/sdcard-clone.sh write ~/oos-backup/sd-fit.img diskM
 ```
 
-On Linux, `fit` takes the card's size in bytes instead of `diskM` (see Linux above); write `sd-fit.img` with `dd`.
+On Linux the card is `sdY` instead of `diskM`. `fit` also takes the card's size in bytes in place of the card.

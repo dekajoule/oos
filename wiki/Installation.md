@@ -105,9 +105,8 @@ in a drawer: OOS only ever goes on a second card. The whole process takes about 
 - A **second SD card**, best of the same size or larger. OOS is only ever installed on this card. A smaller card works
   too (step 2), down to about 8 GB on a stock card.
 - A card reader.
-- A computer: macOS with `tools/sdcard-clone.sh`, where these steps were developed, or Windows or Linux with the tools
-  [below](#backing-up-and-cloning-the-card). On Linux the card is `/dev/sdX` instead of `/dev/rdiskN`; that path is
-  untested.
+- A computer: macOS or Linux with `tools/sdcard-clone.sh`, or Windows with the tools
+  [below](#backing-up-and-cloning-the-card). On Linux the card is `sdX` (or `mmcblkN`) instead of `diskN`.
 - Python 3 and this repository: `git clone https://github.com/dekajoule/oos.git`
 - The image: `oos-<version>.img` of the [latest release](https://github.com/dekajoule/oos/releases/latest), or a build
   of your own ([[Building]], on macOS or Linux, also on an x86-64 PC).
@@ -115,14 +114,15 @@ in a drawer: OOS only ever goes on a second card. The whole process takes about 
 ### Steps
 
 1. **Back up the original card.** This step protects your factory calibration. **Do not skip it.** Switch the scope
-   off, unplug the mains cable and all probes, open the instrument and take out the boot SD card. Then, on macOS:
+   off, unplug the mains cable and all probes, open the instrument and take out the boot SD card. Then, on macOS or
+   Linux (there the card is `sdX` instead of `diskN`):
 
    ```sh
    tools/sdcard-clone.sh list                                       # the card's disk number
    tools/sdcard-clone.sh read diskN ~/oos-backup/sd-original.img     # the whole card, a checksum, a layout report
    ```
 
-   Windows and Linux: [below](#backing-up-and-cloning-the-card). Keep the image in at least two places, then **put the
+   Windows: [below](#backing-up-and-cloning-the-card). Keep the image in at least two places, then **put the
    original card away**: from here on you only use the second card. Always the whole card, never a partition, and
    never let the computer format or initialise it.
 2. **Write the clone to the second card.**
@@ -139,8 +139,6 @@ in a drawer: OOS only ever goes on a second card. The whole process takes about 
    tools/sdcard-clone.sh fit ~/oos-backup/sd-original.img diskM ~/oos-backup/sd-fit.img
    tools/sdcard-clone.sh write ~/oos-backup/sd-fit.img diskM
    ```
-
-   On Linux, give the card's size in bytes instead of `diskM` (`lsblk -bdno SIZE /dev/sdX`) and write with `dd`.
 
    Put the second card into the scope, close the instrument and start it once. The stock system must work as before,
    with its calibration and licences. Then unplug the scope and take the card out again.
@@ -179,8 +177,8 @@ The stock software has to stay on the card: OOS reads the scope's identity with 
 
 ### Backing up and cloning the card
 
-Any tool that copies a **whole disk** sector by sector works. Only `tools/sdcard-clone.sh` on macOS has been tested
-against a scope's card; the others are common tools that users named.
+Any tool that copies a **whole disk** sector by sector works. Only `tools/sdcard-clone.sh` (macOS, Linux) has been
+tested against a scope's card; the others are common tools that users named.
 
 **Watch out:**
 
@@ -219,6 +217,14 @@ By hand: `diskutil unmountDisk /dev/diskN`, then `sudo dd if=/dev/rdiskN of=sd-o
 **Linux**
 
 ```sh
+tools/sdcard-clone.sh list                                       # the card, e.g. sdc
+tools/sdcard-clone.sh read sdc ~/oos-backup/sd-original.img       # reads, verifies, writes a .sha256
+tools/sdcard-clone.sh write ~/oos-backup/sd-original.img sdd      # the second card: asks for the disk id, verifies
+```
+
+By hand:
+
+```sh
 lsblk -o NAME,SIZE,MODEL,TRAN                    # the card: /dev/sdX (or /dev/mmcblkN), not sdX1
 sudo dd if=/dev/sdX of=sd-original.img bs=4M status=progress conv=fsync
 sudo sha256sum /dev/sdX sd-original.img          # must be equal
@@ -226,8 +232,7 @@ sudo dd if=sd-original.img of=/dev/sdY bs=4M status=progress conv=fsync      # t
 sudo cmp -n "$(stat -c %s sd-original.img)" sd-original.img /dev/sdY && echo same
 ```
 
-`tools/sdcard-clone.sh` needs macOS, except `fit` (a copy of the image for a smaller card), which takes the card's size
-in bytes on Linux. More detail:
+More detail:
 [docs/sdcard-backup.md](https://github.com/dekajoule/oos/blob/main/docs/sdcard-backup.md).
 
 ## How OOS starts
