@@ -30,10 +30,11 @@ The run state box shows two numbers while the scope runs, for example `23 wfm/s 
 - **wfm/s:** waveforms (records) a second that reach the screen. A record the scope acquired but could not draw in
   time is not counted.
 - **%:** the share of the time the records cover: waveforms a second times the length of one record. At 2 ms/div with
-  100 kpts a record lasts 40 ms, so 23 records a second cover 23 × 40 ms = 0.92 s of every second: 92 %. The rest is
+  100 kpts a record lasts 40 ms, so 23 records a second (a DHO924S with 0.2.3, two channels in XY) cover 23 × 40 ms =
+  0.92 s of every second: 92 %. The rest is
   blind time, in which a glitch is not seen: stopping the record, reading it from the FPGA, arming again and filling
-  the part before the trigger. 100 % would mean no gap at all; the hardware records and reads one after the other, so
-  it stays below.
+  the part before the trigger. 100 % would mean no gap at all; as far as we know the hardware records and reads one
+  after the other, so it stays below.
 
 The share is high at slow time bases (long records, the fixed costs count little) and low at fast ones: at 1 us/div
 a record covers 10 us, and even thousands of records a second cover only a few per cent. Deep memory (a longer read),
@@ -43,9 +44,9 @@ Other numbers that are not the same thing:
 
 - **Pictures a second:** how often the screen is drawn, about 32 on the panel (`fps` in `:SYSTem:STATe?`). A picture
   can hold several records (persistence) or none (waiting for a trigger).
-- **Triggers counted at AUX OUT:** a pulse at the rear output for each trigger the FPGA takes. At fast time bases it
-  records in batches, and not every record of a batch is drawn, so a count of these pulses can be higher than the
-  waveforms a second on the screen. Comparisons of firmwares by AUX OUT pulses measure the triggers, not wfm/s.
+- **Triggers counted at AUX OUT:** a pulse at the rear output for each trigger the FPGA takes (seen on a DHO924S). At
+  fast time bases it records in batches, and not every record of a batch is drawn, so a count of these pulses can be
+  higher than the waveforms a second on the screen. Comparisons of firmwares by AUX OUT pulses measure the triggers, not wfm/s.
 - **`acquired`, `used`, `dropped` in `:SYSTem:STATe?`:** records read from the FPGA, drawn, and left out since the
   start ([SCPI](SCPI-and-VXI-11.md)).
 
