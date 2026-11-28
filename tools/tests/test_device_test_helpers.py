@@ -61,8 +61,11 @@ class GeneratorOfTheModel(unittest.TestCase):
         self.assertTrue(device_test.PROFILE["generator"])
 
     def test_the_rule_of_the_family_stays_unchanged(self):
-        self.generator("DHO804")
-        self.assertIsInstance(device_test.profile("dho")["generator"], str)
+        rule = device_test.profile("dho")["generator"]
+        self.assertIsInstance(rule, str)
+        for model in ("DHO804", "DHO924S"):
+            self.generator(model)
+            self.assertEqual(device_test.profile("dho")["generator"], rule)
 
 
 if __name__ == "__main__":
