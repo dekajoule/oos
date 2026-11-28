@@ -5,10 +5,11 @@
 //! register blocks, the ADC's SPI bridge, the front ends' bus, the FPGA image per hardware code and the read-out
 //! format.
 //!
-//! **Not yet verified on hardware.** Everything here is known from how the stock MHO900 system (00.01.00.00.26) starts
-//! the board and uses its FPGA, compared with the DHO800/DHO900. Nothing in OOS calls it on a unit: the board has
-//! `acquisition: false` (`target::MHO`, ADR 0028), so no step built here is ever executed. It is kept as data and pure
-//! functions with tests, so the bring-up at the bench starts from it.
+//! Everything here is known from how the stock MHO900 system (00.01.00.00.26) starts the board and uses its FPGA,
+//! compared with the DHO800/DHO900. The board has `acquisition: false` (`target::MHO`, ADR 0028): the image never starts
+//! the acquisition by itself. Only an owner who sets the unit up starts it, by hand (`oos-fpgad mho-start` and
+//! `bringup`, then `oos-mho-live`, docs/mho.md "Setting a unit up"); what of it has run on units is in
+//! docs/protocols/mho-acquisition.md.
 
 /// The register window: the XDMA bypass device, mapped whole. The stock system maps 16 MiB; the blocks below reach
 /// 0x30000.

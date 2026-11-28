@@ -32,7 +32,12 @@ pub(super) struct Units {
     mcu_tried: bool,
     /// the wave in each generator's memory: shape, duty, symmetry, arbitrary wave's id
     table: [Option<(usize, f64, f64, u32)>; GENERATORS],
+    /// when a generator's request that failed is tried again
+    retry: [Option<Instant>; GENERATORS],
 }
+
+/// How long a generator's request that failed waits before it is tried again.
+const GEN_RETRY: Duration = Duration::from_secs(5);
 
 /// The board's generators (`afg::regs`: 1 and 2).
 const GENERATORS: usize = 2;
@@ -42,11 +47,15 @@ impl Units {
         self.counter(bar, out);
         let want = lock(out).afg;
         for (i, g) in want.into_iter().enumerate().take(GENERATORS) {
-            if g.is_some() && g != self.gen[i] {
-                if let Some(g) = &g {
-                    self.generator(i + 1, g);
+            let due = self.retry[i].is_none_or(|t| Instant::now() >= t);
+            if let Some(w) = g.filter(|_| g != self.gen[i] && due) {
+                // kept only once the board took it: a request that failed is tried again after `GEN_RETRY` (looking for
+                // the microcontroller takes up to 2.4 s, too long for every pass)
+                if self.generator(i + 1, &w) {
+                    (self.gen[i], self.retry[i]) = (g, None);
+                } else {
+                    self.retry[i] = Some(Instant::now() + GEN_RETRY);
                 }
-                self.gen[i] = g;
             }
         }
     }
@@ -97,8 +106,9 @@ impl Units {
     }
 
     /// Sets generator `n` (1 or 2): the FPGA's words with the output off, its waveform memory when the wave changed,
-    /// then the relays, then the output bit.
-    fn generator(&mut self, n: usize, g: &super::Gen) {
+    /// then the relays, then the output bit. False when the window could not be mapped or an output that is on could not
+    /// have its relays set (it stays off; the microcontroller is looked for again on the next try).
+    fn generator(&mut self, n: usize, g: &super::Gen) -> bool {
         let &(on, hz, vpp, offset, wave, duty, symmetry, arb) = g;
         let shape = match wave {
             0 => Shape::Sine,
@@ -114,14 +124,17 @@ impl Units {
         if self.big.is_none() {
             match Bar1::open_len(AFG_WINDOW) {
                 Ok(b) => self.big = Some(b),
-                Err(e) => return eprintln!("oos-ui mho: generator: {}", e),
+                Err(e) => {
+                    eprintln!("oos-ui mho: generator: {}", e);
+                    return false;
+                }
             }
         }
         if on && !self.mcu_tried {
             self.mcu_tried = true;
             self.mcu = find_mcu();
         }
-        let Some(big) = self.big.as_mut() else { return };
+        let Some(big) = self.big.as_mut() else { return false };
         let r = afg::regs(n);
         let (out_old, offset_old) = (big.rd(r.out), big.rd(r.offset));
         big.apply(&afg::words(n, &o, out_old, offset_old));
@@ -143,7 +156,11 @@ impl Units {
         match (on, relays_set) {
             (true, true) => big.wr(r.out, out_old | 1),
             (true, false) => {
-                eprintln!("oos-ui mho: generator {}: the relays could not be set over {}; its output stays off", n, MCU)
+                eprintln!(
+                    "oos-ui mho: generator {}: the relays could not be set over {}; its output stays off",
+                    n, MCU
+                );
+                (self.mcu, self.mcu_tried) = (None, false);
             }
             _ => {}
         }
@@ -163,6 +180,20 @@ impl Units {
             offset,
             back.join(" ")
         );
+        !on || relays_set
+    }
+}
+
+/// When the acquisition ends (`oos-mho-live off`, a new start of the board), every generator that is on is switched
+/// off with its relays, so no output keeps running without the screen. A process that is killed does not get here.
+impl Drop for Units {
+    fn drop(&mut self) {
+        for i in 0..GENERATORS {
+            if let Some(mut g) = self.gen[i].filter(|g| g.0) {
+                g.0 = false;
+                self.generator(i + 1, &g);
+            }
+        }
     }
 }
 
