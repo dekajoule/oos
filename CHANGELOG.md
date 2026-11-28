@@ -9,8 +9,9 @@ screen: in XY with two channels on a DHO924S 12.1, 23.1 and 44 waveforms a secon
 at a short time base keeps its whole length again (#47). The card and a USB stick are left clean at power off, restart
 and update, a stalled record transfer costs 1 s instead of 10 s, and Dots has an Auto choice. Several ideas come from
 fumingcaps' fork (0.2.2), named at each entry. On a DHO924S: `tools/device-test.py` 60 pass and the two known
-failures of 0.2.2 (an offset at 100 mV, the generator's middle at high amplitudes); `tools/device-bench.py` at all 22
-views at least as many waveforms a second as 0.2.2 (up to 2.7 times at 4 channels, Peak, 100 us/div); a power off, a
+failures of 0.2.2 (an offset at 100 mV, the generator's middle at high amplitudes); `tools/device-bench.py` at 19 of
+the 22 views more waveforms a second than 0.2.2 (up to 2.7 times at 4 channels, Peak, 100 us/div), at the other three
+0.4 to 0.9 % fewer, within the noise of the runs; a power off, a
 restart and an update by kexec left the data partition clean. The problem known in 0.2.2 (`:WAVeform:MODE RAW` after a
 STOP at deep memory answering the screen's points) has the cause of #47 and was not seen since.
 

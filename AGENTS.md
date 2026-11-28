@@ -109,7 +109,7 @@ work on its own (ADR 0039). Everything above holds for it, and:
 | Path | What |
 |---|---|
 | `hal/` | `oos-hal`: register sequences, AFE/ADC/PLL buses, cold boot, panel MCU (pure, with a `Bus` trait) |
-| `dsp/` | `oos-dsp`: signal processing on `&[f32]`, decoders, measurements |
+| `dsp/` | `oos-dsp`: signal processing on `&[f32]`, kernels on codes (ADR 0083), decoders, measurements |
 | `ui/` | `oos-ui`: the screen, SCPI, web server; sources Demo, Replay, Live, Hw |
 | `fpgad/` | `oos-fpgad`: command line on top of `oos-hal` (`plan` only prints) |
 | `gpu/` | GPU helper process (C, Mesa), ADR 0003 |

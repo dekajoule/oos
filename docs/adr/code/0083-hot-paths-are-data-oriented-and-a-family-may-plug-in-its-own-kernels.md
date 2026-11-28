@@ -40,8 +40,9 @@ the MHO900, an acquisition image of our own with its own record format) brings i
    falls back to the reference for every kernel the family leaves out. Above the table nothing names a family.
 4. **Every plugged-in kernel is proven against its reference.** A test runs both on the same inputs (the family's
    recorded frames and generated edge cases: empty, one sample, the limits of the code range, lengths that are not a
-   multiple of the vector width) and requires identical output; for a floating-point kernel the record of the kernel
-   states the bound. The comparison of pictures (ADR 0014, ADR 0032) holds as before.
+   multiple of the vector width): an integer kernel gives output identical to the reference's, bit for bit; a
+   floating-point kernel states in its documentation how far its output may lie from the reference's, and the test
+   checks every value against that bound. The comparison of pictures (ADR 0014, ADR 0032) holds as before.
 5. **The other rules stay.** `libc` is the only dependency (ADR 0013): vector code uses `core::arch`, not a crate.
    `unsafe` is counted (ADR 0037): a kernel first tries safe code the compiler vectorises (`chunks_exact`, fixed-size
    arrays); intrinsics that need `unsafe` stay inside the kernel's module, each block with its `SAFETY` comment, and

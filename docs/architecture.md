@@ -113,7 +113,7 @@ flowchart TB
     subgraph fpgadP["oos-fpgad (fpgad/)"]
         cli["Command line<br/>plan, run, cold-boot, status"]
     end
-    dsp["oos-dsp (dsp/)<br/>signal processing on slices of f32, no hardware"]
+    dsp["oos-dsp (dsp/)<br/>signal processing on slices of f32 and of codes, no hardware"]
     hal["oos-hal (hal/)<br/>register sequences as step lists, buses, cold boot"]
     dev["Device files<br/>xdma0_bypass, xdma0_c2h_0, gpiochipN, ttyS0, sysfs"]
     remote -- "commands, read without waiting" --> mainloop
@@ -191,7 +191,9 @@ family adds a module next to it ([porting.md](porting.md)).
 
 Platform independent, no hardware. Software trigger for all 12 types, 35 measurements, math and FFT, the protocol
 decoders as modules (`protocols`: key, name, lines, the call of the decoder, bit time and protocol trigger rule of
-each), mask test, signal generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`.
+each), mask test, signal generators for tests and the demo source. Waveforms are `&[f32]` volts with a fixed `dt`; a
+loop over every sample of a frame may instead take the codes in their layout, as a kernel whose portable reference is
+here (ADR 0083).
 
 ### oos-ui: the scope screen
 
@@ -334,7 +336,7 @@ Drawn from: ADR 0001, 0049, 0053, 0055, 0056, 0064 and 0067. An arrow reads "may
 | Crate or folder | Its job | Today |
 |---|---|---|
 | `oos-hal` (`hal/`) | step lists, buses, cold boot, update; the board's part in `hal/src/<family>/` | `dho` only; `FAMILIES` lists it |
-| `oos-dsp` (`dsp/`) | signal processing on `f32` slices, decoders, measurements | as targeted |
+| `oos-dsp` (`dsp/`) | signal processing on `f32` slices, kernels on codes (ADR 0083), decoders, measurements | as targeted |
 | `oos-system` (`ui/system/`) | mDNS, SNTP, SSH, `net.allow`, clock, `system.conf` | done (ADR 0064) |
 | `oos-remote` (`ui/remote/`) | the transports, which only frame messages for the interpreters (ADR 0022) | done |
 | `oos-model` (`ui/model/`) | what the user has set: the model and the settings table | done |
@@ -380,7 +382,7 @@ declared, a recipe in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-something) and
 | a menu, a row, a dialog | `ui/src/ui/`: `item.rs` (the items and their parts), `menu_items.rs`, `menu_text.rs`, `menu_actions.rs`, `menu_dialog.rs` | `ui/src/ui/lint/menu_layout.rs::every_menu_fits`, `ui/src/ui/item.rs::no_menu_item_has_two_parts` |
 | the state of the scope, a default | `ui/model/src/model.rs` and `ui/model/src/model/` | the tests of `ui/model/src/model.rs` |
 | what a setup or a file stores | the crate `oos-store`, `ui/store/src/`; what it asks of `oos-ui`: `ui/src/store/modules.rs` | `ui/src/store/settings_snapshot.rs` with `ui/tests/golden/settings.txt` |
-| signal processing | `dsp/src/`, on slices of `f32`, no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
+| signal processing | `dsp/src/`, on slices of `f32` (a kernel: of codes, ADR 0083), no hardware | the tests in `dsp/tests/`, `tools/layers.py` |
 | what the UI asks of the hardware | the trait `Board` in `ui/src/board/mod.rs`, for this board `ui/src/board/dho/` | `tools/layers.py` |
 | a remote transport | its file in `ui/remote/src/`, the crate `oos-remote` (`vxi11.rs`, `hislip.rs`, `http.rs`, `announce.rs`; ADR 0064); what the screen answers on the web: `ui/src/site.rs`; a transport only frames messages for the interpreter (ADR 0022) | the tests in its file; its switch under Remote services (ADR 0025) |
 | a network or system service (mDNS, SNTP, SSH, `net.allow`, the clock, `system.conf`) | its module in `ui/system/src/`, the crate `oos-system`, which names nothing of `oos-ui` (ADR 0064) | the tests in its file, `cargo test --workspace` in `ui/`; its switch under Remote services (ADR 0025) |
