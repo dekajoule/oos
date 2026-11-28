@@ -248,7 +248,8 @@ mod tests {
 
     /// From the review of #598: a Peak detect frame below the full rate holds minimum and maximum in turn; drawn here
     /// they would be interpolated as plain samples. It goes to the record path (None), a Peak frame at the full rate
-    /// (plain samples) stays here.
+    /// (plain samples) stays here. The rates are the DHO800/DHO900's (1.25 GSa/s on one channel).
+    #[cfg(oos_board = "dho")]
     #[test]
     fn a_peak_frame_below_the_full_rate_takes_the_record_path() {
         let (w, h) = (970, 448);

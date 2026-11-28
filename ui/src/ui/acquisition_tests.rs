@@ -643,6 +643,8 @@ fn fast_path_draws_every_queued_frame() {
     ui.m.acq = AcqMode::Average;
     assert!(ui.fast_ok());
     (ui.m.avg_hw, ui.m.avg_count) = (true, 16);
+    // the FPGA's average is the DHO800/DHO900's (the MHO900 averages in software)
+    #[cfg(oos_board = "dho")]
     assert!(board().avg_hw(&ui.m) && !ui.fast_ok(), "the FPGA's average");
 }
 

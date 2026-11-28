@@ -201,7 +201,7 @@ fn bring_up(args: &[String], table: &str, image: &str) -> Result<(), i32> {
                 return Err(1);
             }
         }
-    } else if let Err(e) = crate::pcie::pcie_up(None) {
+    } else if let Err(e) = crate::pcie::pcie_up(false) {
         println!("RESULT: PCIe is not up ({}); run without --no-bringup", e);
         return Err(1);
     }

@@ -275,7 +275,7 @@ fn spidevs() -> String {
 /// PCIe host and xdma (the helper of the DHO800/DHO900, with its retries), then the first registers.
 pub(super) fn pcie() -> Result<(), String> {
     use oos_hal::dho::bus::Bus;
-    let mut bar = crate::pcie::pcie_up(None).map_err(|e| e.to_string())?;
+    let mut bar = crate::pcie::pcie_up(false).map_err(|e| e.to_string())?;
     let id = std::fs::read_to_string("/sys/bus/pci/devices/0000:01:00.0/device").unwrap_or_default();
     println!("bringup: PCIe endpoint 0000:01:00.0, device {}", id.trim());
     for (off, name) in b::FIRST_READS {
@@ -288,7 +288,7 @@ pub(super) fn pcie() -> Result<(), String> {
 /// registers `ADC_READ_REGS` of ADC 0 and ADC 1 as raw words, each with whether the bridge marked it valid.
 fn adc() -> Result<(), String> {
     use oos_hal::dho::bus::Bus;
-    let mut bar = crate::pcie::pcie_up(None).map_err(|e| e.to_string())?;
+    let mut bar = crate::pcie::pcie_up(false).map_err(|e| e.to_string())?;
     println!(
         "bringup: {:#06x} ADC clock count = {} (62500 at the DHO's 1.25 GHz)",
         b::ADC_CLOCK_COUNT,

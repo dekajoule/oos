@@ -9,18 +9,14 @@
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const XDMA_DEFAULT: &str = "poll_mode=1";
 
-/// The C2H timeout the DHO800/DHO900 load xdma.ko with unless `xdma.params` sets one: a read the FPGA does not finish
-/// ends after 1 s with ETIMEDOUT instead of the driver's 10 s, and the acquisition recovers (`hw::dmafault` of oos-ui).
-/// The MHO900 has none: its acquisition has not been run with it.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) const DHO_C2H_TIMEOUT: &str = "c2h_timeout=1";
-
 /// The xdma.ko parameters of `xdma.params` in the system settings (`oos-conf`; None or empty = `XDMA_DEFAULT`), with
-/// the family's `c2h` default (`DHO_C2H_TIMEOUT`, or none) unless they set `c2h_timeout`. Only `poll_mode=0|1`,
+/// `c2h_timeout=1` when `c2h_timeout` is true and they set none: the DHO800/DHO900's default, where a read the FPGA does
+/// not finish ends after 1 s with ETIMEDOUT instead of the driver's 10 s and the acquisition recovers (`hw::dmafault`
+/// of oos-ui); the MHO900 passes false, its acquisition has not run with it. Only `poll_mode=0|1`,
 /// `interrupt_mode=0..3` (0 auto, 1 MSI, 2 legacy INTx, 3 MSI-X), `c2h_timeout=1..10` and `h2c_timeout=1..10`
 /// (seconds), each at most once: the line goes to `insmod` through a shell.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) fn xdma_params(v: Option<&str>, c2h: Option<&str>) -> Result<String, String> {
+pub(crate) fn xdma_params(v: Option<&str>, c2h_timeout: bool) -> Result<String, String> {
     let v = v.map(str::trim).unwrap_or("");
     let mut words: Vec<&str> = if v.is_empty() { vec![XDMA_DEFAULT] } else { v.split_whitespace().collect() };
     let mut seen = Vec::new();
@@ -42,8 +38,8 @@ pub(crate) fn xdma_params(v: Option<&str>, c2h: Option<&str>) -> Result<String, 
         }
         seen.push(key);
     }
-    if let Some(c) = c2h.filter(|_| !seen.contains(&"c2h_timeout")) {
-        words.push(c);
+    if c2h_timeout && !seen.contains(&"c2h_timeout") {
+        words.push("c2h_timeout=1");
     }
     Ok(words.join(" "))
 }
@@ -52,7 +48,7 @@ pub(crate) fn xdma_params(v: Option<&str>, c2h: Option<&str>) -> Result<String, 
 /// the xdma nodes are polled every 20 ms instead of the fixed 2 s / 1 s sleeps of oos-fpga-up (`insmod` returns once
 /// the driver probed, so a link that is up shows at once).
 #[cfg(target_os = "linux")]
-pub(crate) fn pcie_up(c2h: Option<&str>) -> std::io::Result<oos_hal::dho::bus::Bar1> {
+pub(crate) fn pcie_up(c2h_timeout: bool) -> std::io::Result<oos_hal::dho::bus::Bar1> {
     let sh = |c: &str| std::process::Command::new("sh").arg("-c").arg(c).status().map(|s| s.success()).unwrap_or(false);
     let poll = |cond: &dyn Fn() -> bool, ms: u64| {
         let t = std::time::Instant::now();
@@ -83,7 +79,7 @@ pub(crate) fn pcie_up(c2h: Option<&str>) -> std::io::Result<oos_hal::dho::bus::B
             .output()
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-        let params = xdma_params(conf.as_deref(), c2h).unwrap_or_else(|e| {
+        let params = xdma_params(conf.as_deref(), c2h_timeout).unwrap_or_else(|e| {
             eprintln!("oos-fpgad: {}; loading xdma with {}", e, XDMA_DEFAULT);
             XDMA_DEFAULT.into()
         });
@@ -130,7 +126,7 @@ mod tests {
     // Break it catches: the DHO's C2H timeout reaching the MHO900, whose acquisition has not run with it.
     #[test]
     fn the_mho_loads_xdma_without_the_dhos_c2h_timeout() {
-        assert_eq!(xdma_params(None, None).unwrap(), "poll_mode=1");
-        assert_eq!(xdma_params(Some("poll_mode=0 c2h_timeout=3"), None).unwrap(), "poll_mode=0 c2h_timeout=3");
+        assert_eq!(xdma_params(None, false).unwrap(), "poll_mode=1");
+        assert_eq!(xdma_params(Some("poll_mode=0 c2h_timeout=3"), false).unwrap(), "poll_mode=0 c2h_timeout=3");
     }
 }

@@ -990,6 +990,7 @@ fn keep_out_holds_while_its_guard_lives() {
 
 // Break it catches: the workers drawing the zoom picture other than `draw_frame` with the zoom's model on every frame,
 // or the merge leaving its maps out (#582)
+#[cfg(oos_board = "dho")]
 #[test]
 fn the_workers_draw_the_zoom_picture_of_every_frame() {
     let ((w, h), (zw, zh)) = ((970, 448), (970, 200));
@@ -1093,6 +1094,7 @@ fn a_frame_triggered_on_the_other_slope_is_not_drawn() {
 // Break it catches: an Average run folded on the workers whose average differs in any bit from folding each frame's
 // screen record (`wave::to_record`): another trigger point, other places or another interpolation of the points,
 // a channel left out, the sparse or the min/max branch of the record not taken.
+#[cfg(oos_board = "dho")]
 #[test]
 fn a_frame_folded_into_an_average_run_is_its_screen_record_folded() {
     for (mask, n, tdiv) in [(0xf, 3520u32, 1e-6), (0x1, 12_512, 1e-6), (0x1, 128, 5e-9), (0x3, 62_500, 1e-5)] {
