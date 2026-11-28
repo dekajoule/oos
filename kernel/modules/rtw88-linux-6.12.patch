@@ -1,0 +1,81 @@
+rtw88 of Linux 6.18.63 on Linux 6.12: the kernel interfaces that changed in between (as for rtw89, ADR 0027).
+
+- config, set_rts_threshold, set_antenna, get_antenna: without the radio index (added in 6.17)
+- link_sta_rc_update (6.13) is sta_rc_update in 6.12, with the station instead of its link
+- timer_container_of (6.16) is from_timer in 6.12
+
+SPDX-License-Identifier: GPL-2.0-only
+
+--- a/mac80211.c
++++ b/mac80211.c
+@@ -71,7 +71,7 @@
+ 	mutex_unlock(&rtwdev->mutex);
+ }
+ 
+-static int rtw_ops_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
++static int rtw_ops_config(struct ieee80211_hw *hw, u32 changed)
+ {
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 	int ret = 0;
+@@ -708,8 +708,7 @@
+ 	mutex_unlock(&rtwdev->mutex);
+ }
+ 
+-static int rtw_ops_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
+-				     u32 value)
++static int rtw_ops_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
+ {
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 
+@@ -798,7 +797,6 @@
+ }
+ 
+ static int rtw_ops_set_antenna(struct ieee80211_hw *hw,
+-			       int radio_idx,
+ 			       u32 tx_antenna,
+ 			       u32 rx_antenna)
+ {
+@@ -817,7 +815,6 @@
+ }
+ 
+ static int rtw_ops_get_antenna(struct ieee80211_hw *hw,
+-			       int radio_idx,
+ 			       u32 *tx_antenna,
+ 			       u32 *rx_antenna)
+ {
+@@ -931,12 +928,12 @@
+ 	return 0;
+ }
+ 
++/* OOS: Linux 6.12 has sta_rc_update, with the station instead of its link */
+ static void rtw_ops_sta_rc_update(struct ieee80211_hw *hw,
+ 				  struct ieee80211_vif *vif,
+-				  struct ieee80211_link_sta *link_sta,
++				  struct ieee80211_sta *sta,
+ 				  u32 changed)
+ {
+-	struct ieee80211_sta *sta = link_sta->sta;
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 	struct rtw_sta_info *si = (struct rtw_sta_info *)sta->drv_priv;
+ 
+@@ -980,7 +977,7 @@
+ 	.reconfig_complete	= rtw_reconfig_complete,
+ 	.hw_scan		= rtw_ops_hw_scan,
+ 	.cancel_hw_scan		= rtw_ops_cancel_hw_scan,
+-	.link_sta_rc_update	= rtw_ops_sta_rc_update,
++	.sta_rc_update		= rtw_ops_sta_rc_update,
+ 	.set_sar_specs          = rtw_ops_set_sar_specs,
+ #ifdef CONFIG_PM
+ 	.suspend		= rtw_ops_suspend,
+--- a/tx.c
++++ b/tx.c
+@@ -178,7 +178,8 @@
+ 
+ void rtw_tx_report_purge_timer(struct timer_list *t)
+ {
+-	struct rtw_dev *rtwdev = timer_container_of(rtwdev, t,
++	/* OOS: Linux 6.12 calls timer_container_of (6.16) from_timer */
++	struct rtw_dev *rtwdev = from_timer(rtwdev, t,
+ 						    tx_report.purge_timer);
+ 	struct rtw_tx_report *tx_report = &rtwdev->tx_report;
+ 	unsigned long flags;

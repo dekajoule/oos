@@ -3,25 +3,36 @@
 The unit has no built-in WLAN. OOS joins a network through a stick in the front USB port (host port 3-1, controller
 fe900000, `protocols/frontpanel.md`).
 
-Tested without hardware: wpa_supplicant, `oos-wlan`, `udhcpc.script` and the join code of oos-ui ran against access points
-on simulated radios (`tools/wlan-sim.sh`, section 6). **Verified on the unit** (DHO924S, 2026-11-16, development image
-started by kexec): the TP-Link Archer TX10UB Nano in the front port with `rtw89`, from loading the driver to an address
-by DHCP on a WPA2 network (5 GHz, Wi-Fi 6, 80 MHz, 540 Mbit/s link rate, about 84 Mbit/s sent). **Not yet verified on
-hardware:** an RTL8188EU stick with `rtl8xxxu`, the joining pages of oos-ui with the TX10UB, long runs.
+Tested without hardware: wpa_supplicant, `oos-wlan`, `udhcpc.script` and the join code of oos-ui ran against access
+points on simulated radios (`tools/wlan-sim.sh`, section 6). **Verified on the unit** (DHO924S, 2026-11-16, development
+image started by kexec): the TP-Link Archer TX10UB Nano in the front port with `rtw89`, from loading the driver to an
+address by DHCP on a WPA2 network (5 GHz, Wi-Fi 6, 80 MHz, 540 Mbit/s link rate, about 84 Mbit/s sent). **Verified on
+the unit** (DHO804, OOS 0.2.2, 2026-11-27): an RTL8188EU stick (0bda:8179) with `rtl8xxxu` joins and works through an
+Android phone's access point (WPA2, 0 % loss), but against a TP-Link Deco mesh (Wi-Fi 6, 2.4 GHz) it associates and then
+passes almost no data (55 to 100 % loss, with 20 and 40 MHz, with and without PMF, on three of its networks); by the
+owner's report the same stick worked against that network under the stock system. **Verified on the unit** (DHO804,
+2026-11-27, an image of this tree on OOS 0.2.3, installed by its update package): `oos-wlan` loaded `rtw88` for a
+TP-Link Archer T2U Nano (RTL8811AU, 2357:011e) in the front port, firmware 42.4.0, at the kexec start and at a cold
+start, and joined that Deco network by itself (DHCP, 0 % loss to the gateway, on 2.4 GHz and on 5 GHz). Before, with the
+same modules loaded by hand into OOS 0.2.2: joined from System > Network, 0 % loss on 5 GHz (80 MHz, -60 dBm) and 2.4
+GHz (40 MHz, -46 dBm) with 1400-byte packets too, 40 MiB downloaded from a computer at 32 Mbit/s (2.4 GHz) and 19 Mbit/s
+(5 GHz, the computer on WLAN as well). **Not yet verified on hardware:** the joining pages of oos-ui with the TX10UB,
+long runs.
 
 ## 1. What works
 
 | | |
 |---|---|
-| Sticks | RTL8851BU with `rtw89` (TP-Link Archer TX10UB Nano, USB id 3625:010b, and the other ids of `rtw89_8851bu`); RTL8188EU with `rtl8xxxu` (USB id 0bda:8179 and the other ids of `rtl8xxxu` that need `rtl8188eufw.bin`) |
-| Band | what the stick has: 2.4 and 5 GHz for the RTL8851BU, 2.4 GHz for the RTL8188EU |
+| Sticks | RTL8851BU with `rtw89` (TP-Link Archer TX10UB Nano, USB id 3625:010b, and the other ids of `rtw89_8851bu`); RTL8821AU and RTL8811AU with `rtw88` (TP-Link Archer T2U Nano, USB id 2357:011e, and the other ids of `rtw88_8821au`); RTL8188EU with `rtl8xxxu` (USB id 0bda:8179 and the other ids of `rtl8xxxu` that need `rtl8188eufw.bin`) |
+| Band | what the stick has: 2.4 and 5 GHz for the RTL8851BU and the RTL8821AU/RTL8811AU, 2.4 GHz for the RTL8188EU |
 | Networks | open, WPA and WPA2 personal, WPA2/WPA3 mixed, hidden names |
 | Not supported | WPA3 only, enterprise (802.1X), WEP. The list says so, a join is refused |
 | Address | DHCP only |
 
 The TX10UB first shows up as a driver CD; `oos-usbmode` (started by `oos-bt`, [bluetooth.md](bluetooth.md)) switches it,
 then its Bluetooth and its WLAN interface are there. `rtw89` with USB came with Linux 6.17: OOS builds the driver of
-6.18.63 as modules beside its 6.12 kernel (`kernel/modules/rtw89/`, ADR 0027). Next to `wlan0` a second interface of the
+6.18.63 as modules beside its 6.12 kernel (`kernel/modules/rtw89/`, ADR 0027); `rtw88` for the RTL8821AU/RTL8811AU the
+same way (`kernel/modules/rtw88/`, the driver of the 8821AU came with Linux 6.13). Next to `wlan0` a second interface of the
 same radio, `p2p0`, shows up and stays down.
 
 Another chip of `rtl8xxxu` needs its firmware file under `rootfs/initramfs/lib/firmware/rtlwifi/`, and some need the kernel
@@ -52,7 +63,8 @@ when the network runs over the stick. With both, Ethernet stays the default rout
 |---|---|---|
 | kernel | `cfg80211`, `mac80211`, `rtl8xxxu`, `libarc4` modules | already in the base kernel, loaded by `oos-wlan` |
 | kernel | `rtw89_core`, `rtw89_usb`, `rtw89_8851b`, `rtw89_8851bu` | `kernel/modules/rtw89/` with `rtw89-linux-6.12.patch`, in `updates/` |
-| firmware | `lib/firmware/rtlwifi/rtl8188eufw.bin`, `lib/firmware/rtw89/rtw8851b_fw.bin` | from linux-firmware, unchanged, with its licence beside it |
+| kernel | `rtw88_core`, `rtw88_usb`, `rtw88_88xxa`, `rtw88_8821a`, `rtw88_8821au` | `kernel/modules/rtw88/` with `rtw88-linux-6.12.patch`, in `updates/` |
+| firmware | `lib/firmware/rtlwifi/rtl8188eufw.bin`, `lib/firmware/rtw89/rtw8851b_fw.bin`, `lib/firmware/rtw88/rtw8821a_fw.bin` | from linux-firmware, unchanged, with its licence beside it |
 | `/bin/wpa_supplicant`, `/bin/wpa_cli` | `rootfs/build-wlan-tools.sh`, into `rootfs/out/` | version 2.11, static, internal crypto, no EAP, no SAE, no P2P |
 | `/bin/oos-wlan` | started by `rcS` (5c) | driver, wpa_supplicant, DHCP, section 4 |
 | `oos_hal::wlan` | `hal/src/wlan.rs` | control socket, parsers, key derivation |
@@ -64,7 +76,7 @@ Waits for `end` or `abort` in the start-up status (at most 60 s), so nothing of 
 Then every 2 s:
 
 1. A vendor-specific USB interface there and no driver: load the modules. `rtw89` when the interface's id is one of
-   its aliases (`modules.alias`), else `rtl8xxxu`. A scope without a stick never loads them.
+   its aliases (`modules.alias`), else `rtw88` when it is one of the 8821AU's, else `rtl8xxxu`. A scope without a stick never loads them.
 2. `wlan0` there: wpa_supplicant runs, started again if it died.
 3. Joined a network: `udhcpc` runs in the background and renews the lease. Moving between access points of one network
    keeps the address; a lost link or another network drops it.

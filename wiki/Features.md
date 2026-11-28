@@ -87,7 +87,7 @@ in the README. How to use it: the guides listed on [[Home]].
 - Web remote, SCPI over TCP, VXI-11, HiSLIP (on a computer), LXI identification, MCP for AI
   assistants, SSH, mDNS and DNS-SD: every interface with its port is on [[Remote Control]], the commands on
   [[SCPI and VXI-11]]
-- None of them slows the scope down; all of them run over Ethernet and over WLAN with an RTL8188EU stick or a TP-Link Archer TX10UB Nano
+- None of them slows the scope down; all of them run over Ethernet and over WLAN with a TP-Link Archer TX10UB Nano, a TP-Link Archer T2U Nano or an RTL8188EU stick
 
 **System**
 - Own cold boot of all hardware: the stock system never has to run first

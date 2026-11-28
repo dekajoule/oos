@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# OOS: the part of rtw88's Makefile for the RTL8821AU/RTL8811AU (USB) alone, built outside the kernel tree
+# (kernel/README.md)
+obj-m += rtw88_core.o rtw88_usb.o rtw88_88xxa.o rtw88_8821a.o rtw88_8821au.o
+rtw88_core-y := main.o mac80211.o util.o debug.o tx.o rx.o mac.o phy.o coex.o efuse.o fw.o ps.o sec.o bf.o sar.o regd.o
+rtw88_core-$(CONFIG_PM) += wow.o
+rtw88_usb-y := usb.o
+rtw88_88xxa-y := rtw88xxa.o
+rtw88_8821a-y := rtw8821a.o rtw8821a_table.o
+rtw88_8821au-y := rtw8821au.o
