@@ -60,7 +60,9 @@ with `remote.ssh = on` and an address list in Allowed as on Ethernet (any list: 
 The computer on the cable is let in like loopback: the firewall accepts its DHCP request and its addresses of the USB
 prefix from the gadget's interfaces (`iifname "usb*"`) whatever `net.allow` says, and oos-ui's second check
 ([network.md](network.md) 6) lets the prefix in while the link is up (`/tmp/oos-gadget.net`). The same prefix from
-Ethernet or WLAN is not let in.
+Ethernet or WLAN is not let in. When `oos-gadget prefix` gives no prefix (the script missing or failing), the firewall
+leaves the line of the prefix out and loads the rest: the computer on the cable is then not let in (its DHCP request
+still is), and the other rules stay in force (`tools/fw-sim.sh`).
 
 **Switched off**, or before the switch is on: no gadget, no interface, no DHCP server; the port is as before. Switching
 off takes the gadget down at once: the computer sees the adapter go, and its connections end.
