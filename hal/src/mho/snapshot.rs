@@ -27,8 +27,10 @@ pub const SYNC: u32 = 0x10120;
 /// Configuration words that are not written back, and why: status, counters and read-back words, and the words the
 /// start writes itself (the run control and the frame window of the arm, the SPU's reset pulses, the link reset and
 /// the sync enable).
-pub const NOT_REPLAYED: [(u32, &str); 21] = [
+pub const NOT_REPLAYED: [(u32, &str); 23] = [
     (0x1000, "SPU control: reset pulses, written by the arm's stop sequence"),
+    (acq::ADC_SPI, "ADC SPI bridge: a write is a transfer to an ADC (the ADC phase sends the snapshot's registers)"),
+    (acq::ADC_SPI_READ, "ADC SPI bridge's answer (read)"),
     (0x11e8, "TX state (read)"),
     (0x1208, "recorded range (read)"),
     (0x120c, "recorded range in roll (read)"),
