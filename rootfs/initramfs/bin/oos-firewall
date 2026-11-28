@@ -107,9 +107,10 @@ rules() {
 	# the DHCP client before it has an address (udhcpc reads on a raw socket, this is for its later renewals)
 	echo "		udp sport 67 udp dport 68 accept"
 	# the computer on the rear USB port (oos-gadget, docs/usb-device.md): a cable to one computer, in like loopback, its DHCP
-	# request (from 0.0.0.0) and then its address in the USB prefix, only through the gadget's interfaces
+	# request (from 0.0.0.0) and then its address in the USB prefix, only through the gadget's interfaces. Without a
+	# prefix (oos-gadget missing or failed) that line stays out: an empty one would make nft refuse the whole ruleset
 	echo "		iifname \"usb*\" udp sport 68 udp dport 67 accept"
-	echo "		iifname \"usb*\" ip saddr $usb accept"
+	[ -n "$usb" ] && echo "		iifname \"usb*\" ip saddr $usb accept"
 	[ -n "$v4" ] && echo "		ip saddr { $v4 } accept"
 	[ -n "$v6" ] && echo "		ip6 saddr { $v6 } accept"
 	[ -n "$on6" ] && echo "		ip6 saddr @onlink6 accept"

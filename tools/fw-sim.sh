@@ -2,9 +2,10 @@
 # Copyright (C) 2026 OOS contributors
 # SPDX-License-Identifier: GPL-2.0-or-later
 # fw-sim.sh - tests oos-firewall's IPv6 part, udhcpc.script and oos-net6 (docs/network.md 6, 8) without a scope: an
-# arm64 container with the image's busybox, oos-conf, oos-firewall and nft. Checks which routes count as prefixes on
-# the link, the ruleset, the set `onlink6` loaded in the kernel and kept up to date by `watch`, `reload` after a change
-# of net.allow (the new list, the watcher stopped and started, without a list nothing left as at a start without one),
+# arm64 container with the image's busybox, oos-conf, oos-firewall, oos-gadget and nft. Checks which routes count as
+# prefixes on the link, the ruleset (with the USB prefix, and loaded without one), the set `onlink6` loaded in the
+# kernel and kept up to date by `watch`, `reload` after a change of net.allow (the new list, the watcher stopped and
+# started, without a list nothing left as at a start without one),
 # the lease's time zone and that a DHCP lease leaves the IPv6 addresses alone. Needs Docker, one finished image build
 # (its busybox) and rootfs/out/nft (rootfs/build-nft.sh; OOS_OUT names another rootfs/out).
 set -eu
@@ -55,6 +56,7 @@ echo "$r" | grep -q 'elements = { 2001:db8:5:7::/64, 2001:db8:77::/64, fd12:3456
 echo "$r" | grep -q 'ip6 saddr @onlink6 accept' || fail "set rule"
 echo "$r" | grep -q 'ip6 saddr { fe80::/10 } accept' || fail "link-local"
 echo "$r" | grep -q 'ip saddr { 192.0.2.0/24 } accept' || fail "IPv4"
+echo "$r" | grep -q 'iifname "usb\*" ip saddr 192.168.235.0/29 accept' || fail "the USB prefix of oos-gadget"
 conf "net.allow = 192.0.2.0/24"
 /bin/oos-firewall --print | grep -q onlink6 && fail "set without onlink6"
 conf "net.allow = onlink6"
@@ -101,14 +103,16 @@ grep -q 'left out: 192.0.2.0/ 2001:db8:::1 2001:db8::1::2 1:2:3:4:5:6:7:8:9' /c/
 
 echo "== nft refuses the ruleset: closed, not open"
 mv /bin/nft /bin/nft.real
-printf '#!/bin/sh\ngrep -q saddr "$2" && exit 1\nexec /bin/nft.real "$@"\n' > /bin/nft
+# it refuses every ruleset that lets a prefix of net.allow in; the computer on the USB cable (oos-gadget's prefix)
+# stays in the closed one, as loopback does
+printf '#!/bin/sh\ngrep -v "iifname \\"usb" "$2" | grep -q saddr && exit 1\nexec /bin/nft.real "$@"\n' > /bin/nft
 chmod +x /bin/nft
 conf "net.allow = 192.0.2.0/24"
 /bin/oos-firewall 2> /c/refused.log && fail "a refused ruleset reported as applied"
 mv /bin/nft.real /bin/nft
 t=$(nft list table inet oos_fw)
 echo "$t" | grep -q 'policy drop' || fail "closed: no drop policy: $t"
-echo "$t" | grep -q 'saddr' && fail "closed: a prefix is let in: $t"
+echo "$t" | grep -v 'iifname "usb' | grep -q 'saddr' && fail "closed: a prefix is let in: $t"
 grep -q 'inbound closed except loopback' /c/refused.log || fail "closed log: $(cat /c/refused.log)"
 
 echo "== reload: net.allow changed while the scope runs (Remote services > Allowed)"
@@ -188,6 +192,19 @@ echo "$s1" | grep -Eqx '([0-9a-f]{4}:){7}[0-9a-f]{4}' || fail "secret format: $s
 s3=$(/bin/oos-net6 --secret /c/net/ipv6.secret 2> /dev/null)
 echo "$s3" | grep -Eqx '([0-9a-f]{4}:){7}[0-9a-f]{4}' && [ "$(cat /c/net/ipv6.secret)" = "$s3" ] || fail "empty file: $s3"
 
+echo "== without a USB prefix"
+# oos-gadget missing or failing: the USB line stays out, the rest of the ruleset loads (an empty prefix made nft
+# refuse it all, and the scope ran without a firewall)
+mv /bin/oos-gadget /bin/oos-gadget.off
+conf "net.allow = 192.0.2.0/24"
+r=$(/bin/oos-firewall --print 2> /dev/null)
+echo "$r" | grep -q 'iifname "usb\*" ip saddr' && fail "a USB line without a prefix"
+echo "$r" | grep -q 'ip saddr { 192.0.2.0/24 } accept' || fail "the ruleset without a USB prefix"
+/bin/oos-firewall 2> /c/nogadget.log || fail "apply without a USB prefix: $(cat /c/nogadget.log)"
+grep -q 'NO firewall' /c/nogadget.log && fail "no firewall without a USB prefix"
+nft list chain inet oos_fw input | grep -q '192.0.2.0/24' || fail "the loaded ruleset without a USB prefix"
+mv /bin/oos-gadget.off /bin/oos-gadget
+
 [ $ok = 1 ] && echo "fw-sim: all passed" || { echo "fw-sim: FAILED"; exit 1; }
 TEST
 
@@ -198,7 +215,7 @@ docker run --rm --platform linux/arm64 --cap-add NET_ADMIN --sysctl net.ipv6.con
 	for a in sh ip awk sed grep sort cat od tr mv mkdir chmod dirname sleep timeout stat cp sync setsid; do
 		ln -sf busybox /bin/$a
 	done
-	for f in oos-conf oos-firewall oos-net6; do cp /src/bin/$f /bin/; done
+	for f in oos-conf oos-firewall oos-net6 oos-gadget; do cp /src/bin/$f /bin/; done
 	cp /src/etc/udhcpc.script /etc/udhcpc.script
 	cp /out/nft /bin/
 	mkdir -p /c
