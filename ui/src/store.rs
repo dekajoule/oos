@@ -35,3 +35,14 @@ pub fn write_durable(path: &std::path::Path, data: &[u8]) -> std::io::Result<()>
     let opts = oos_hal::fsutil::Opts { dir_sync: oos_hal::fsutil::DirSync::Required, ..Default::default() };
     oos_hal::fsutil::write_atomic(path, data, &opts)
 }
+
+/// The settings' copy on OOS's data partition (`card`, None without one) for the save every 2 s: replaced in one step
+/// with the directory synced, as `write_durable`. Whether the text counts as saved: not after a failed write, so the
+/// next pass tries again instead of leaving older settings for the next start.
+pub fn setup_on_card(card: Option<&std::path::Path>, text: &str) -> bool {
+    let opts = oos_hal::fsutil::Opts { dir_sync: oos_hal::fsutil::DirSync::Required, ..Default::default() };
+    match card {
+        Some(p) => oos_hal::fsutil::write_atomic(p, text.as_bytes(), &opts).is_ok(),
+        None => true,
+    }
+}
